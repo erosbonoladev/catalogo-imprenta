@@ -5,10 +5,11 @@ import {
   getImageSrc,
   getProduct,
   getProductSpecs,
-  pickAndSaveImage,
+  pickImage,
   updateProduct,
 } from "../db";
 import type { ProductInput, ProductSpec } from "../types";
+import AutoGrowInput from "./AutoGrowInput";
 
 interface Props {
   productId?: number;
@@ -30,6 +31,7 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
   const [specs, setSpecs] = useState<ProductSpec[]>([]);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -54,28 +56,32 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
   }, [productId]);
 
   function updateField<K extends keyof ProductInput>(key: K, value: ProductInput[K]) {
+    setDirty(true);
     setProduct((prev) => ({ ...prev, [key]: value }));
   }
 
   function updateSpec(index: number, key: "etiqueta" | "valor", value: string) {
+    setDirty(true);
     setSpecs((prev) =>
       prev.map((spec, i) => (i === index ? { ...spec, [key]: value } : spec)),
     );
   }
 
   function addSpecRow() {
+    setDirty(true);
     setSpecs((prev) => [...prev, { etiqueta: "", valor: "", orden: prev.length + 1 }]);
   }
 
   function removeSpecRow(index: number) {
+    setDirty(true);
     setSpecs((prev) => prev.filter((_, i) => i !== index));
   }
 
   async function handlePickImage() {
-    const filename = await pickAndSaveImage(product.codigo);
-    if (!filename) return;
-    updateField("imagen", filename);
-    setImageSrc(await getImageSrc(filename));
+    const image = await pickImage();
+    if (!image) return;
+    updateField("imagen", image);
+    setImageSrc(await getImageSrc(image));
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -124,20 +130,18 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
         <div className="form-row">
           <label>
             Código
-            <input
-              type="text"
+            <AutoGrowInput
               value={product.codigo}
-              onChange={(e) => updateField("codigo", e.target.value)}
+              onChange={(v) => updateField("codigo", v)}
               placeholder="ej. 3072"
               required
             />
           </label>
           <label>
             Nombre
-            <input
-              type="text"
+            <AutoGrowInput
               value={product.nombre}
-              onChange={(e) => updateField("nombre", e.target.value)}
+              onChange={(v) => updateField("nombre", v)}
               placeholder="ej. Tangram"
               required
             />
@@ -147,19 +151,17 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
         <div className="form-row">
           <label>
             Categoría
-            <input
-              type="text"
+            <AutoGrowInput
               value={product.categoria}
-              onChange={(e) => updateField("categoria", e.target.value)}
+              onChange={(v) => updateField("categoria", v)}
               placeholder="ej. Juegos didácticos"
             />
           </label>
           <label>
             Material
-            <input
-              type="text"
+            <AutoGrowInput
               value={product.material}
-              onChange={(e) => updateField("material", e.target.value)}
+              onChange={(v) => updateField("material", v)}
               placeholder="ej. Plástico, Madera"
             />
           </label>
@@ -167,10 +169,10 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
 
         <label>
           Descripción
-          <textarea
+          <AutoGrowInput
+            multiline
             value={product.descripcion}
-            onChange={(e) => updateField("descripcion", e.target.value)}
-            rows={3}
+            onChange={(v) => updateField("descripcion", v)}
           />
         </label>
 
@@ -185,17 +187,15 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
           <h2>Especificaciones técnicas</h2>
           {specs.map((spec, index) => (
             <div className="spec-row" key={index}>
-              <input
-                type="text"
+              <AutoGrowInput
                 placeholder="Etiqueta (ej. Dimensiones)"
                 value={spec.etiqueta}
-                onChange={(e) => updateSpec(index, "etiqueta", e.target.value)}
+                onChange={(v) => updateSpec(index, "etiqueta", v)}
               />
-              <input
-                type="text"
+              <AutoGrowInput
                 placeholder="Valor (ej. 15 x 15 cm)"
                 value={spec.valor}
-                onChange={(e) => updateSpec(index, "valor", e.target.value)}
+                onChange={(v) => updateSpec(index, "valor", v)}
               />
               <button
                 type="button"
@@ -214,7 +214,7 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
         {error && <p className="form-error">{error}</p>}
 
         <div className="form-actions">
-          <button type="submit" className="btn btn-primary" disabled={saving}>
+          <button type="submit" className="btn btn-primary" disabled={saving || !dirty}>
             {saving ? "Guardando…" : "Guardar"}
           </button>
           <button type="button" className="btn btn-secondary" onClick={onCancel}>

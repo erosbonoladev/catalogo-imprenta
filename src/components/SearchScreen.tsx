@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import { searchProducts } from "../db";
 import type { Product } from "../types";
 import ProductCard from "./ProductCard";
+import UpdateChecker from "./UpdateChecker";
 
 interface Props {
   onSelect: (id: number) => void;
   onNew: () => void;
+  onAdmin: () => void;
 }
 
-export default function SearchScreen({ onSelect, onNew }: Props) {
+export default function SearchScreen({ onSelect, onNew, onAdmin }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,9 +35,15 @@ export default function SearchScreen({ onSelect, onNew }: Props) {
     <div className="search-screen">
       <header className="search-header">
         <h1>Catálogo Imprenta</h1>
-        <button className="btn btn-primary" onClick={onNew}>
-          + Agregar producto
-        </button>
+        <div className="search-header-actions">
+          <UpdateChecker />
+          <button className="btn btn-secondary" onClick={onAdmin}>
+            🔒 Contraseñas
+          </button>
+          <button className="btn btn-primary" onClick={onNew}>
+            + Agregar producto
+          </button>
+        </div>
       </header>
 
       <input
