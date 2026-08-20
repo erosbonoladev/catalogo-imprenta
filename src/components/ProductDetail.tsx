@@ -7,6 +7,8 @@ interface Props {
   onBack: () => void;
   onEdit: (id: number) => void;
   onDeleted: () => void;
+  onOpenPlasticos: (productId: number) => void;
+  onOpenImprenta: (productId: number) => void;
 }
 
 export default function ProductDetail({
@@ -14,6 +16,8 @@ export default function ProductDetail({
   onBack,
   onEdit,
   onDeleted,
+  onOpenPlasticos,
+  onOpenImprenta,
 }: Props) {
   const [product, setProduct] = useState<Product | null>(null);
   const [specs, setSpecs] = useState<ProductSpec[]>([]);
@@ -96,6 +100,18 @@ export default function ProductDetail({
           <div className="product-detail-actions">
             <button className="btn btn-primary" onClick={() => onEdit(product.id)}>
               Editar ficha
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => onOpenPlasticos(product.id)}
+            >
+              🔒 Plásticos
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => onOpenImprenta(product.id)}
+            >
+              🔒 Imprenta
             </button>
             {confirmingDelete ? (
               <span className="confirm-delete">
