@@ -11,6 +11,7 @@ import type {
   Product,
   ProductInput,
   ProductSpec,
+  SearchFilter,
 } from "./types";
 import { PROCESOS_IMPRENTA } from "./types";
 
@@ -50,11 +51,21 @@ function rowToProduct(row: ProductRow): Product {
   };
 }
 
-export async function searchProducts(query: string): Promise<Product[]> {
+const SEARCH_FILTER_CLAUSES: Record<SearchFilter, string> = {
+  todo: "codigo LIKE ?1 OR nombre LIKE ?1 OR material LIKE ?1",
+  nombre: "nombre LIKE ?1 OR descripcion LIKE ?1",
+  sku: "codigo LIKE ?1",
+  material: "material LIKE ?1",
+};
+
+export async function searchProducts(
+  query: string,
+  filter: SearchFilter = "todo",
+): Promise<Product[]> {
   const trimmed = query.trim();
   const result = trimmed
     ? await client.execute({
-        sql: "SELECT * FROM products WHERE codigo LIKE ?1 OR nombre LIKE ?1 OR material LIKE ?1 ORDER BY nombre, material",
+        sql: `SELECT * FROM products WHERE ${SEARCH_FILTER_CLAUSES[filter]} ORDER BY nombre, material`,
         args: [`%${trimmed}%`],
       })
     : await client.execute(

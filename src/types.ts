@@ -85,6 +85,8 @@ export interface PrintItem {
   orden: number;
 }
 
+export type SearchFilter = "todo" | "nombre" | "sku" | "material";
+
 export const SECCION_PLASTICOS = "plasticos";
 export const SECCION_IMPRENTA = "imprenta";
 export const SECCION_ADMIN = "admin";

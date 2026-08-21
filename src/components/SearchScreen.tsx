@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { searchProducts } from "../db";
-import type { Product } from "../types";
+import type { Product, SearchFilter } from "../types";
 import ProductCard from "./ProductCard";
 import UpdateChecker from "./UpdateChecker";
 
@@ -10,8 +10,16 @@ interface Props {
   onAdmin: () => void;
 }
 
+const FILTROS: { value: SearchFilter; label: string }[] = [
+  { value: "todo", label: "Todo" },
+  { value: "nombre", label: "Nombre o palabras clave" },
+  { value: "sku", label: "SKU" },
+  { value: "material", label: "Material" },
+];
+
 export default function SearchScreen({ onSelect, onNew, onAdmin }: Props) {
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<SearchFilter>("todo");
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -19,7 +27,7 @@ export default function SearchScreen({ onSelect, onNew, onAdmin }: Props) {
     let cancelled = false;
     setLoading(true);
     const timer = setTimeout(async () => {
-      const products = await searchProducts(query);
+      const products = await searchProducts(query, filter);
       if (!cancelled) {
         setResults(products);
         setLoading(false);
@@ -29,7 +37,7 @@ export default function SearchScreen({ onSelect, onNew, onAdmin }: Props) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query]);
+  }, [query, filter]);
 
   return (
     <div className="search-screen">
@@ -54,6 +62,19 @@ export default function SearchScreen({ onSelect, onNew, onAdmin }: Props) {
         onChange={(e) => setQuery(e.target.value)}
         autoFocus
       />
+
+      <div className="search-filters" role="group" aria-label="Filtrar búsqueda por">
+        {FILTROS.map((f) => (
+          <button
+            key={f.value}
+            type="button"
+            className={`filter-chip${filter === f.value ? " filter-chip-active" : ""}`}
+            onClick={() => setFilter(f.value)}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
 
       {loading ? (
         <p className="hint">Buscando…</p>

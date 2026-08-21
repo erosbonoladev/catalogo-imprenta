@@ -11,6 +11,7 @@
     "dialog:default",
     "fs:default",
     "fs:allow-home-read-recursive",
+    "fs:allow-home-write-recursive",
     "updater:default",
     "process:default"
   ]
