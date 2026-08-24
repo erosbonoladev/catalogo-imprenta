@@ -1,28 +1,45 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 import SearchScreen from "./components/SearchScreen";
 import ProductDetail from "./components/ProductDetail";
 import ProductForm from "./components/ProductForm";
-import PasswordGate from "./components/PasswordGate";
 import PlasticosSection from "./components/PlasticosSection";
 import ImprentaSection from "./components/ImprentaSection";
-import AdminSettings from "./components/AdminSettings";
-import { SECCION_ADMIN, SECCION_IMPRENTA, SECCION_PLASTICOS } from "./types";
-
-type PrivadoDestino = "plasticos" | "imprenta";
+import Configuraciones from "./components/Configuraciones";
+import LoginScreen from "./components/LoginScreen";
+import { useAuth } from "./auth";
 
 type View =
   | { name: "search" }
   | { name: "detail"; productId: number }
   | { name: "form"; productId?: number }
-  | { name: "gate"; productId: number; destino: PrivadoDestino }
   | { name: "plasticos"; productId: number }
   | { name: "imprenta"; productId: number }
-  | { name: "admin-gate" }
-  | { name: "admin" };
+  | { name: "configuraciones" };
 
 function App() {
+  const { user, loading } = useAuth();
   const [view, setView] = useState<View>({ name: "search" });
+
+  useEffect(() => {
+    setView({ name: "search" });
+  }, [user?.id]);
+
+  if (loading) {
+    return (
+      <main className="app">
+        <p className="hint">Cargando…</p>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return (
+      <main className="app">
+        <LoginScreen />
+      </main>
+    );
+  }
 
   return (
     <main className="app">
@@ -30,7 +47,7 @@ function App() {
         <SearchScreen
           onSelect={(id) => setView({ name: "detail", productId: id })}
           onNew={() => setView({ name: "form" })}
-          onAdmin={() => setView({ name: "admin-gate" })}
+          onConfiguraciones={() => setView({ name: "configuraciones" })}
         />
       )}
 
@@ -40,12 +57,8 @@ function App() {
           onBack={() => setView({ name: "search" })}
           onEdit={(id) => setView({ name: "form", productId: id })}
           onDeleted={() => setView({ name: "search" })}
-          onOpenPlasticos={(id) =>
-            setView({ name: "gate", productId: id, destino: "plasticos" })
-          }
-          onOpenImprenta={(id) =>
-            setView({ name: "gate", productId: id, destino: "imprenta" })
-          }
+          onOpenPlasticos={(id) => setView({ name: "plasticos", productId: id })}
+          onOpenImprenta={(id) => setView({ name: "imprenta", productId: id })}
         />
       )}
 
@@ -63,20 +76,6 @@ function App() {
         />
       )}
 
-      {view.name === "gate" && (
-        <PasswordGate
-          section={view.destino === "plasticos" ? SECCION_PLASTICOS : SECCION_IMPRENTA}
-          onUnlock={() => {
-            if (view.destino === "plasticos") {
-              setView({ name: "plasticos", productId: view.productId });
-            } else {
-              setView({ name: "imprenta", productId: view.productId });
-            }
-          }}
-          onCancel={() => setView({ name: "detail", productId: view.productId })}
-        />
-      )}
-
       {view.name === "plasticos" && (
         <PlasticosSection
           productId={view.productId}
@@ -91,16 +90,8 @@ function App() {
         />
       )}
 
-      {view.name === "admin-gate" && (
-        <PasswordGate
-          section={SECCION_ADMIN}
-          onUnlock={() => setView({ name: "admin" })}
-          onCancel={() => setView({ name: "search" })}
-        />
-      )}
-
-      {view.name === "admin" && (
-        <AdminSettings onBack={() => setView({ name: "search" })} />
+      {view.name === "configuraciones" && (
+        <Configuraciones onBack={() => setView({ name: "search" })} />
       )}
     </main>
   );

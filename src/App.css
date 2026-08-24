@@ -8,6 +8,7 @@
   --text-muted: #64748b;
   --danger: #dc2626;
   --danger-hover: #b91c1c;
+  --warning: #d97706;
 
   color-scheme: light;
   color: var(--text);
@@ -89,6 +90,15 @@ h3 {
   background-color: var(--danger-hover);
 }
 
+.btn-success {
+  background-color: #16a34a;
+  color: white;
+}
+
+.btn-success:hover {
+  background-color: #15803d;
+}
+
 .btn-link {
   background: none;
   border: none;
@@ -125,6 +135,11 @@ h3 {
 }
 
 .update-version {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.current-user {
   color: var(--text-muted);
   font-size: 0.85rem;
 }
@@ -565,6 +580,125 @@ textarea:focus {
   width: auto;
 }
 
+/* Configuraciones: usuarios */
+
+.users-panel {
+  display: flex;
+  gap: 2rem;
+  margin-top: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.users-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 0 0 220px;
+}
+
+.user-list-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  background-color: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.9rem;
+  text-align: left;
+}
+
+.user-list-item-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.user-form {
+  flex: 1 1 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  max-width: 480px;
+}
+
+.user-form select {
+  font-family: inherit;
+  font-size: 1rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background-color: var(--surface);
+}
+
+/* Configuraciones: usuarios conectados */
+
+.connected-users-panel {
+  margin-top: 1.5rem;
+}
+
+.connected-users-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-width: 320px;
+}
+
+.connected-users-list li {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+  color: #16a34a;
+  font-weight: 500;
+}
+
+/* Configuraciones: registro / terminal */
+
+.logs-panel {
+  margin-top: 1.5rem;
+}
+
+.log-terminal {
+  background-color: var(--text);
+  color: var(--surface);
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  max-height: 480px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.log-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-time,
+.log-user {
+  opacity: 0.7;
+}
+
+.log-level {
+  font-weight: 700;
+}
+
+.log-info .log-level {
+  color: #60a5fa;
+}
+
+.log-warning .log-level {
+  color: var(--warning);
+}
+
+.log-error .log-level {
+  color: #f87171;
+}
+
 /* Toast */
 
 .toast {
@@ -641,6 +775,80 @@ textarea:focus {
   gap: 0.75rem 0.9rem;
 }
 
+/* Calculated/computed fields (Producción total, Compra Cantidad/Total de tamaños) */
+
+.calculated-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  background-color: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+}
+
+.calculated-field-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.calculated-badge {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  background-color: rgba(29, 78, 216, 0.12);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+}
+
+.calculated-field-value {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+/* OrderModal Producción/Compra tabs (reuses .filter-chip/.filter-chip-active) */
+
+.order-modal-tabs {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 1.1rem;
+}
+
+.print-item-fields select,
+.order-modal-item select {
+  font-family: inherit;
+  font-size: 1rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background-color: var(--surface);
+}
+
+/* Past Producción orders / Compras (browsable history under a print item card) */
+
+.print-item-history {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+.print-item-history-order {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
 /* Imprenta read-only view */
 
 .print-item-view-fields {
@@ -678,5 +886,6 @@ textarea:focus {
     --border: #334155;
     --text: #f1f5f9;
     --text-muted: #94a3b8;
+    --warning: #f59e0b;
   }
 }

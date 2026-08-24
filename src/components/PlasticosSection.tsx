@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { getImageSrc, getPlasticPieces, pickImage, savePlasticPieces } from "../db";
+import { getImageSrc, getPlasticPieces, logEvent, pickImage, savePlasticPieces } from "../db";
 import type { PlasticPiece } from "../types";
+import { hasPermission, useAuth } from "../auth";
 import AutoGrowInput from "./AutoGrowInput";
 import Toast from "./Toast";
 
@@ -10,6 +11,8 @@ interface Props {
 }
 
 export default function PlasticosSection({ productId, onBack }: Props) {
+  const { user } = useAuth();
+  const allowed = hasPermission(user, "plasticos");
   const [pieces, setPieces] = useState<PlasticPiece[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -18,11 +21,21 @@ export default function PlasticosSection({ productId, onBack }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!allowed) return;
     getPlasticPieces(productId).then((p) => {
       setPieces(p);
       setLoading(false);
     });
-  }, [productId]);
+  }, [productId, allowed]);
+
+  useEffect(() => {
+    if (allowed) return;
+    logEvent(
+      "WARNING",
+      `Acceso denegado a Plásticos para ${user?.username ?? "desconocido"}`,
+      user?.username ?? null,
+    );
+  }, [allowed, user?.username]);
 
   function updatePiece(index: number, key: "sku" | "color", value: string) {
     setDirty(true);
@@ -55,9 +68,22 @@ export default function PlasticosSection({ productId, onBack }: Props) {
       setShowToast(true);
     } catch (err) {
       setError(`No se pudo guardar: ${String(err)}`);
+      logEvent("ERROR", `No se pudo guardar Plásticos del producto ${productId}: ${String(err)}`, user?.username ?? null);
     } finally {
       setSaving(false);
     }
+  }
+
+  if (!allowed) {
+    return (
+      <div className="private-section">
+        <button className="btn-link" onClick={onBack}>
+          ← Volver a la ficha técnica
+        </button>
+        <h1>Acceso denegado</h1>
+        <p className="hint">No tienes permiso para ver esta sección.</p>
+      </div>
+    );
   }
 
   if (loading) {

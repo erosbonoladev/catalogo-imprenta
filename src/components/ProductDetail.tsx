@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { deleteProduct, getImageSrc, getProduct, getProductSpecs } from "../db";
 import type { Product, ProductSpec } from "../types";
+import { hasPermission, useAuth } from "../auth";
 
 interface Props {
   productId: number;
@@ -19,6 +20,7 @@ export default function ProductDetail({
   onOpenPlasticos,
   onOpenImprenta,
 }: Props) {
+  const { user } = useAuth();
   const [product, setProduct] = useState<Product | null>(null);
   const [specs, setSpecs] = useState<ProductSpec[]>([]);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -101,18 +103,22 @@ export default function ProductDetail({
             <button className="btn btn-primary" onClick={() => onEdit(product.id)}>
               Editar ficha
             </button>
-            <button
-              className="btn btn-secondary"
-              onClick={() => onOpenPlasticos(product.id)}
-            >
-              🔒 Plásticos
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={() => onOpenImprenta(product.id)}
-            >
-              🔒 Imprenta
-            </button>
+            {hasPermission(user, "plasticos") && (
+              <button
+                className="btn btn-secondary"
+                onClick={() => onOpenPlasticos(product.id)}
+              >
+                Plásticos
+              </button>
+            )}
+            {hasPermission(user, "imprenta") && (
+              <button
+                className="btn btn-secondary"
+                onClick={() => onOpenImprenta(product.id)}
+              >
+                Imprenta
+              </button>
+            )}
             {confirmingDelete ? (
               <span className="confirm-delete">
                 ¿Eliminar este producto?

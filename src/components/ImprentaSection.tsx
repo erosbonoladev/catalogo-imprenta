@@ -1,7 +1,25 @@
 import { useEffect, useState } from "react";
-import { getPrintItems, savePrintItems, getProduct } from "../db";
-import type { PrintItem, PrintItemCheck, PrintItemExtra, Product } from "../types";
+import {
+  deletePrintItemOrder,
+  deletePrintItemPurchase,
+  getPrintItemOrders,
+  getPrintItemPurchases,
+  getPrintItems,
+  savePrintItems,
+  getProduct,
+  logEvent,
+} from "../db";
+import type {
+  PlacasExistentes,
+  PrintItem,
+  PrintItemCheck,
+  PrintItemExtra,
+  PrintItemOrder,
+  PrintItemPurchase,
+  Product,
+} from "../types";
 import { PROCESOS_IMPRENTA } from "../types";
+import { hasPermission, useAuth } from "../auth";
 import AutoGrowInput from "./AutoGrowInput";
 import Toast from "./Toast";
 import OrderModal from "./OrderModal";
@@ -13,7 +31,13 @@ interface Props {
 
 const TIPOS_PAPEL = ["Bond", "Sulfatada", "Cartulina", "Couché", "Opalina", "Kraft"];
 
-const CAMPOS_VISTA: { label: string; key: keyof PrintItem }[] = [
+const PLACAS_EXISTENTES_LABEL: Record<PlacasExistentes, string> = {
+  "": "Sin definir",
+  si: "Sí",
+  no: "No",
+};
+
+const CAMPOS_VISTA: { label: string; key: keyof PrintItem; format?: (v: string) => string }[] = [
   { label: "Tamaño extendido", key: "tamano_extendido" },
   { label: "Tamaño final", key: "tamano_final" },
   { label: "Tintas", key: "tintas" },
@@ -24,7 +48,19 @@ const CAMPOS_VISTA: { label: string; key: keyof PrintItem }[] = [
   { label: "Máquina", key: "maquina" },
   { label: "Formación", key: "formacion" },
   { label: "Número de pliegos", key: "numero_pliegos" },
+  { label: "Número de placas", key: "numero_placas" },
+  {
+    label: "Placas existentes",
+    key: "placas_existentes",
+    format: (v) => PLACAS_EXISTENTES_LABEL[v as PlacasExistentes] ?? "Sin definir",
+  },
 ];
+
+function formatFecha(iso: string): string {
+  const withZone = iso.includes("T") ? iso : `${iso.replace(" ", "T")}Z`;
+  const date = new Date(withZone);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString("es-MX");
+}
 
 function emptyItem(orden: number): PrintItem {
   return {
@@ -39,6 +75,8 @@ function emptyItem(orden: number): PrintItem {
     maquina: "",
     formacion: "",
     numero_pliegos: "",
+    numero_placas: "",
+    placas_existentes: "",
     checks: PROCESOS_IMPRENTA.map((nombre, i) => ({ nombre, marcado: false, orden: i + 1 })),
     extras: [],
     acabados: "",
@@ -48,6 +86,8 @@ function emptyItem(orden: number): PrintItem {
 }
 
 export default function ImprentaSection({ productId, onBack }: Props) {
+  const { user } = useAuth();
+  const allowed = hasPermission(user, "imprenta");
   const [product, setProduct] = useState<Product | null>(null);
   const [items, setItems] = useState<PrintItem[]>([]);
   const [savedItems, setSavedItems] = useState<PrintItem[]>([]);
@@ -58,15 +98,29 @@ export default function ImprentaSection({ productId, onBack }: Props) {
   const [showToast, setShowToast] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [orderItems, setOrderItems] = useState<PrintItem[] | null>(null);
+  const [historyOpen, setHistoryOpen] = useState<Record<number, boolean>>({});
+  const [historyLoading, setHistoryLoading] = useState<Record<number, boolean>>({});
+  const [ordersByItem, setOrdersByItem] = useState<Record<number, PrintItemOrder[]>>({});
+  const [purchasesByOrder, setPurchasesByOrder] = useState<Record<number, PrintItemPurchase[]>>({});
 
   useEffect(() => {
+    if (!allowed) return;
     Promise.all([getPrintItems(productId), getProduct(productId)]).then(([i, p]) => {
       setItems(i);
       setSavedItems(i);
       setProduct(p);
       setLoading(false);
     });
-  }, [productId]);
+  }, [productId, allowed]);
+
+  useEffect(() => {
+    if (allowed) return;
+    logEvent(
+      "WARNING",
+      `Acceso denegado a Imprenta para ${user?.username ?? "desconocido"}`,
+      user?.username ?? null,
+    );
+  }, [allowed, user?.username]);
 
   function updateItem<K extends keyof PrintItem>(index: number, key: K, value: PrintItem[K]) {
     setDirty(true);
@@ -161,9 +215,59 @@ export default function ImprentaSection({ productId, onBack }: Props) {
       setShowToast(true);
     } catch (err) {
       setError(`No se pudo guardar: ${String(err)}`);
+      logEvent("ERROR", `No se pudo guardar Imprenta del producto ${productId}: ${String(err)}`, user?.username ?? null);
     } finally {
       setSaving(false);
     }
+  }
+
+  async function toggleHistory(item: PrintItem) {
+    if (!item.id) return;
+    const itemId = item.id;
+    if (historyOpen[itemId]) {
+      setHistoryOpen((prev) => ({ ...prev, [itemId]: false }));
+      return;
+    }
+    setHistoryOpen((prev) => ({ ...prev, [itemId]: true }));
+    setHistoryLoading((prev) => ({ ...prev, [itemId]: true }));
+    const orders = await getPrintItemOrders(itemId);
+    setOrdersByItem((prev) => ({ ...prev, [itemId]: orders }));
+    const purchaseEntries = await Promise.all(
+      orders.map(async (o) => [o.id, await getPrintItemPurchases(o.id)] as const),
+    );
+    setPurchasesByOrder((prev) => ({ ...prev, ...Object.fromEntries(purchaseEntries) }));
+    setHistoryLoading((prev) => ({ ...prev, [itemId]: false }));
+  }
+
+  async function handleDeleteOrder(itemId: number, order: PrintItemOrder) {
+    await deletePrintItemOrder(order.id);
+    setOrdersByItem((prev) => ({
+      ...prev,
+      [itemId]: (prev[itemId] ?? []).filter((o) => o.id !== order.id),
+    }));
+    setPurchasesByOrder((prev) => {
+      const next = { ...prev };
+      delete next[order.id];
+      return next;
+    });
+    logEvent(
+      "INFO",
+      `Orden de producción #${order.id} eliminada por ${user?.username ?? "desconocido"}`,
+      user?.username ?? null,
+    );
+  }
+
+  async function handleDeletePurchase(order: PrintItemOrder, purchase: PrintItemPurchase) {
+    await deletePrintItemPurchase(purchase.id);
+    setPurchasesByOrder((prev) => ({
+      ...prev,
+      [order.id]: (prev[order.id] ?? []).filter((p) => p.id !== purchase.id),
+    }));
+    logEvent(
+      "INFO",
+      `Compra #${purchase.id} eliminada por ${user?.username ?? "desconocido"}`,
+      user?.username ?? null,
+    );
   }
 
   function handleCancel() {
@@ -171,6 +275,18 @@ export default function ImprentaSection({ productId, onBack }: Props) {
     setDirty(false);
     setError(null);
     setEditMode(false);
+  }
+
+  if (!allowed) {
+    return (
+      <div className="private-section">
+        <button className="btn-link" onClick={onBack}>
+          ← Volver a la ficha técnica
+        </button>
+        <h1>Acceso denegado</h1>
+        <p className="hint">No tienes permiso para ver esta sección.</p>
+      </div>
+    );
   }
 
   if (loading) {
@@ -311,6 +427,29 @@ export default function ImprentaSection({ productId, onBack }: Props) {
                     onChange={(v) => updateItem(index, "numero_pliegos", v)}
                   />
                 </label>
+                <label>
+                  Número de placas
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={item.numero_placas}
+                    onChange={(e) => updateItem(index, "numero_placas", e.target.value)}
+                  />
+                </label>
+                <label>
+                  Placas existentes
+                  <select
+                    value={item.placas_existentes}
+                    onChange={(e) =>
+                      updateItem(index, "placas_existentes", e.target.value as PlacasExistentes)
+                    }
+                  >
+                    <option value="">Sin definir</option>
+                    <option value="si">Sí</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
               </div>
 
               <div className="print-item-checks">
@@ -392,7 +531,9 @@ export default function ImprentaSection({ productId, onBack }: Props) {
                   <div className="print-item-view-field" key={campo.key}>
                     <span className="print-item-view-field-label">{campo.label}</span>
                     <span className="print-item-view-field-value">
-                      {(item[campo.key] as string) || "—"}
+                      {campo.format
+                        ? campo.format(item[campo.key] as string)
+                        : (item[campo.key] as string) || "—"}
                     </span>
                   </div>
                 ))}
@@ -439,6 +580,109 @@ export default function ImprentaSection({ productId, onBack }: Props) {
                     {item.notas}
                   </span>
                 </div>
+              )}
+
+              {item.id && (
+                <>
+                  <button type="button" className="btn-link" onClick={() => toggleHistory(item)}>
+                    {historyOpen[item.id] ? "Ocultar órdenes y compras" : "Ver órdenes y compras"}
+                  </button>
+                  {historyOpen[item.id] &&
+                    (historyLoading[item.id] ? (
+                      <p className="hint">Cargando…</p>
+                    ) : (
+                      <div className="print-item-history">
+                        {(ordersByItem[item.id] ?? []).length === 0 ? (
+                          <p className="hint">
+                            No hay órdenes de producción generadas para este ítem todavía.
+                          </p>
+                        ) : (
+                          (ordersByItem[item.id] ?? []).map((order) => (
+                            <div className="print-item-history-order" key={order.id}>
+                              <div className="print-item-card-header">
+                                <span className="print-item-checks-label">
+                                  Orden de producción
+                                </span>
+                                <button
+                                  type="button"
+                                  className="btn-link"
+                                  onClick={() => handleDeleteOrder(item.id!, order)}
+                                >
+                                  Borrar
+                                </button>
+                              </div>
+                              <div className="print-item-view-fields">
+                                <div className="print-item-view-field">
+                                  <span className="print-item-view-field-label">Fecha</span>
+                                  <span className="print-item-view-field-value">
+                                    {formatFecha(order.creado_en)}
+                                  </span>
+                                </div>
+                                <div className="print-item-view-field">
+                                  <span className="print-item-view-field-label">Merma</span>
+                                  <span className="print-item-view-field-value">{order.merma}</span>
+                                </div>
+                                <div className="print-item-view-field">
+                                  <span className="print-item-view-field-label">
+                                    Cantidad de arte
+                                  </span>
+                                  <span className="print-item-view-field-value">
+                                    {order.cantidad_arte}
+                                  </span>
+                                </div>
+                                <div className="print-item-view-field">
+                                  <span className="print-item-view-field-label">
+                                    Número de tiros
+                                  </span>
+                                  <span className="print-item-view-field-value">
+                                    {order.numero_tiros ?? "—"}
+                                  </span>
+                                </div>
+                                <div className="print-item-view-field">
+                                  <span className="print-item-view-field-label">
+                                    Total de tamaños a imprimir con merma
+                                  </span>
+                                  <span className="print-item-view-field-value">
+                                    {order.total_pliegos}
+                                  </span>
+                                </div>
+                                <div className="print-item-view-field">
+                                  <span className="print-item-view-field-label">
+                                    Total de tamaños por pliego a imprimir
+                                  </span>
+                                  <span className="print-item-view-field-value">
+                                    {order.numero_pliegos_usado > 0
+                                      ? Math.ceil(order.total_pliegos / order.numero_pliegos_usado)
+                                      : "—"}
+                                  </span>
+                                </div>
+                              </div>
+                              {(purchasesByOrder[order.id] ?? []).length > 0 && (
+                                <div className="print-item-view-section">
+                                  <span className="print-item-view-field-label">Compras</span>
+                                  {(purchasesByOrder[order.id] ?? []).map((p) => (
+                                    <div className="print-item-card-header" key={p.id}>
+                                      <span className="print-item-view-field-value">
+                                        {p.papel || "—"} — Cortes {p.cortes} — Cantidad{" "}
+                                        {p.cantidad} — Total de tamaños {p.total_tamanos}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        className="btn-link"
+                                        onClick={() => handleDeletePurchase(order, p)}
+                                      >
+                                        Borrar
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    ))}
+                </>
               )}
             </div>
           ),

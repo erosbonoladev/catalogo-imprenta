@@ -5,10 +5,12 @@ import {
   getImageSrc,
   getProduct,
   getProductSpecs,
+  logEvent,
   pickImage,
   updateProduct,
 } from "../db";
 import type { ProductInput, ProductSpec } from "../types";
+import { useAuth } from "../auth";
 import AutoGrowInput from "./AutoGrowInput";
 
 interface Props {
@@ -27,6 +29,7 @@ const emptyProduct: ProductInput = {
 };
 
 export default function ProductForm({ productId, onDone, onCancel }: Props) {
+  const { user } = useAuth();
   const [product, setProduct] = useState<ProductInput>(emptyProduct);
   const [specs, setSpecs] = useState<ProductSpec[]>([]);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -113,6 +116,7 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
       onDone(id);
     } catch (err) {
       setError(`No se pudo guardar el producto: ${String(err)}`);
+      logEvent("ERROR", `No se pudo guardar el producto: ${String(err)}`, user?.username ?? null);
     } finally {
       setSaving(false);
     }

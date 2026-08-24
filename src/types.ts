@@ -64,6 +64,8 @@ export const PROCESOS_IMPRENTA = [
   "Barniz de máquina",
 ] as const;
 
+export type PlacasExistentes = "" | "si" | "no";
+
 export interface PrintItem {
   id?: number;
   product_id?: number;
@@ -78,6 +80,8 @@ export interface PrintItem {
   maquina: string;
   formacion: string;
   numero_pliegos: string;
+  numero_placas: string;
+  placas_existentes: PlacasExistentes;
   checks: PrintItemCheck[];
   extras: PrintItemExtra[];
   acabados: string;
@@ -85,8 +89,74 @@ export interface PrintItem {
   orden: number;
 }
 
+export interface PrintItemOrder {
+  id: number;
+  print_item_id: number;
+  merma: number;
+  cantidad_arte: number;
+  numero_tiros: number | null;
+  formacion_usada: number;
+  numero_pliegos_usado: number;
+  total_pliegos: number;
+  usuario: string | null;
+  creado_en: string;
+}
+
+export interface PrintItemPurchase {
+  id: number;
+  print_item_order_id: number;
+  papel: string;
+  pliego: string;
+  maquina: string;
+  cortes: number;
+  cantidad: number;
+  total_tamanos: number;
+  usuario: string | null;
+  creado_en: string;
+}
+
 export type SearchFilter = "todo" | "nombre" | "sku" | "material";
 
-export const SECCION_PLASTICOS = "plasticos";
-export const SECCION_IMPRENTA = "imprenta";
-export const SECCION_ADMIN = "admin";
+export const PERMISOS = ["plasticos", "imprenta", "configuraciones"] as const;
+export type Permiso = (typeof PERMISOS)[number];
+
+export const PERMISO_LABELS: Record<Permiso, string> = {
+  plasticos: "Plásticos",
+  imprenta: "Imprenta",
+  configuraciones: "Configuraciones",
+};
+
+export type Rol = "usuario" | "admin";
+
+export interface User {
+  id: number;
+  username: string;
+  activo: boolean;
+  rol: Rol;
+  permisos: Permiso[];
+  creado_en: string;
+}
+
+export interface UserInput {
+  username: string;
+  password?: string;
+  activo: boolean;
+  rol: Rol;
+  permisos: Permiso[];
+}
+
+export type LogLevel = "INFO" | "WARNING" | "ERROR";
+
+export interface AppLog {
+  id: number;
+  nivel: LogLevel;
+  mensaje: string;
+  usuario: string | null;
+  creado_en: string;
+}
+
+export interface ConnectedUser {
+  id: number;
+  username: string;
+  last_seen: string;
+}
