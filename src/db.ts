@@ -9,7 +9,10 @@ import type {
   LogLevel,
   PlacasExistentes,
   Permiso,
+  PlasticItem,
   PlasticPiece,
+  PlasticProduct,
+  PlasticProductInput,
   PrintItem,
   PrintItemCheck,
   PrintItemExtra,
@@ -45,6 +48,7 @@ interface ProductRow {
   descripcion: string;
   imagen: ArrayBuffer | null;
   imagen_mime: string | null;
+  presentacion_original: string | null;
   creado_en: string;
 }
 
@@ -57,6 +61,7 @@ function rowToProduct(row: ProductRow): Product {
     material: row.material,
     descripcion: row.descripcion,
     imagen: toImageBlob(row.imagen, row.imagen_mime),
+    presentacion_original: row.presentacion_original ?? "",
     creado_en: row.creado_en,
   };
 }
@@ -208,6 +213,30 @@ export async function deleteProduct(id: number): Promise<void> {
   await client.execute({ sql: "DELETE FROM products WHERE id = ?1", args: [id] });
 }
 
+export async function findProductByCodigo(codigo: string): Promise<Product | null> {
+  const result = await client.execute({
+    sql: "SELECT * FROM products WHERE codigo = ?1",
+    args: [codigo.trim()],
+  });
+  const row = result.rows[0] as unknown as ProductRow | undefined;
+  return row ? rowToProduct(row) : null;
+}
+
+export async function findProductsByNombre(nombre: string): Promise<Product[]> {
+  const result = await client.execute({
+    sql: "SELECT * FROM products WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(?1))",
+    args: [nombre],
+  });
+  return (result.rows as unknown as ProductRow[]).map(rowToProduct);
+}
+
+export async function setPresentacionOriginal(productId: number, text: string): Promise<void> {
+  await client.execute({
+    sql: "UPDATE products SET presentacion_original = ?1 WHERE id = ?2",
+    args: [text, productId],
+  });
+}
+
 export async function codigoEnUso(
   codigo: string,
   excludeId?: number,
@@ -248,6 +277,15 @@ export async function pickImage(): Promise<ImageBlob | null> {
   const ext = selected.split(".").pop()?.toLowerCase() ?? "";
   const mime = MIME_BY_EXT[ext] ?? "application/octet-stream";
   return { data, mime };
+}
+
+export async function pickExcelFile(): Promise<Uint8Array | null> {
+  const selected = await open({
+    multiple: false,
+    filters: [{ name: "Excel", extensions: ["xlsx"] }],
+  });
+  if (!selected || Array.isArray(selected)) return null;
+  return readFile(selected);
 }
 
 // --- Usuarios y permisos ---
@@ -481,6 +519,183 @@ export async function savePlasticPieces(
       ],
     });
     orden += 1;
+  }
+}
+
+// --- Plásticos (catálogo reutilizable) ---
+
+interface PlasticProductRow {
+  id: number;
+  nombre: string;
+  sku: string;
+  color: string;
+  origen: string;
+  descripcion: string;
+  armado: string;
+  dimension: string;
+  peso: string;
+  tipo_empaque: string;
+  imagen: ArrayBuffer | null;
+  imagen_mime: string | null;
+  imagen_codigo_barras: ArrayBuffer | null;
+  imagen_codigo_barras_mime: string | null;
+  creado_en: string;
+}
+
+function rowToPlasticProduct(row: PlasticProductRow): PlasticProduct {
+  return {
+    id: row.id,
+    nombre: row.nombre,
+    sku: row.sku,
+    color: row.color,
+    origen: row.origen,
+    descripcion: row.descripcion,
+    armado: row.armado,
+    dimension: row.dimension,
+    peso: row.peso,
+    tipo_empaque: row.tipo_empaque,
+    imagen: toImageBlob(row.imagen, row.imagen_mime),
+    imagen_codigo_barras: toImageBlob(row.imagen_codigo_barras, row.imagen_codigo_barras_mime),
+    creado_en: row.creado_en,
+  };
+}
+
+function plasticProductToData(product: PlasticProduct): PlasticProductInput {
+  return {
+    nombre: product.nombre,
+    sku: product.sku,
+    color: product.color,
+    origen: product.origen,
+    descripcion: product.descripcion,
+    armado: product.armado,
+    dimension: product.dimension,
+    peso: product.peso,
+    tipo_empaque: product.tipo_empaque,
+    imagen: product.imagen,
+    imagen_codigo_barras: product.imagen_codigo_barras,
+  };
+}
+
+export async function searchPlasticProducts(
+  query: string,
+): Promise<PlasticProduct[]> {
+  const trimmed = query.trim();
+  const result = trimmed
+    ? await client.execute({
+        sql: `SELECT * FROM plastic_products
+              WHERE nombre LIKE ?1 OR sku LIKE ?1 OR color LIKE ?1
+              ORDER BY nombre, sku`,
+        args: [`%${trimmed}%`],
+      })
+    : await client.execute("SELECT * FROM plastic_products ORDER BY nombre, sku");
+  return (result.rows as unknown as PlasticProductRow[]).map(rowToPlasticProduct);
+}
+
+export async function createPlasticProduct(
+  input: PlasticProductInput,
+): Promise<number> {
+  const result = await client.execute({
+    sql: `INSERT INTO plastic_products
+          (nombre, sku, color, origen, descripcion, armado, dimension, peso, tipo_empaque, imagen, imagen_mime, imagen_codigo_barras, imagen_codigo_barras_mime)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`,
+    args: [
+      input.nombre.trim(),
+      input.sku.trim(),
+      input.color.trim(),
+      input.origen.trim(),
+      input.descripcion.trim(),
+      input.armado.trim(),
+      input.dimension.trim(),
+      input.peso.trim(),
+      input.tipo_empaque.trim(),
+      input.imagen?.data ?? null,
+      input.imagen?.mime ?? null,
+      input.imagen_codigo_barras?.data ?? null,
+      input.imagen_codigo_barras?.mime ?? null,
+    ],
+  });
+  return Number(result.lastInsertRowid);
+}
+
+export async function updatePlasticProduct(
+  id: number,
+  input: PlasticProductInput,
+): Promise<void> {
+  await client.execute({
+    sql: `UPDATE plastic_products
+          SET nombre = ?1, sku = ?2, color = ?3, origen = ?4, descripcion = ?5, armado = ?6,
+              dimension = ?7, peso = ?8, tipo_empaque = ?9, imagen = ?10, imagen_mime = ?11,
+              imagen_codigo_barras = ?12, imagen_codigo_barras_mime = ?13
+          WHERE id = ?14`,
+    args: [
+      input.nombre.trim(),
+      input.sku.trim(),
+      input.color.trim(),
+      input.origen.trim(),
+      input.descripcion.trim(),
+      input.armado.trim(),
+      input.dimension.trim(),
+      input.peso.trim(),
+      input.tipo_empaque.trim(),
+      input.imagen?.data ?? null,
+      input.imagen?.mime ?? null,
+      input.imagen_codigo_barras?.data ?? null,
+      input.imagen_codigo_barras?.mime ?? null,
+      id,
+    ],
+  });
+}
+
+interface PlasticItemRow extends PlasticProductRow {
+  item_id: number;
+  item_orden: number;
+}
+
+export async function getPlasticItems(productId: number): Promise<PlasticItem[]> {
+  const result = await client.execute({
+    sql: `SELECT ppi.id AS item_id, ppi.orden AS item_orden, pp.*
+          FROM product_plastic_items ppi
+          JOIN plastic_products pp ON pp.id = ppi.plastic_product_id
+          WHERE ppi.product_id = ?1
+          ORDER BY ppi.orden, ppi.id`,
+    args: [productId],
+  });
+  return (result.rows as unknown as PlasticItemRow[]).map((row) => ({
+    id: row.item_id,
+    product_id: productId,
+    plastic_product_id: row.id,
+    orden: row.item_orden,
+    data: plasticProductToData(rowToPlasticProduct(row)),
+  }));
+}
+
+export async function savePlasticItems(
+  productId: number,
+  items: PlasticItem[],
+): Promise<void> {
+  const resolved: { plasticProductId: number; orden: number }[] = [];
+  let orden = 1;
+  for (const item of items) {
+    if (!item.data.nombre.trim() && !item.data.sku.trim()) continue;
+    let plasticProductId: number;
+    if (item.plastic_product_id) {
+      plasticProductId = item.plastic_product_id;
+      await updatePlasticProduct(plasticProductId, item.data);
+    } else {
+      plasticProductId = await createPlasticProduct(item.data);
+    }
+    resolved.push({ plasticProductId, orden });
+    orden += 1;
+  }
+  await client.execute({
+    sql: "DELETE FROM product_plastic_items WHERE product_id = ?1",
+    args: [productId],
+  });
+  for (const { plasticProductId, orden: itemOrden } of resolved) {
+    await client.execute({
+      sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden) VALUES (?1, ?2, ?3)`,
+      args: [productId, plasticProductId, itemOrden],
+    });
   }
 }
 

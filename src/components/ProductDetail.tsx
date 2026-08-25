@@ -99,6 +99,13 @@ export default function ProductDetail({
             </table>
           )}
 
+          {product.presentacion_original && (
+            <details className="presentacion-original">
+              <summary>Ver texto original de Presentación / Contenido</summary>
+              <p>{product.presentacion_original}</p>
+            </details>
+          )}
+
           <div className="product-detail-actions">
             <button className="btn btn-primary" onClick={() => onEdit(product.id)}>
               Editar ficha

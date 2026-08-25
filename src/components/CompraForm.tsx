@@ -11,6 +11,7 @@ interface Props {
   item: PrintItem;
   orders: PrintItemOrder[];
   multi: boolean;
+  refreshKey?: number;
 }
 
 const NUMERIC_RE = /^\d+(\.\d+)?$/;
@@ -23,7 +24,7 @@ function sanitizeFilename(text: string): string {
   return text.trim().replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "compra";
 }
 
-export default function CompraForm({ product, item, orders, multi }: Props) {
+export default function CompraForm({ product, item, orders, multi, refreshKey }: Props) {
   const { user } = useAuth();
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(orders[0]?.id ?? null);
   const [cortesOverride, setCortesOverride] = useState("");
@@ -40,7 +41,7 @@ export default function CompraForm({ product, item, orders, multi }: Props) {
       setPurchases(list);
       setLoadingPurchases(false);
     });
-  }, [selectedOrderId]);
+  }, [selectedOrderId, refreshKey]);
 
   if (orders.length === 0) {
     return (
@@ -66,16 +67,18 @@ export default function CompraForm({ product, item, orders, multi }: Props) {
     setError(null);
     setSaving(true);
     try {
-      const pdfBytes = buildPurchasePdf(product, {
-        item,
-        baseOrder: selectedOrder,
-        papel: item.tipo_papel,
-        pliego: item.pliego,
-        maquina: item.maquina,
-        cortes: cortesNum,
-        cantidad,
-        totalTamanos,
-      });
+      const pdfBytes = await buildPurchasePdf(product, [
+        {
+          item,
+          baseOrder: selectedOrder,
+          papel: item.tipo_papel,
+          pliego: item.pliego,
+          maquina: item.maquina,
+          cortes: cortesNum,
+          cantidad,
+          totalTamanos,
+        },
+      ]);
       const fecha = new Date().toISOString().slice(0, 10);
       const defaultPath = `Compra_${sanitizeFilename(product.codigo)}_${sanitizeFilename(item.nombre)}_${fecha}.pdf`;
 

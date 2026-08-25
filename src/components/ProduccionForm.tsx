@@ -149,7 +149,7 @@ export default function ProduccionForm({ product, items, onOrderCreated, onSwitc
 
     setSaving(true);
     try {
-      const pdfBytes = buildOrderPdf(product, entries);
+      const pdfBytes = await buildOrderPdf(product, entries);
       const fecha = new Date().toISOString().slice(0, 10);
       const nombreOrden = items.length > 1 ? "general" : sanitizeFilename(items[0].nombre);
       const defaultPath = `Orden_${sanitizeFilename(product.codigo)}_${nombreOrden}_${fecha}.pdf`;

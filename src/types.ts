@@ -11,6 +11,7 @@ export interface Product {
   material: string;
   descripcion: string;
   imagen: ImageBlob | null;
+  presentacion_original: string;
   creado_en: string;
 }
 
@@ -38,6 +39,44 @@ export interface PlasticPiece {
   color: string;
   imagen: ImageBlob | null;
   orden: number;
+}
+
+export interface PlasticProduct {
+  id: number;
+  nombre: string;
+  sku: string;
+  color: string;
+  origen: string;
+  descripcion: string;
+  armado: string;
+  dimension: string;
+  peso: string;
+  tipo_empaque: string;
+  imagen: ImageBlob | null;
+  imagen_codigo_barras: ImageBlob | null;
+  creado_en: string;
+}
+
+export interface PlasticProductInput {
+  nombre: string;
+  sku: string;
+  color: string;
+  origen: string;
+  descripcion: string;
+  armado: string;
+  dimension: string;
+  peso: string;
+  tipo_empaque: string;
+  imagen: ImageBlob | null;
+  imagen_codigo_barras: ImageBlob | null;
+}
+
+export interface PlasticItem {
+  id?: number;
+  product_id?: number;
+  plastic_product_id: number | null;
+  orden: number;
+  data: PlasticProductInput;
 }
 
 export interface PrintItemCheck {

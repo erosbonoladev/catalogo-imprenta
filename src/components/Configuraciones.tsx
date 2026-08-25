@@ -1,25 +1,31 @@
 import { useEffect, useState } from "react";
-import { hasPermission, useAuth } from "../auth";
+import { hasPermission, isAdmin, useAuth } from "../auth";
 import { logEvent } from "../db";
 import UsersPanel from "./UsersPanel";
 import ConnectedUsersPanel from "./ConnectedUsersPanel";
 import LogsPanel from "./LogsPanel";
+import FichaImportPanel from "./FichaImportPanel";
 
 interface Props {
   onBack: () => void;
 }
 
-type Tab = "usuarios" | "conectados" | "registro";
+type Tab = "usuarios" | "conectados" | "registro" | "captura";
 
-const TABS: { value: Tab; label: string }[] = [
+const BASE_TABS: { value: Tab; label: string }[] = [
   { value: "usuarios", label: "Usuarios" },
   { value: "conectados", label: "Usuarios conectados" },
   { value: "registro", label: "Registro" },
 ];
 
+const ADMIN_TABS: { value: Tab; label: string }[] = [
+  { value: "captura", label: "Captura masiva de fichas técnicas" },
+];
+
 export default function Configuraciones({ onBack }: Props) {
   const { user } = useAuth();
   const allowed = hasPermission(user, "configuraciones");
+  const tabs = isAdmin(user) ? [...BASE_TABS, ...ADMIN_TABS] : BASE_TABS;
   const [tab, setTab] = useState<Tab>("usuarios");
 
   useEffect(() => {
@@ -51,7 +57,7 @@ export default function Configuraciones({ onBack }: Props) {
       <h1>Configuraciones</h1>
 
       <div className="search-filters" role="group" aria-label="Sección de configuraciones">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.value}
             type="button"
@@ -66,6 +72,7 @@ export default function Configuraciones({ onBack }: Props) {
       {tab === "usuarios" && <UsersPanel />}
       {tab === "conectados" && <ConnectedUsersPanel />}
       {tab === "registro" && <LogsPanel />}
+      {tab === "captura" && <FichaImportPanel />}
     </div>
   );
 }

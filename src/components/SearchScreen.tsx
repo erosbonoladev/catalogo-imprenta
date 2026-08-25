@@ -4,6 +4,7 @@ import type { Product, SearchFilter } from "../types";
 import { hasPermission, useAuth } from "../auth";
 import ProductCard from "./ProductCard";
 import UpdateChecker from "./UpdateChecker";
+import Pagination from "./Pagination";
 
 interface Props {
   onSelect: (id: number) => void;
@@ -18,12 +19,15 @@ const FILTROS: { value: SearchFilter; label: string }[] = [
   { value: "material", label: "Material" },
 ];
 
+const PAGE_SIZE = 20; // 5 filas x 4 columnas por página
+
 export default function SearchScreen({ onSelect, onNew, onConfiguraciones }: Props) {
   const { user, logout } = useAuth();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<SearchFilter>("todo");
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,6 +37,7 @@ export default function SearchScreen({ onSelect, onNew, onConfiguraciones }: Pro
       if (!cancelled) {
         setResults(products);
         setLoading(false);
+        setCurrentPage(1);
       }
     }, 150);
     return () => {
@@ -40,6 +45,17 @@ export default function SearchScreen({ onSelect, onNew, onConfiguraciones }: Pro
       clearTimeout(timer);
     };
   }, [query, filter]);
+
+  const totalPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
+
+  const pageResults = results.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE,
+  );
 
   return (
     <div className="search-screen">
@@ -93,15 +109,24 @@ export default function SearchScreen({ onSelect, onNew, onConfiguraciones }: Pro
             : "Aún no hay productos en el catálogo. Agrega el primero."}
         </p>
       ) : (
-        <div className="results-grid">
-          {results.map((product) => (
-            <ProductCard
-              key={product.id}
-              product={product}
-              onClick={() => onSelect(product.id)}
+        <>
+          <div className="results-grid">
+            {pageResults.map((product) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                onClick={() => onSelect(product.id)}
+              />
+            ))}
+          </div>
+          {totalPages > 1 && (
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onChange={setCurrentPage}
             />
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   );

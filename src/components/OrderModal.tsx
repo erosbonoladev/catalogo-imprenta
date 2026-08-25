@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeFile } from "@tauri-apps/plugin-fs";
 import type { PrintItem, PrintItemOrder, Product } from "../types";
-import { getPrintItemOrders } from "../db";
+import { createPrintItemPurchase, getPrintItemOrders, logEvent } from "../db";
+import { useAuth } from "../auth";
+import { buildPurchasePdf } from "../pdf";
+import type { PurchaseEntry } from "../pdf";
 import ProduccionForm from "./ProduccionForm";
 import CompraForm from "./CompraForm";
 
@@ -12,10 +17,25 @@ interface Props {
 
 type Mode = "produccion" | "compra";
 
+const NUMERIC_RE = /^\d+(\.\d+)?$/;
+
+function isPureNumber(value: string): boolean {
+  return NUMERIC_RE.test(value.trim());
+}
+
+function sanitizeFilename(text: string): string {
+  return text.trim().replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "compra";
+}
+
 export default function OrderModal({ product, items, onClose }: Props) {
+  const { user } = useAuth();
   const [mode, setMode] = useState<Mode>("produccion");
   const [ordersByItem, setOrdersByItem] = useState<Record<number, PrintItemOrder[]>>({});
   const [loadingOrders, setLoadingOrders] = useState(true);
+  const [generalSaving, setGeneralSaving] = useState(false);
+  const [generalError, setGeneralError] = useState<string | null>(null);
+  const [generalSuccess, setGeneralSuccess] = useState(false);
+  const [compraRefreshKey, setCompraRefreshKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +60,90 @@ export default function OrderModal({ product, items, onClose }: Props) {
       ...prev,
       [printItemId]: [order, ...(prev[printItemId] ?? [])],
     }));
+  }
+
+  async function handleGeneralCompraPdf() {
+    setGeneralError(null);
+    setGeneralSuccess(false);
+    const entries: PurchaseEntry[] = [];
+
+    for (const item of items) {
+      const orders = ordersByItem[item.id as number] ?? [];
+      if (orders.length === 0) {
+        setGeneralError(
+          `"${item.nombre || "(sin nombre)"}": aún no tiene una orden de Producción generada — créala en la pestaña Producción primero.`,
+        );
+        return;
+      }
+      const baseOrder = orders[0];
+      if (!isPureNumber(item.cortes_tamano)) {
+        setGeneralError(
+          `"${item.nombre || "(sin nombre)"}": el valor de Cortes ("${item.cortes_tamano || "—"}") no es numérico — genera la compra de este ítem individualmente para poder ingresar el valor a usar.`,
+        );
+        return;
+      }
+      const cortes = parseFloat(item.cortes_tamano);
+      const cantidad = Math.ceil(baseOrder.total_pliegos / cortes);
+      const totalTamanos = Math.ceil(cantidad * cortes);
+      entries.push({
+        item,
+        baseOrder,
+        papel: item.tipo_papel,
+        pliego: item.pliego,
+        maquina: item.maquina,
+        cortes,
+        cantidad,
+        totalTamanos,
+      });
+    }
+
+    setGeneralSaving(true);
+    try {
+      const pdfBytes = await buildPurchasePdf(product, entries);
+      const fecha = new Date().toISOString().slice(0, 10);
+      const defaultPath = `Compra_${sanitizeFilename(product.codigo)}_general_${fecha}.pdf`;
+
+      const path = await save({
+        title: "Guardar orden de compra general",
+        defaultPath,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (!path) {
+        setGeneralSaving(false);
+        return;
+      }
+      await writeFile(path, pdfBytes);
+
+      for (const entry of entries) {
+        try {
+          await createPrintItemPurchase(
+            entry.baseOrder.id,
+            {
+              papel: entry.papel,
+              pliego: entry.pliego,
+              maquina: entry.maquina,
+              cortes: entry.cortes,
+              cantidad: entry.cantidad,
+              totalTamanos: entry.totalTamanos,
+            },
+            user?.username,
+          );
+        } catch (err) {
+          logEvent(
+            "ERROR",
+            `No se pudo guardar la compra general del ítem ${entry.item.id}: ${String(err)}`,
+            user?.username ?? null,
+          );
+        }
+      }
+
+      setCompraRefreshKey((k) => k + 1);
+      setGeneralSuccess(true);
+    } catch (err) {
+      setGeneralError(`No se pudo generar el PDF: ${String(err)}`);
+    } finally {
+      setGeneralSaving(false);
+    }
   }
 
   return (
@@ -79,17 +183,40 @@ export default function OrderModal({ product, items, onClose }: Props) {
           (loadingOrders ? (
             <p className="hint">Cargando…</p>
           ) : (
-            <div className="order-modal-items">
-              {items.map((item) => (
-                <CompraForm
-                  key={item.id}
-                  product={product}
-                  item={item}
-                  orders={ordersByItem[item.id as number] ?? []}
-                  multi={items.length > 1}
-                />
-              ))}
-            </div>
+            <>
+              {items.length > 1 && (
+                <div className="order-modal-item">
+                  <p className="hint">
+                    Genera una sola orden de compra en PDF para todos los ítems de esta lista,
+                    usando la orden de Producción más reciente de cada uno.
+                  </p>
+                  {generalError && <p className="form-error">{generalError}</p>}
+                  {generalSuccess && <p className="hint">Compra general guardada y PDF generado.</p>}
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={handleGeneralCompraPdf}
+                      disabled={generalSaving}
+                    >
+                      {generalSaving ? "Generando…" : "Crear PDF de orden general de compra"}
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div className="order-modal-items">
+                {items.map((item) => (
+                  <CompraForm
+                    key={item.id}
+                    product={product}
+                    item={item}
+                    orders={ordersByItem[item.id as number] ?? []}
+                    multi={items.length > 1}
+                    refreshKey={compraRefreshKey}
+                  />
+                ))}
+              </div>
+            </>
           ))}
 
         <div className="form-actions">

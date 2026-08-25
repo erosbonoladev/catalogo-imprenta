@@ -1,5 +1,43 @@
 import { jsPDF } from "jspdf";
 import type { PrintItem, PrintItemOrder, Product } from "./types";
+import perspectivaUrl from "../Assets/perspectiva.jpeg";
+
+interface Logo {
+  img: HTMLImageElement;
+  w: number;
+  h: number;
+}
+
+let logoPromise: Promise<Logo | null> | null = null;
+
+function getLogo(): Promise<Logo | null> {
+  if (!logoPromise) {
+    logoPromise = (async () => {
+      try {
+        const img = new Image();
+        img.src = perspectivaUrl;
+        await img.decode();
+        return { img, w: img.naturalWidth, h: img.naturalHeight };
+      } catch (err) {
+        console.warn("No se pudo cargar la imagen corporativa para el PDF:", err);
+        return null;
+      }
+    })();
+  }
+  return logoPromise;
+}
+
+const LOGO_MAX_WIDTH = 100;
+const LOGO_MAX_HEIGHT = 70;
+
+async function drawLogo(doc: jsPDF, marginX: number, pageWidth: number): Promise<void> {
+  const logo = await getLogo();
+  if (!logo) return;
+  const scale = Math.min(LOGO_MAX_WIDTH / logo.w, LOGO_MAX_HEIGHT / logo.h, 1);
+  const drawW = logo.w * scale;
+  const drawH = logo.h * scale;
+  doc.addImage(logo.img, "JPEG", pageWidth - marginX - drawW, 28, drawW, drawH);
+}
 
 export interface OrderEntry {
   item: PrintItem;
@@ -40,12 +78,13 @@ const CAMPOS: { label: string; get: (item: PrintItem) => string }[] = [
   { label: "Placas existentes", get: (i) => PLACAS_EXISTENTES_LABEL[i.placas_existentes] ?? "Sin definir" },
 ];
 
-export function buildOrderPdf(product: Product, entries: OrderEntry[]): Uint8Array {
+export async function buildOrderPdf(product: Product, entries: OrderEntry[]): Promise<Uint8Array> {
   const doc = new jsPDF({ unit: "pt", format: "letter" });
   const marginX = 48;
   const pageHeight = doc.internal.pageSize.getHeight();
   const pageWidth = doc.internal.pageSize.getWidth();
   let y = 56;
+  await drawLogo(doc, marginX, pageWidth);
 
   function ensureSpace(lines: number) {
     if (y + lines * 16 > pageHeight - 48) {
@@ -124,11 +163,20 @@ export function buildOrderPdf(product: Product, entries: OrderEntry[]): Uint8Arr
   return new Uint8Array(doc.output("arraybuffer"));
 }
 
-export function buildPurchasePdf(product: Product, entry: PurchaseEntry): Uint8Array {
+export async function buildPurchasePdf(product: Product, entries: PurchaseEntry[]): Promise<Uint8Array> {
   const doc = new jsPDF({ unit: "pt", format: "letter" });
   const marginX = 48;
+  const pageHeight = doc.internal.pageSize.getHeight();
   const pageWidth = doc.internal.pageSize.getWidth();
   let y = 56;
+  await drawLogo(doc, marginX, pageWidth);
+
+  function ensureSpace(lines: number) {
+    if (y + lines * 16 > pageHeight - 48) {
+      doc.addPage();
+      y = 56;
+    }
+  }
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
@@ -139,39 +187,50 @@ export function buildPurchasePdf(product: Product, entry: PurchaseEntry): Uint8A
   doc.setFontSize(11);
   doc.text(`Producto: ${product.nombre} (${product.codigo})`, marginX, y);
   y += 16;
-  doc.text(`Ítem: ${entry.item.nombre || "(sin nombre)"}`, marginX, y);
-  y += 16;
   doc.text(`Fecha: ${new Date().toLocaleDateString("es-MX")}`, marginX, y);
   y += 24;
 
-  doc.setDrawColor(200);
-  doc.line(marginX, y, pageWidth - marginX, y);
-  y += 18;
+  for (const entry of entries) {
+    ensureSpace(9);
+    doc.setDrawColor(200);
+    doc.line(marginX, y, pageWidth - marginX, y);
+    y += 18;
 
-  doc.setFontSize(10.5);
-  doc.text(
-    `Total de tamaños a imprimir con merma (orden base): ${entry.baseOrder.total_pliegos}`,
-    marginX,
-    y,
-  );
-  y += 22;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.text(entry.item.nombre || "(sin nombre)", marginX, y);
+    y += 18;
 
-  doc.setFont("helvetica", "bold");
-  doc.text(`Cantidad: ${entry.cantidad}`, marginX, y);
-  y += 15;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10.5);
+    doc.text(
+      `Total de tamaños a imprimir con merma (orden base): ${entry.baseOrder.total_pliegos}`,
+      marginX,
+      y,
+    );
+    y += 22;
 
-  doc.setFont("helvetica", "normal");
-  doc.text(`Papel: ${entry.papel || "—"}`, marginX, y);
-  y += 15;
-  doc.text(`Pliego: ${entry.pliego || "—"}`, marginX, y);
-  y += 15;
-  doc.text(`Cortes: ${entry.cortes}`, marginX, y);
-  y += 15;
-  doc.text(`Máquina: ${entry.maquina || "—"}`, marginX, y);
-  y += 15;
+    doc.setFont("helvetica", "bold");
+    doc.text(`Cantidad: ${entry.cantidad}`, marginX, y);
+    y += 15;
 
-  doc.setFont("helvetica", "bold");
-  doc.text(`Total de tamaños: ${entry.totalTamanos}`, marginX, y);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Papel: ${entry.papel || "—"}`, marginX, y);
+    y += 15;
+    doc.text(`Pliego: ${entry.pliego || "—"}`, marginX, y);
+    y += 15;
+    doc.text(`Cortes: ${entry.cortes}`, marginX, y);
+    y += 15;
+    doc.text(`Máquina: ${entry.maquina || "—"}`, marginX, y);
+    y += 15;
+    doc.text(`Gramos o puntos: ${entry.item.gramos_puntos || "—"}`, marginX, y);
+    y += 15;
+
+    doc.setFont("helvetica", "bold");
+    doc.text(`Total de tamaños: ${entry.totalTamanos}`, marginX, y);
+    doc.setFont("helvetica", "normal");
+    y += 22;
+  }
 
   return new Uint8Array(doc.output("arraybuffer"));
 }

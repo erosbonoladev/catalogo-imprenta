@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { clearSession, getUserById, heartbeat, logEvent, verifyLogin } from "./db";
 import type { Permiso, User } from "./types";
 
@@ -18,6 +19,10 @@ export function hasPermission(user: CurrentUser | null, permiso: Permiso): boole
   if (!user || !user.activo) return false;
   if (user.rol === "admin") return true;
   return user.permisos.includes(permiso);
+}
+
+export function isAdmin(user: CurrentUser | null): boolean {
+  return !!user && user.activo && user.rol === "admin";
 }
 
 interface AuthContextValue {
@@ -89,6 +94,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(STORAGE_KEY);
     setUser(null);
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    getCurrentWindow()
+      .onCloseRequested(() => {
+        // No se bloquea el cierre de la ventana: limpiar la sesión aquí es
+        // "mejor esfuerzo" (localStorage se borra de inmediato; la fila en
+        // user_sessions puede o no alcanzar a borrarse antes de que el
+        // proceso termine, pero igual desaparece sola por el heartbeat).
+        logout();
+      })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [user, logout]);
 
   return (
     <AuthContext.Provider value={{ user, loading, login, logout }}>

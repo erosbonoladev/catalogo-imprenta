@@ -1,29 +1,53 @@
 import { useEffect, useState } from "react";
-import { getImageSrc, getPlasticPieces, logEvent, pickImage, savePlasticPieces } from "../db";
-import type { PlasticPiece } from "../types";
+import {
+  getImageSrc,
+  getPlasticItems,
+  logEvent,
+  pickImage,
+  savePlasticItems,
+} from "../db";
+import type { PlasticItem, PlasticProduct, PlasticProductInput } from "../types";
 import { hasPermission, useAuth } from "../auth";
 import AutoGrowInput from "./AutoGrowInput";
 import Toast from "./Toast";
+import PlasticProductPicker from "./PlasticProductPicker";
 
 interface Props {
   productId: number;
   onBack: () => void;
 }
 
+const ORIGENES = ["BOD", "GIL", "IMPR", "EXTR"] as const;
+
+const EMPTY_DATA: PlasticProductInput = {
+  nombre: "",
+  sku: "",
+  color: "",
+  origen: "",
+  descripcion: "",
+  armado: "",
+  dimension: "",
+  peso: "",
+  tipo_empaque: "",
+  imagen: null,
+  imagen_codigo_barras: null,
+};
+
 export default function PlasticosSection({ productId, onBack }: Props) {
   const { user } = useAuth();
   const allowed = hasPermission(user, "plasticos");
-  const [pieces, setPieces] = useState<PlasticPiece[]>([]);
+  const [items, setItems] = useState<PlasticItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [showToast, setShowToast] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!allowed) return;
-    getPlasticPieces(productId).then((p) => {
-      setPieces(p);
+    getPlasticItems(productId).then((list) => {
+      setItems(list);
       setLoading(false);
     });
   }, [productId, allowed]);
@@ -37,33 +61,70 @@ export default function PlasticosSection({ productId, onBack }: Props) {
     );
   }, [allowed, user?.username]);
 
-  function updatePiece(index: number, key: "sku" | "color", value: string) {
+  function updateItemData(index: number, patch: Partial<PlasticProductInput>) {
     setDirty(true);
-    setPieces((prev) => prev.map((p, i) => (i === index ? { ...p, [key]: value } : p)));
+    setItems((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, data: { ...item.data, ...patch } } : item)),
+    );
   }
 
-  function addPiece() {
+  function addNewItem() {
     setDirty(true);
-    setPieces((prev) => [...prev, { sku: "", color: "", imagen: null, orden: prev.length + 1 }]);
+    setItems((prev) => [
+      ...prev,
+      { plastic_product_id: null, orden: prev.length + 1, data: { ...EMPTY_DATA } },
+    ]);
   }
 
-  function removePiece(index: number) {
+  function addExistingProduct(producto: PlasticProduct) {
     setDirty(true);
-    setPieces((prev) => prev.filter((_, i) => i !== index));
+    setItems((prev) => [
+      ...prev,
+      {
+        plastic_product_id: producto.id,
+        orden: prev.length + 1,
+        data: {
+          nombre: producto.nombre,
+          sku: producto.sku,
+          color: producto.color,
+          origen: producto.origen,
+          descripcion: producto.descripcion,
+          armado: producto.armado,
+          dimension: producto.dimension,
+          peso: producto.peso,
+          tipo_empaque: producto.tipo_empaque,
+          imagen: producto.imagen,
+          imagen_codigo_barras: producto.imagen_codigo_barras,
+        },
+      },
+    ]);
+    setShowPicker(false);
   }
 
-  async function pickImageForPiece(index: number) {
+  function removeItem(index: number) {
+    setDirty(true);
+    setItems((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  async function pickProductImage(index: number) {
     const image = await pickImage();
     if (!image) return;
-    setDirty(true);
-    setPieces((prev) => prev.map((p, i) => (i === index ? { ...p, imagen: image } : p)));
+    updateItemData(index, { imagen: image });
+  }
+
+  async function pickBarcodeImage(index: number) {
+    const image = await pickImage();
+    if (!image) return;
+    updateItemData(index, { imagen_codigo_barras: image });
   }
 
   async function handleSave() {
     setSaving(true);
     setError(null);
     try {
-      await savePlasticPieces(productId, pieces);
+      await savePlasticItems(productId, items);
+      const refreshed = await getPlasticItems(productId);
+      setItems(refreshed);
       setDirty(false);
       setShowToast(true);
     } catch (err) {
@@ -97,30 +158,42 @@ export default function PlasticosSection({ productId, onBack }: Props) {
     );
   }
 
+  const linkedIds = items
+    .map((item) => item.plastic_product_id)
+    .filter((id): id is number => id !== null);
+
   return (
     <div className="private-section">
       <button className="btn-link" onClick={onBack}>
         ← Volver a la ficha técnica
       </button>
       <h1>Plásticos</h1>
-      <p className="hint">SKU, color e imagen de referencia de cada pieza.</p>
+      <p className="hint">
+        Productos de plástico usados en este juego. Cada uno vive en el catálogo de Plásticos y
+        puede reutilizarse en otros juegos sin volver a capturarlo.
+      </p>
 
-      <div className="pieces-list">
-        {pieces.map((piece, index) => (
-          <PieceRow
-            key={index}
-            piece={piece}
-            onSkuChange={(v) => updatePiece(index, "sku", v)}
-            onColorChange={(v) => updatePiece(index, "color", v)}
-            onPickImage={() => pickImageForPiece(index)}
-            onRemove={() => removePiece(index)}
+      <div className="plastic-items-list">
+        {items.map((item, index) => (
+          <PlasticItemCard
+            key={item.id ?? `new-${index}`}
+            item={item}
+            onChange={(patch) => updateItemData(index, patch)}
+            onPickImage={() => pickProductImage(index)}
+            onPickBarcode={() => pickBarcodeImage(index)}
+            onRemove={() => removeItem(index)}
           />
         ))}
       </div>
 
-      <button type="button" className="btn-link" onClick={addPiece}>
-        + Agregar pieza
-      </button>
+      <div className="plastic-items-add-actions">
+        <button type="button" className="btn-link" onClick={addNewItem}>
+          + Agregar producto nuevo
+        </button>
+        <button type="button" className="btn btn-secondary" onClick={() => setShowPicker(true)}>
+          Agregar un producto existente
+        </button>
+      </div>
 
       {error && <p className="form-error">{error}</p>}
 
@@ -131,46 +204,125 @@ export default function PlasticosSection({ productId, onBack }: Props) {
       </div>
 
       <Toast message="Guardado con éxito" show={showToast} onHide={() => setShowToast(false)} />
+
+      {showPicker && (
+        <PlasticProductPicker
+          excludeIds={linkedIds}
+          onSelect={addExistingProduct}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
     </div>
   );
 }
 
-interface PieceRowProps {
-  piece: PlasticPiece;
-  onSkuChange: (v: string) => void;
-  onColorChange: (v: string) => void;
+interface PlasticItemCardProps {
+  item: PlasticItem;
+  onChange: (patch: Partial<PlasticProductInput>) => void;
   onPickImage: () => void;
+  onPickBarcode: () => void;
   onRemove: () => void;
 }
 
-function PieceRow({ piece, onSkuChange, onColorChange, onPickImage, onRemove }: PieceRowProps) {
+function PlasticItemCard({ item, onChange, onPickImage, onPickBarcode, onRemove }: PlasticItemCardProps) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [barcodeSrc, setBarcodeSrc] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    getImageSrc(piece.imagen).then((src) => {
+    getImageSrc(item.data.imagen).then((src) => {
       if (!cancelled) setImageSrc(src);
     });
     return () => {
       cancelled = true;
     };
-  }, [piece.imagen]);
+  }, [item.data.imagen]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getImageSrc(item.data.imagen_codigo_barras).then((src) => {
+      if (!cancelled) setBarcodeSrc(src);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [item.data.imagen_codigo_barras]);
 
   return (
-    <div className="piece-row">
-      {imageSrc ? (
-        <img src={imageSrc} alt={piece.sku} className="piece-thumb" />
-      ) : (
-        <div className="piece-thumb piece-thumb-empty" />
-      )}
-      <AutoGrowInput placeholder="SKU" value={piece.sku} onChange={onSkuChange} />
-      <AutoGrowInput placeholder="Color" value={piece.color} onChange={onColorChange} />
-      <button type="button" className="btn btn-secondary" onClick={onPickImage}>
-        {imageSrc ? "Cambiar imagen" : "Imagen"}
-      </button>
+    <div className="plastic-item-card">
+      <div className="plastic-item-images">
+        <div className="plastic-item-image-box">
+          {imageSrc ? (
+            <img src={imageSrc} alt={item.data.nombre || "Producto"} />
+          ) : (
+            <span className="product-card-placeholder">Sin imagen</span>
+          )}
+          <button type="button" className="btn btn-secondary" onClick={onPickImage}>
+            {imageSrc ? "Cambiar imagen" : "Agregar imagen"}
+          </button>
+        </div>
+        <div className="plastic-item-barcode-box">
+          {barcodeSrc ? (
+            <img src={barcodeSrc} alt="Código de barras" />
+          ) : (
+            <span className="product-card-placeholder">Sin código de barras</span>
+          )}
+          <button type="button" className="btn btn-secondary" onClick={onPickBarcode}>
+            {barcodeSrc ? "Cambiar código de barras" : "Agregar código de barras"}
+          </button>
+        </div>
+      </div>
+
+      <div className="plastic-item-fields">
+        <PlasticField label="Nombre" value={item.data.nombre} onChange={(v) => onChange({ nombre: v })} />
+        <PlasticField label="SKU" value={item.data.sku} onChange={(v) => onChange({ sku: v })} />
+        <PlasticField label="Color" value={item.data.color} onChange={(v) => onChange({ color: v })} />
+        <label className="plastic-item-field">
+          <span>Origen</span>
+          <select value={item.data.origen} onChange={(e) => onChange({ origen: e.target.value })}>
+            <option value="">Sin definir</option>
+            {ORIGENES.map((origen) => (
+              <option key={origen} value={origen}>
+                {origen}
+              </option>
+            ))}
+          </select>
+        </label>
+        <PlasticField label="Armado" value={item.data.armado} onChange={(v) => onChange({ armado: v })} />
+        <PlasticField label="Dimensión" value={item.data.dimension} onChange={(v) => onChange({ dimension: v })} />
+        <PlasticField label="Peso" value={item.data.peso} onChange={(v) => onChange({ peso: v })} />
+        <PlasticField
+          label="Tipo de empaque"
+          value={item.data.tipo_empaque}
+          onChange={(v) => onChange({ tipo_empaque: v })}
+        />
+        <PlasticField
+          label="Descripción"
+          value={item.data.descripcion}
+          onChange={(v) => onChange({ descripcion: v })}
+          full
+        />
+      </div>
+
       <button type="button" className="btn-link" onClick={onRemove}>
-        Quitar
+        Quitar de este juego
       </button>
     </div>
+  );
+}
+
+interface PlasticFieldProps {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  full?: boolean;
+}
+
+function PlasticField({ label, value, onChange, full }: PlasticFieldProps) {
+  return (
+    <label className={`plastic-item-field${full ? " plastic-item-field-full" : ""}`}>
+      <span>{label}</span>
+      <AutoGrowInput value={value} onChange={onChange} />
+    </label>
   );
 }
