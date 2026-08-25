@@ -340,21 +340,28 @@ export default function FichaImportPanel() {
                     </td>
                     <td>
                       {row.status === "duplicada" ? (
-                        <div className="import-review-actions">
-                          <button
-                            type="button"
-                            className={`filter-chip${overwriteChoices.get(row.fila) ? " filter-chip-active" : ""}`}
-                            onClick={() => setOverwrite(row.fila, true)}
-                          >
-                            Sobrescribir
-                          </button>
-                          <button
-                            type="button"
-                            className={`filter-chip${!overwriteChoices.get(row.fila) ? " filter-chip-active" : ""}`}
-                            onClick={() => setOverwrite(row.fila, false)}
-                          >
-                            Omitir
-                          </button>
+                        <div className="import-overwrite-cell">
+                          <div className="import-review-actions">
+                            <button
+                              type="button"
+                              className={`filter-chip${overwriteChoices.get(row.fila) ? " filter-chip-active" : ""}`}
+                              onClick={() => setOverwrite(row.fila, true)}
+                            >
+                              Sobrescribir
+                            </button>
+                            <button
+                              type="button"
+                              className={`filter-chip${!overwriteChoices.get(row.fila) ? " filter-chip-active" : ""}`}
+                              onClick={() => setOverwrite(row.fila, false)}
+                            >
+                              Omitir
+                            </button>
+                          </div>
+                          <span className="import-overwrite-status">
+                            {overwriteChoices.get(row.fila)
+                              ? "Se sobrescribirá la ficha existente."
+                              : "Se omitirá esta fila."}
+                          </span>
                         </div>
                       ) : row.status === "nueva" ? (
                         "Se creará"

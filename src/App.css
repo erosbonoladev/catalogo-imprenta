@@ -1169,6 +1169,17 @@ textarea:focus {
   font-size: 0.85rem;
 }
 
+.import-overwrite-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.import-overwrite-status {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
 .import-summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
