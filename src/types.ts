@@ -138,6 +138,7 @@ export interface PrintItemOrder {
   numero_pliegos_usado: number;
   total_pliegos: number;
   usuario: string | null;
+  folio: string;
   creado_en: string;
 }
 
@@ -151,6 +152,7 @@ export interface PrintItemPurchase {
   cantidad: number;
   total_tamanos: number;
   usuario: string | null;
+  folio: string;
   creado_en: string;
 }
 
@@ -198,4 +200,50 @@ export interface ConnectedUser {
   id: number;
   username: string;
   last_seen: string;
+}
+
+export const ESTADOS_REQUISICION = [
+  "pendiente",
+  "confirmada",
+  "surtida",
+  "parcial",
+  "cancelada",
+] as const;
+export type EstadoRequisicion = (typeof ESTADOS_REQUISICION)[number];
+
+export interface Requisicion {
+  id: number;
+  product_id: number;
+  fecha: string;
+  numero_dia: number;
+  usuario: string | null;
+  etiqueta: string;
+  descripcion: string;
+  cantidad: number;
+  estado: EstadoRequisicion;
+  mensaje: string;
+  folio: string;
+  creado_en: string;
+}
+
+export interface RequisicionInput {
+  productId: number;
+  productNombre: string;
+  productCodigo: string;
+  etiqueta: string;
+  descripcion: string;
+  cantidad: number;
+  usuario: string | null;
+  folio: string;
+}
+
+export type TipoFolio = "requisicion" | "compra" | "produccion";
+
+export interface Folio {
+  id: number;
+  seccion: TipoFolio;
+  consecutivo: number;
+  folio: string;
+  sku: string;
+  creado_en: string;
 }

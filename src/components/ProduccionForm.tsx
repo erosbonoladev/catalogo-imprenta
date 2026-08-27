@@ -4,7 +4,7 @@ import { writeFile } from "@tauri-apps/plugin-fs";
 import type { PlacasExistentes, PrintItem, PrintItemOrder, Product } from "../types";
 import { buildOrderPdf } from "../pdf";
 import type { OrderEntry } from "../pdf";
-import { createPrintItemOrder, logEvent } from "../db";
+import { createFolio, createPrintItemOrder, logEvent } from "../db";
 import { useAuth } from "../auth";
 
 const PLACAS_EXISTENTES_LABEL: Record<PlacasExistentes, string> = {
@@ -42,10 +42,6 @@ function emptyInputs(): ItemInputs {
     formacionOverride: "",
     numeroPliegosOverride: "",
   };
-}
-
-function sanitizeFilename(text: string): string {
-  return text.trim().replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "orden";
 }
 
 function computeTotal(
@@ -149,10 +145,9 @@ export default function ProduccionForm({ product, items, onOrderCreated, onSwitc
 
     setSaving(true);
     try {
-      const pdfBytes = await buildOrderPdf(product, entries);
-      const fecha = new Date().toISOString().slice(0, 10);
-      const nombreOrden = items.length > 1 ? "general" : sanitizeFilename(items[0].nombre);
-      const defaultPath = `Orden_${sanitizeFilename(product.codigo)}_${nombreOrden}_${fecha}.pdf`;
+      const folio = await createFolio("produccion", product.codigo);
+      const pdfBytes = await buildOrderPdf(product, entries, folio.folio);
+      const defaultPath = `${folio.folio}.pdf`;
 
       const path = await save({
         title: "Guardar orden de impresión",
@@ -178,6 +173,7 @@ export default function ProduccionForm({ product, items, onOrderCreated, onSwitc
               formacionUsada: usedValues[i].formacionNum,
               numeroPliegosUsado: usedValues[i].pliegosNum,
               totalPliegos: entry.totalPliegos,
+              folio: folio.folio,
             },
             user?.username,
           );
@@ -238,7 +234,7 @@ export default function ProduccionForm({ product, items, onOrderCreated, onSwitc
 
             <div className="calculated-field" style={{ marginTop: "0.6rem" }}>
               <span className="calculated-field-label">
-                Total de tamaños por pliego a imprimir
+                Total de cambios por pliego a imprimir
                 <span className="calculated-badge">Calculado</span>
               </span>
               <span className="calculated-field-value">{computed?.totalPorPliego ?? "—"}</span>

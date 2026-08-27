@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { deleteProduct, getImageSrc, getProduct, getProductSpecs } from "../db";
 import type { Product, ProductSpec } from "../types";
 import { hasPermission, useAuth } from "../auth";
+import RequisicionModal from "./RequisicionModal";
 
 interface Props {
   productId: number;
@@ -25,6 +26,7 @@ export default function ProductDetail({
   const [specs, setSpecs] = useState<ProductSpec[]>([]);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [requisicionSpec, setRequisicionSpec] = useState<ProductSpec | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,6 +95,15 @@ export default function ProductDetail({
                   <tr key={spec.id}>
                     <th>{spec.etiqueta}</th>
                     <td>{spec.valor}</td>
+                    <td className="specs-table-actions">
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-requisicion"
+                        onClick={() => setRequisicionSpec(spec)}
+                      >
+                        Requisición
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -147,6 +158,15 @@ export default function ProductDetail({
           </div>
         </div>
       </div>
+
+      {requisicionSpec && (
+        <RequisicionModal
+          product={product}
+          etiqueta={requisicionSpec.etiqueta}
+          descripcion={requisicionSpec.valor}
+          onClose={() => setRequisicionSpec(null)}
+        />
+      )}
     </div>
   );
 }

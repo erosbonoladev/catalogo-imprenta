@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { clearSession, getUserById, heartbeat, logEvent, verifyLogin } from "./db";
+import { clearSession, heartbeat, logEvent, validateSession, verifyLogin } from "./db";
 import type { Permiso, User } from "./types";
 
 const STORAGE_KEY = "catalogo-imprenta:session";
@@ -46,9 +46,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
       try {
-        const stored = JSON.parse(raw) as { id: number };
-        const fresh = await getUserById(stored.id);
-        if (fresh && fresh.activo) {
+        const stored = JSON.parse(raw) as { id: number; token?: string };
+        const fresh = stored.token ? await validateSession(stored.id, stored.token) : null;
+        if (fresh) {
           setUser(fresh);
         } else {
           localStorage.removeItem(STORAGE_KEY);
@@ -72,14 +72,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string) => {
     const trimmed = username.trim();
     try {
-      const found = await verifyLogin(trimmed, password);
-      if (!found) {
+      const result = await verifyLogin(trimmed, password);
+      if (result.status === "locked") {
+        await logEvent(
+          "WARNING",
+          `Intento de inicio de sesión en cuenta bloqueada: ${trimmed}`,
+          trimmed,
+        );
+        return {
+          ok: false,
+          error: "Demasiados intentos fallidos. La cuenta está bloqueada temporalmente, intenta de nuevo en unos minutos.",
+        };
+      }
+      if (result.status === "invalid") {
         await logEvent("WARNING", `Intento de inicio de sesión fallido: ${trimmed}`, trimmed);
         return { ok: false, error: "Usuario o contraseña incorrectos." };
       }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ id: found.id, username: found.username }));
-      setUser(found);
-      await logEvent("INFO", `Inicio de sesión: ${found.username}`, found.username);
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ id: result.user.id, token: result.token }),
+      );
+      setUser(result.user);
+      await logEvent("INFO", `Inicio de sesión: ${result.user.username}`, result.user.username);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: `No se pudo iniciar sesión: ${String(err)}` };

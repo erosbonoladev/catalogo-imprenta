@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import type { PrintItem, PrintItemOrder, Product } from "../types";
-import { createPrintItemPurchase, getPrintItemOrders, logEvent } from "../db";
+import { createFolio, createPrintItemPurchase, getPrintItemOrders, logEvent } from "../db";
 import { useAuth } from "../auth";
 import { buildPurchasePdf } from "../pdf";
 import type { PurchaseEntry } from "../pdf";
@@ -21,10 +21,6 @@ const NUMERIC_RE = /^\d+(\.\d+)?$/;
 
 function isPureNumber(value: string): boolean {
   return NUMERIC_RE.test(value.trim());
-}
-
-function sanitizeFilename(text: string): string {
-  return text.trim().replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "compra";
 }
 
 export default function OrderModal({ product, items, onClose }: Props) {
@@ -99,9 +95,9 @@ export default function OrderModal({ product, items, onClose }: Props) {
 
     setGeneralSaving(true);
     try {
-      const pdfBytes = await buildPurchasePdf(product, entries);
-      const fecha = new Date().toISOString().slice(0, 10);
-      const defaultPath = `Compra_${sanitizeFilename(product.codigo)}_general_${fecha}.pdf`;
+      const folio = await createFolio("compra", product.codigo);
+      const pdfBytes = await buildPurchasePdf(product, entries, folio.folio);
+      const defaultPath = `${folio.folio}.pdf`;
 
       const path = await save({
         title: "Guardar orden de compra general",
@@ -125,6 +121,7 @@ export default function OrderModal({ product, items, onClose }: Props) {
               cortes: entry.cortes,
               cantidad: entry.cantidad,
               totalTamanos: entry.totalTamanos,
+              folio: folio.folio,
             },
             user?.username,
           );

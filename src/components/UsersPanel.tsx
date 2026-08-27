@@ -4,7 +4,9 @@ import { PERMISOS, PERMISO_LABELS } from "../types";
 import type { Permiso, Rol, User } from "../types";
 import Toast from "./Toast";
 
-const MIN_PASSWORD_LENGTH = 4;
+const MIN_PASSWORD_LENGTH = 8;
+const PASSWORD_COMPLEXITY_RE = /(?=.*[A-Za-z])(?=.*\d)/;
+const PASSWORD_HINT = `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres e incluir letras y números.`;
 
 interface FormState {
   username: string;
@@ -86,13 +88,14 @@ export default function UsersPanel() {
     }
 
     const creating = selectedId === null;
-    if (creating && form.password.length < MIN_PASSWORD_LENGTH) {
-      setError(`La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`);
-      return;
-    }
-    if (form.password && form.password.length < MIN_PASSWORD_LENGTH) {
-      setError(`La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`);
-      return;
+    if (creating || form.password) {
+      if (
+        form.password.length < MIN_PASSWORD_LENGTH ||
+        !PASSWORD_COMPLEXITY_RE.test(form.password)
+      ) {
+        setError(PASSWORD_HINT);
+        return;
+      }
     }
     if (form.password !== form.confirm) {
       setError("Las contraseñas no coinciden.");
@@ -197,6 +200,7 @@ export default function UsersPanel() {
               value={form.password}
               onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
             />
+            <span className="hint">{PASSWORD_HINT}</span>
           </label>
           <label>
             Confirmar contraseña

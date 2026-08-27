@@ -1775,7 +1775,7 @@ dependencies = [
 
 [[package]]
 name = "imprenta-app"
-version = "0.5.1"
+version = "0.6.2"
 dependencies = [
  "bcrypt",
  "serde",

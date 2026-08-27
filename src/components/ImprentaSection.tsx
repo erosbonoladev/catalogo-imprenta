@@ -585,13 +585,16 @@ export default function ImprentaSection({ productId, onBack }: Props) {
               {item.id && (
                 <>
                   <button type="button" className="btn-link" onClick={() => toggleHistory(item)}>
-                    {historyOpen[item.id] ? "Ocultar órdenes y compras" : "Ver órdenes y compras"}
+                    {historyOpen[item.id]
+                      ? "Ocultar historia de órdenes y compras"
+                      : "Historia de órdenes y compras"}
                   </button>
                   {historyOpen[item.id] &&
                     (historyLoading[item.id] ? (
                       <p className="hint">Cargando…</p>
                     ) : (
                       <div className="print-item-history">
+                        <span className="print-item-checks-label">Órdenes de producción</span>
                         {(ordersByItem[item.id] ?? []).length === 0 ? (
                           <p className="hint">
                             No hay órdenes de producción generadas para este ítem todavía.
@@ -612,6 +615,12 @@ export default function ImprentaSection({ productId, onBack }: Props) {
                                 </button>
                               </div>
                               <div className="print-item-view-fields">
+                                <div className="print-item-view-field">
+                                  <span className="print-item-view-field-label">Folio</span>
+                                  <span className="print-item-view-field-value">
+                                    {order.folio || "—"}
+                                  </span>
+                                </div>
                                 <div className="print-item-view-field">
                                   <span className="print-item-view-field-label">Fecha</span>
                                   <span className="print-item-view-field-value">
@@ -657,29 +666,80 @@ export default function ImprentaSection({ productId, onBack }: Props) {
                                   </span>
                                 </div>
                               </div>
-                              {(purchasesByOrder[order.id] ?? []).length > 0 && (
-                                <div className="print-item-view-section">
-                                  <span className="print-item-view-field-label">Compras</span>
-                                  {(purchasesByOrder[order.id] ?? []).map((p) => (
-                                    <div className="print-item-card-header" key={p.id}>
-                                      <span className="print-item-view-field-value">
-                                        {p.papel || "—"} — Cortes {p.cortes} — Cantidad{" "}
-                                        {p.cantidad} — Total de tamaños {p.total_tamanos}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        className="btn-link"
-                                        onClick={() => handleDeletePurchase(order, p)}
-                                      >
-                                        Borrar
-                                      </button>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
                             </div>
                           ))
                         )}
+
+                        <div className="history-section-divider">
+                          <span className="print-item-checks-label">Órdenes de compra</span>
+                        </div>
+                        {(() => {
+                          const compras = (ordersByItem[item.id] ?? [])
+                            .flatMap((order) =>
+                              (purchasesByOrder[order.id] ?? []).map((p) => ({ ...p, order })),
+                            )
+                            .sort((a, b) => b.id - a.id);
+                          return compras.length === 0 ? (
+                            <p className="hint">
+                              No hay órdenes de compra generadas para este ítem todavía.
+                            </p>
+                          ) : (
+                            compras.map((p) => (
+                              <div className="print-item-history-order" key={p.id}>
+                                <div className="print-item-card-header">
+                                  <span className="print-item-checks-label">Orden compra</span>
+                                  <button
+                                    type="button"
+                                    className="btn-link"
+                                    onClick={() => handleDeletePurchase(p.order, p)}
+                                  >
+                                    Borrar
+                                  </button>
+                                </div>
+                                <div className="print-item-view-fields">
+                                  <div className="print-item-view-field">
+                                    <span className="print-item-view-field-label">Folio</span>
+                                    <span className="print-item-view-field-value">
+                                      {p.folio || "—"}
+                                    </span>
+                                  </div>
+                                  <div className="print-item-view-field">
+                                    <span className="print-item-view-field-label">
+                                      Folio de la orden
+                                    </span>
+                                    <span className="print-item-view-field-value">
+                                      {p.order.folio || "—"}
+                                    </span>
+                                  </div>
+                                  <div className="print-item-view-field">
+                                    <span className="print-item-view-field-label">Papel</span>
+                                    <span className="print-item-view-field-value">
+                                      {p.papel || "—"}
+                                    </span>
+                                  </div>
+                                  <div className="print-item-view-field">
+                                    <span className="print-item-view-field-label">Cortes</span>
+                                    <span className="print-item-view-field-value">{p.cortes}</span>
+                                  </div>
+                                  <div className="print-item-view-field">
+                                    <span className="print-item-view-field-label">Cantidad</span>
+                                    <span className="print-item-view-field-value">
+                                      {p.cantidad}
+                                    </span>
+                                  </div>
+                                  <div className="print-item-view-field">
+                                    <span className="print-item-view-field-label">
+                                      Total de tamaños
+                                    </span>
+                                    <span className="print-item-view-field-value">
+                                      {p.total_tamanos}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          );
+                        })()}
                       </div>
                     ))}
                 </>

@@ -5,6 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppLog,
   ConnectedUser,
+  EstadoRequisicion,
+  Folio,
   ImageBlob,
   LogLevel,
   PlacasExistentes,
@@ -21,12 +23,17 @@ import type {
   Product,
   ProductInput,
   ProductSpec,
+  Requisicion,
+  RequisicionInput,
   Rol,
   SearchFilter,
+  TipoFolio,
   User,
   UserInput,
 } from "./types";
 import { PROCESOS_IMPRENTA } from "./types";
+import { buildRequisicionMessage } from "./requisiciones";
+import { FOLIO_PREFIJOS, buildFolioString, fechaLocalDeHoy, formatFechaFolioLocal } from "./folios";
 
 const client = createClient({
   url: import.meta.env.VITE_TURSO_URL,
@@ -317,30 +324,75 @@ async function rowToUser(row: UserRow): Promise<User> {
   };
 }
 
+const MAX_FAILED_LOGIN_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MINUTES = 15;
+
+interface LoginRow extends UserRow {
+  failed_attempts: number;
+  is_locked: number;
+}
+
+export type LoginResult =
+  | { status: "ok"; user: User; token: string }
+  | { status: "invalid" }
+  | { status: "locked" };
+
+function generateSessionToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export async function verifyLogin(
   username: string,
   password: string,
-): Promise<User | null> {
+): Promise<LoginResult> {
   const result = await client.execute({
-    sql: "SELECT * FROM users WHERE username = ?1",
+    sql: `SELECT *, (locked_until IS NOT NULL AND locked_until > datetime('now')) AS is_locked
+          FROM users WHERE username = ?1`,
     args: [username.trim()],
   });
-  const row = result.rows[0] as unknown as UserRow | undefined;
-  if (!row || !row.activo) return null;
+  const row = result.rows[0] as unknown as LoginRow | undefined;
+  if (!row || !row.activo) return { status: "invalid" };
+  if (row.is_locked) return { status: "locked" };
+
   const ok = await invoke<boolean>("verify_password", {
     password,
     hash: row.password_hash,
   });
-  return ok ? rowToUser(row) : null;
+
+  if (!ok) {
+    const attempts = (row.failed_attempts ?? 0) + 1;
+    if (attempts >= MAX_FAILED_LOGIN_ATTEMPTS) {
+      await client.execute({
+        sql: `UPDATE users SET failed_attempts = ?1, locked_until = datetime('now', ?2) WHERE id = ?3`,
+        args: [attempts, `+${LOGIN_LOCKOUT_MINUTES} minutes`, row.id],
+      });
+    } else {
+      await client.execute({
+        sql: "UPDATE users SET failed_attempts = ?1 WHERE id = ?2",
+        args: [attempts, row.id],
+      });
+    }
+    return { status: "invalid" };
+  }
+
+  const token = generateSessionToken();
+  await client.execute({
+    sql: "UPDATE users SET failed_attempts = 0, locked_until = NULL, session_token = ?1 WHERE id = ?2",
+    args: [token, row.id],
+  });
+  return { status: "ok", user: await rowToUser(row), token };
 }
 
-export async function getUserById(id: number): Promise<User | null> {
+export async function validateSession(id: number, token: string): Promise<User | null> {
   const result = await client.execute({
-    sql: "SELECT * FROM users WHERE id = ?1",
-    args: [id],
+    sql: "SELECT * FROM users WHERE id = ?1 AND session_token = ?2",
+    args: [id, token],
   });
   const row = result.rows[0] as unknown as UserRow | undefined;
-  return row ? rowToUser(row) : null;
+  if (!row || !row.activo) return null;
+  return rowToUser(row);
 }
 
 export async function listUsers(): Promise<User[]> {
@@ -377,7 +429,7 @@ export async function updateUser(id: number, input: UserInput): Promise<void> {
   if (input.password) {
     const hash = await invoke<string>("hash_password", { password: input.password });
     await client.execute({
-      sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, password_hash = ?4 WHERE id = ?5`,
+      sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, password_hash = ?4, session_token = NULL WHERE id = ?5`,
       args: [input.username.trim(), input.activo ? 1 : 0, input.rol, hash, id],
     });
   } else {
@@ -421,6 +473,10 @@ export async function heartbeat(userId: number): Promise<void> {
 export async function clearSession(userId: number): Promise<void> {
   await client.execute({
     sql: "DELETE FROM user_sessions WHERE user_id = ?1",
+    args: [userId],
+  });
+  await client.execute({
+    sql: "UPDATE users SET session_token = NULL WHERE id = ?1",
     args: [userId],
   });
 }
@@ -912,6 +968,7 @@ interface PrintItemOrderRow {
   numero_pliegos_usado: number;
   total_pliegos: number;
   usuario: string | null;
+  folio: string | null;
   creado_en: string;
 }
 
@@ -924,13 +981,14 @@ export async function createPrintItemOrder(
     formacionUsada: number;
     numeroPliegosUsado: number;
     totalPliegos: number;
+    folio: string;
   },
   usuario?: string | null,
 ): Promise<PrintItemOrder> {
   const result = await client.execute({
     sql: `INSERT INTO product_print_item_orders
-          (print_item_id, merma, cantidad_arte, numero_tiros, formacion_usada, numero_pliegos_usado, total_pliegos, usuario)
-          VALUES (?1,?2,?3,?4,?5,?6,?7,?8)`,
+          (print_item_id, merma, cantidad_arte, numero_tiros, formacion_usada, numero_pliegos_usado, total_pliegos, usuario, folio)
+          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)`,
     args: [
       printItemId,
       input.merma,
@@ -940,6 +998,7 @@ export async function createPrintItemOrder(
       input.numeroPliegosUsado,
       input.totalPliegos,
       usuario ?? null,
+      input.folio,
     ],
   });
   return {
@@ -952,6 +1011,7 @@ export async function createPrintItemOrder(
     numero_pliegos_usado: input.numeroPliegosUsado,
     total_pliegos: input.totalPliegos,
     usuario: usuario ?? null,
+    folio: input.folio,
     creado_en: new Date().toISOString(),
   };
 }
@@ -974,6 +1034,7 @@ interface PrintItemPurchaseRow {
   cantidad: number;
   total_tamanos: number;
   usuario: string | null;
+  folio: string | null;
   creado_en: string;
 }
 
@@ -986,13 +1047,14 @@ export async function createPrintItemPurchase(
     cortes: number;
     cantidad: number;
     totalTamanos: number;
+    folio: string;
   },
   usuario?: string | null,
 ): Promise<PrintItemPurchase> {
   const result = await client.execute({
     sql: `INSERT INTO product_print_item_purchases
-          (print_item_order_id, papel, pliego, maquina, cortes, cantidad, total_tamanos, usuario)
-          VALUES (?1,?2,?3,?4,?5,?6,?7,?8)`,
+          (print_item_order_id, papel, pliego, maquina, cortes, cantidad, total_tamanos, usuario, folio)
+          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)`,
     args: [
       printItemOrderId,
       input.papel,
@@ -1002,6 +1064,7 @@ export async function createPrintItemPurchase(
       input.cantidad,
       input.totalTamanos,
       usuario ?? null,
+      input.folio,
     ],
   });
   return {
@@ -1014,6 +1077,7 @@ export async function createPrintItemPurchase(
     cantidad: input.cantidad,
     total_tamanos: input.totalTamanos,
     usuario: usuario ?? null,
+    folio: input.folio,
     creado_en: new Date().toISOString(),
   };
 }
@@ -1044,4 +1108,114 @@ export async function deletePrintItemPurchase(purchaseId: number): Promise<void>
     sql: "DELETE FROM product_print_item_purchases WHERE id = ?1",
     args: [purchaseId],
   });
+}
+
+// --- Folios (sistema centralizado, usado por requisiciones/compras/producción) ---
+
+interface FolioRow {
+  id: number;
+  seccion: string;
+  consecutivo: number;
+  folio: string;
+  sku: string;
+  creado_en: string;
+}
+
+export async function createFolio(tipo: TipoFolio, sku: string): Promise<Folio> {
+  // consecutivo se calcula dentro del mismo INSERT (subconsulta), no en un
+  // SELECT previo por separado — mismo patrón que requisiciones.numero_dia,
+  // mismo motivo (SQLite/libSQL serializa las escrituras). Acá el scope es
+  // `seccion`, no `fecha`: el consecutivo de folios nunca se reinicia.
+  const insertResult = await client.execute({
+    sql: `INSERT INTO folios (seccion, consecutivo, sku)
+          VALUES (?1, (SELECT COALESCE(MAX(consecutivo), 0) + 1 FROM folios WHERE seccion = ?1), ?2)
+          RETURNING *`,
+    args: [tipo, sku],
+  });
+  const row = insertResult.rows[0] as unknown as FolioRow;
+  // El folio queda "congelado" con el sku al momento de crearse — si el
+  // código del producto cambia después, el folio histórico no se actualiza;
+  // es intencional, es un documento inmutable.
+  const folio = buildFolioString(FOLIO_PREFIJOS[tipo], sku, formatFechaFolioLocal(), row.consecutivo);
+  await client.execute({
+    sql: "UPDATE folios SET folio = ?1 WHERE id = ?2",
+    args: [folio, row.id],
+  });
+  return { id: row.id, seccion: tipo, consecutivo: row.consecutivo, folio, sku, creado_en: row.creado_en };
+}
+
+// --- Requisiciones de bodega ---
+
+interface RequisicionRow {
+  id: number;
+  product_id: number;
+  fecha: string;
+  numero_dia: number;
+  usuario: string | null;
+  etiqueta: string;
+  descripcion: string | null;
+  cantidad: number;
+  estado: string;
+  mensaje: string;
+  folio: string | null;
+  creado_en: string;
+}
+
+function rowToRequisicion(row: RequisicionRow): Requisicion {
+  return {
+    id: row.id,
+    product_id: row.product_id,
+    fecha: row.fecha,
+    numero_dia: row.numero_dia,
+    usuario: row.usuario,
+    etiqueta: row.etiqueta,
+    descripcion: row.descripcion ?? "",
+    cantidad: row.cantidad,
+    estado: row.estado as EstadoRequisicion,
+    mensaje: row.mensaje,
+    folio: row.folio ?? "",
+    creado_en: row.creado_en,
+  };
+}
+
+export async function createRequisicion(
+  input: RequisicionInput,
+): Promise<Requisicion> {
+  const fecha = fechaLocalDeHoy();
+  // numero_dia se calcula dentro del mismo INSERT (subconsulta), no en un
+  // SELECT previo por separado: SQLite/libSQL serializa las escrituras, así
+  // que un único statement evita que dos requisiciones simultáneas obtengan
+  // el mismo consecutivo.
+  const insertResult = await client.execute({
+    sql: `INSERT INTO requisiciones
+            (product_id, fecha, numero_dia, usuario, etiqueta, descripcion, cantidad, estado, mensaje, folio)
+          VALUES (
+            ?1, ?2,
+            (SELECT COALESCE(MAX(numero_dia), 0) + 1 FROM requisiciones WHERE fecha = ?2),
+            ?3, ?4, ?5, ?6, 'pendiente', '', ?7
+          )
+          RETURNING *`,
+    args: [
+      input.productId,
+      fecha,
+      input.usuario,
+      input.etiqueta,
+      input.descripcion,
+      input.cantidad,
+      input.folio,
+    ],
+  });
+  const row = insertResult.rows[0] as unknown as RequisicionRow;
+  const mensaje = buildRequisicionMessage(
+    row.numero_dia,
+    row.cantidad,
+    row.etiqueta,
+    input.productNombre,
+    input.productCodigo,
+  );
+  await client.execute({
+    sql: "UPDATE requisiciones SET mensaje = ?1 WHERE id = ?2",
+    args: [mensaje, row.id],
+  });
+  return rowToRequisicion({ ...row, mensaje });
 }

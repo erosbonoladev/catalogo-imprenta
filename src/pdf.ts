@@ -65,6 +65,8 @@ const PLACAS_EXISTENTES_LABEL: Record<string, string> = {
   no: "No",
 };
 
+const PROCESOS_ORDEN_PDF = ["Plástico", "Barniz UV", "Barniz de máquina", "Suaje", "Guillotina"] as const;
+
 const CAMPOS: { label: string; get: (item: PrintItem) => string }[] = [
   { label: "Tipo de papel", get: (i) => i.tipo_papel },
   { label: "Gramos o puntos", get: (i) => i.gramos_puntos },
@@ -78,7 +80,11 @@ const CAMPOS: { label: string; get: (item: PrintItem) => string }[] = [
   { label: "Placas existentes", get: (i) => PLACAS_EXISTENTES_LABEL[i.placas_existentes] ?? "Sin definir" },
 ];
 
-export async function buildOrderPdf(product: Product, entries: OrderEntry[]): Promise<Uint8Array> {
+export async function buildOrderPdf(
+  product: Product,
+  entries: OrderEntry[],
+  folio: string,
+): Promise<Uint8Array> {
   const doc = new jsPDF({ unit: "pt", format: "letter" });
   const marginX = 48;
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -110,6 +116,8 @@ export async function buildOrderPdf(product: Product, entries: OrderEntry[]): Pr
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
+  doc.text(`Folio: ${folio}`, marginX, y);
+  y += 16;
   doc.text(`Producto: ${product.nombre} (${product.codigo})`, marginX, y);
   y += 16;
   doc.text(`Fecha: ${new Date().toLocaleDateString("es-MX")}`, marginX, y);
@@ -130,7 +138,7 @@ export async function buildOrderPdf(product: Product, entries: OrderEntry[]): Pr
     ensureSpace(1);
     doc.text(`Total de tamaños a imprimir con merma: ${entry.totalPliegos}`, marginX, y);
     y += 15;
-    doc.text(`Total de tamaños por pliego a imprimir: ${entry.totalPorPliego}`, marginX, y);
+    doc.text(`Total de cambios por pliego a imprimir: ${entry.totalPorPliego}`, marginX, y);
     y += 18;
 
     doc.setFont("helvetica", "normal");
@@ -147,10 +155,9 @@ export async function buildOrderPdf(product: Product, entries: OrderEntry[]): Pr
       y += 15;
     }
 
-    const procesos = entry.item.checks
-      .filter((c) => c.marcado)
-      .map((c) => c.nombre)
-      .join(", ");
+    const procesos = PROCESOS_ORDEN_PDF.filter((nombre) =>
+      entry.item.checks.some((c) => c.nombre === nombre && c.marcado),
+    ).join(", ");
     ensureSpace(1);
     doc.text(`Procesos: ${procesos || "—"}`, marginX, y);
     y += 15;
@@ -163,7 +170,11 @@ export async function buildOrderPdf(product: Product, entries: OrderEntry[]): Pr
   return new Uint8Array(doc.output("arraybuffer"));
 }
 
-export async function buildPurchasePdf(product: Product, entries: PurchaseEntry[]): Promise<Uint8Array> {
+export async function buildPurchasePdf(
+  product: Product,
+  entries: PurchaseEntry[],
+  folio: string,
+): Promise<Uint8Array> {
   const doc = new jsPDF({ unit: "pt", format: "letter" });
   const marginX = 48;
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -185,6 +196,8 @@ export async function buildPurchasePdf(product: Product, entries: PurchaseEntry[
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
+  doc.text(`Folio: ${folio}`, marginX, y);
+  y += 16;
   doc.text(`Producto: ${product.nombre} (${product.codigo})`, marginX, y);
   y += 16;
   doc.text(`Fecha: ${new Date().toLocaleDateString("es-MX")}`, marginX, y);
@@ -231,6 +244,50 @@ export async function buildPurchasePdf(product: Product, entries: PurchaseEntry[
     doc.setFont("helvetica", "normal");
     y += 22;
   }
+
+  return new Uint8Array(doc.output("arraybuffer"));
+}
+
+export interface RequisicionPdfEntry {
+  folio: string;
+  cantidad: number;
+  etiqueta: string;
+}
+
+export async function buildRequisicionPdf(
+  product: Product,
+  entry: RequisicionPdfEntry,
+): Promise<Uint8Array> {
+  const doc = new jsPDF({ unit: "pt", format: "letter" });
+  const marginX = 48;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  let y = 56;
+  await drawLogo(doc, marginX, pageWidth);
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text("Requisición de material", marginX, y);
+  y += 22;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  doc.text(`Folio: ${entry.folio}`, marginX, y);
+  y += 16;
+  doc.text(`Fecha: ${new Date().toLocaleDateString("es-MX")}`, marginX, y);
+  y += 16;
+
+  doc.setDrawColor(200);
+  doc.line(marginX, y, pageWidth - marginX, y);
+  y += 22;
+
+  doc.setFontSize(10.5);
+  doc.text(`Cantidad: ${entry.cantidad}`, marginX, y);
+  y += 15;
+  doc.text(`Etiqueta: ${entry.etiqueta || "—"}`, marginX, y);
+  y += 15;
+  doc.text(`Nombre del juego: ${product.nombre}`, marginX, y);
+  y += 15;
+  doc.text(`SKU: ${product.codigo}`, marginX, y);
 
   return new Uint8Array(doc.output("arraybuffer"));
 }

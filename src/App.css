@@ -349,6 +349,17 @@ h3 {
   width: 40%;
 }
 
+.specs-table-actions {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.btn-requisicion {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.82rem;
+}
+
 .product-detail-actions {
   display: flex;
   align-items: center;
@@ -859,6 +870,12 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+}
+
+.history-section-divider {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+  margin-top: 0.25rem;
 }
 
 /* Imprenta read-only view */
