@@ -126,7 +126,7 @@ export default function ProductDetail({
                 className="btn btn-secondary"
                 onClick={() => onOpenPlasticos(product.id)}
               >
-                Plásticos
+                Piezas
               </button>
             )}
             {hasPermission(user, "imprenta") && (

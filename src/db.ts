@@ -18,6 +18,7 @@ import type {
   PrintItem,
   PrintItemCheck,
   PrintItemExtra,
+  PrintItemImage,
   PrintItemOrder,
   PrintItemPurchase,
   Product,
@@ -201,6 +202,10 @@ export async function deleteProduct(id: number): Promise<void> {
     });
     await client.execute({
       sql: "DELETE FROM product_print_item_extras WHERE print_item_id = ?1",
+      args: [row.id],
+    });
+    await client.execute({
+      sql: "DELETE FROM product_print_item_images WHERE print_item_id = ?1",
       args: [row.id],
     });
     await client.execute({
@@ -787,6 +792,23 @@ function normalizeChecks(existing: PrintItemCheck[]): PrintItemCheck[] {
   });
 }
 
+interface PrintItemImageRow {
+  id: number;
+  print_item_id: number;
+  imagen: ArrayBuffer;
+  imagen_mime: string;
+  orden: number;
+}
+
+function rowToPrintItemImage(row: PrintItemImageRow): PrintItemImage {
+  return {
+    id: row.id,
+    print_item_id: row.print_item_id,
+    imagen: { data: new Uint8Array(row.imagen), mime: row.imagen_mime },
+    orden: row.orden,
+  };
+}
+
 export async function getPrintItems(productId: number): Promise<PrintItem[]> {
   const result = await client.execute({
     sql: "SELECT * FROM product_print_items WHERE product_id = ?1 ORDER BY orden, id",
@@ -794,13 +816,17 @@ export async function getPrintItems(productId: number): Promise<PrintItem[]> {
   });
   const items: PrintItem[] = [];
   for (const row of result.rows as unknown as PrintItemRow[]) {
-    const [checkResult, extraResult] = await Promise.all([
+    const [checkResult, extraResult, imageResult] = await Promise.all([
       client.execute({
         sql: "SELECT * FROM product_print_item_checks WHERE print_item_id = ?1 ORDER BY orden, id",
         args: [row.id],
       }),
       client.execute({
         sql: "SELECT * FROM product_print_item_extras WHERE print_item_id = ?1 ORDER BY orden, id",
+        args: [row.id],
+      }),
+      client.execute({
+        sql: "SELECT * FROM product_print_item_images WHERE print_item_id = ?1 ORDER BY orden, id",
         args: [row.id],
       }),
     ]);
@@ -810,6 +836,7 @@ export async function getPrintItems(productId: number): Promise<PrintItem[]> {
       })[]
     ).map((check) => ({ ...check, marcado: Boolean(check.marcado) }));
     const extras = extraResult.rows as unknown as PrintItemExtra[];
+    const images = (imageResult.rows as unknown as PrintItemImageRow[]).map(rowToPrintItemImage);
     items.push({
       id: row.id,
       product_id: row.product_id,
@@ -828,6 +855,7 @@ export async function getPrintItems(productId: number): Promise<PrintItem[]> {
       placas_existentes: (row.placas_existentes as PlacasExistentes | null) ?? "",
       checks: normalizeChecks(checks),
       extras,
+      images,
       acabados: row.acabados ?? "",
       notas: row.notas ?? "",
       orden: row.orden,
@@ -927,6 +955,20 @@ export async function savePrintItems(
       });
       extraOrden += 1;
     }
+
+    await client.execute({
+      sql: "DELETE FROM product_print_item_images WHERE print_item_id = ?1",
+      args: [printItemId],
+    });
+    let imageOrden = 1;
+    for (const image of item.images) {
+      await client.execute({
+        sql: `INSERT INTO product_print_item_images (print_item_id, imagen, imagen_mime, orden)
+              VALUES (?1, ?2, ?3, ?4)`,
+        args: [printItemId, image.imagen.data, image.imagen.mime, imageOrden],
+      });
+      imageOrden += 1;
+    }
     orden += 1;
   }
 
@@ -938,6 +980,10 @@ export async function savePrintItems(
     });
     await client.execute({
       sql: "DELETE FROM product_print_item_extras WHERE print_item_id=?1",
+      args: [id],
+    });
+    await client.execute({
+      sql: "DELETE FROM product_print_item_images WHERE print_item_id=?1",
       args: [id],
     });
     await client.execute({

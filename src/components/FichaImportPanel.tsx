@@ -252,7 +252,7 @@ export default function FichaImportPanel() {
       <h2>Captura masiva de fichas técnicas</h2>
       <p className="hint" style={{ marginTop: "0.4rem" }}>
         Carga un archivo Excel (.xlsx) con las columnas Clave, Producto, Categoría, Descripción,
-        Presentación / Contenido, Medidas y Material. No afecta la información de Plásticos ni de
+        Presentación / Contenido, Medidas y Material. No afecta la información de Piezas ni de
         Imprenta.
       </p>
 

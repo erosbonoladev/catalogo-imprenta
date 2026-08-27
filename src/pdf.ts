@@ -138,7 +138,7 @@ export async function buildOrderPdf(
     ensureSpace(1);
     doc.text(`Total de tamaños a imprimir con merma: ${entry.totalPliegos}`, marginX, y);
     y += 15;
-    doc.text(`Total de cambios por pliego a imprimir: ${entry.totalPorPliego}`, marginX, y);
+    doc.text(`Total de cambios a imprimir: ${entry.totalPorPliego}`, marginX, y);
     y += 18;
 
     doc.setFont("helvetica", "normal");
@@ -283,7 +283,7 @@ export async function buildRequisicionPdf(
   doc.setFontSize(10.5);
   doc.text(`Cantidad: ${entry.cantidad}`, marginX, y);
   y += 15;
-  doc.text(`Etiqueta: ${entry.etiqueta || "—"}`, marginX, y);
+  doc.text(entry.etiqueta || "—", marginX, y);
   y += 15;
   doc.text(`Nombre del juego: ${product.nombre}`, marginX, y);
   y += 15;

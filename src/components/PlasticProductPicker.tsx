@@ -51,7 +51,7 @@ export default function PlasticProductPicker({ excludeIds, onSelect, onClose }: 
           <p className="hint">
             {query.trim()
               ? `No se encontraron productos para "${query.trim()}".`
-              : "Aún no hay productos en el catálogo de Plásticos."}
+              : "Aún no hay productos en el catálogo de Piezas."}
           </p>
         ) : (
           <div className="plastic-picker-results">

@@ -10,6 +10,7 @@ import {
   logEvent,
 } from "../db";
 import type {
+  ImageBlob,
   PlacasExistentes,
   PrintItem,
   PrintItemCheck,
@@ -23,6 +24,7 @@ import { hasPermission, useAuth } from "../auth";
 import AutoGrowInput from "./AutoGrowInput";
 import Toast from "./Toast";
 import OrderModal from "./OrderModal";
+import PrintItemImagesCarousel from "./PrintItemImagesCarousel";
 
 interface Props {
   productId: number;
@@ -56,6 +58,11 @@ const CAMPOS_VISTA: { label: string; key: keyof PrintItem; format?: (v: string) 
   },
 ];
 
+function maxImagesFromPliegos(numeroPliegos: string): number {
+  const n = parseInt(numeroPliegos.trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 function formatFecha(iso: string): string {
   const withZone = iso.includes("T") ? iso : `${iso.replace(" ", "T")}Z`;
   const date = new Date(withZone);
@@ -79,6 +86,7 @@ function emptyItem(orden: number): PrintItem {
     placas_existentes: "",
     checks: PROCESOS_IMPRENTA.map((nombre, i) => ({ nombre, marcado: false, orden: i + 1 })),
     extras: [],
+    images: [],
     acabados: "",
     notas: "",
     orden,
@@ -197,6 +205,44 @@ export default function ImprentaSection({ productId, onBack }: Props) {
       prev.map((item, i) =>
         i === itemIndex
           ? { ...item, extras: item.extras.filter((_, ei) => ei !== extraIndex) }
+          : item,
+      ),
+    );
+  }
+
+  function addImage(itemIndex: number, image: ImageBlob) {
+    setDirty(true);
+    setItems((prev) =>
+      prev.map((item, i) =>
+        i === itemIndex
+          ? { ...item, images: [...item.images, { imagen: image, orden: item.images.length + 1 }] }
+          : item,
+      ),
+    );
+  }
+
+  function replaceImage(itemIndex: number, imageIndex: number, image: ImageBlob) {
+    setDirty(true);
+    setItems((prev) =>
+      prev.map((item, i) =>
+        i === itemIndex
+          ? {
+              ...item,
+              images: item.images.map((img, ii) =>
+                ii === imageIndex ? { ...img, imagen: image } : img,
+              ),
+            }
+          : item,
+      ),
+    );
+  }
+
+  function removeImage(itemIndex: number, imageIndex: number) {
+    setDirty(true);
+    setItems((prev) =>
+      prev.map((item, i) =>
+        i === itemIndex
+          ? { ...item, images: item.images.filter((_, ii) => ii !== imageIndex) }
           : item,
       ),
     );
@@ -452,66 +498,79 @@ export default function ImprentaSection({ productId, onBack }: Props) {
                 </label>
               </div>
 
-              <div className="print-item-checks">
-                <span className="print-item-checks-label">Procesos</span>
-                <div className="print-item-checks-grid">
-                  {item.checks.map((check: PrintItemCheck, checkIndex) => (
-                    <label className="checkbox-label" key={check.nombre}>
-                      <input
-                        type="checkbox"
-                        checked={check.marcado}
-                        onChange={(e) => toggleCheck(index, checkIndex, e.target.checked)}
-                      />
-                      {check.nombre}
-                    </label>
-                  ))}
-                </div>
-              </div>
+              <div className="print-item-side-layout">
+                <div className="print-item-side-main">
+                  <div className="print-item-checks">
+                    <span className="print-item-checks-label">Procesos</span>
+                    <div className="print-item-checks-grid">
+                      {item.checks.map((check: PrintItemCheck, checkIndex) => (
+                        <label className="checkbox-label" key={check.nombre}>
+                          <input
+                            type="checkbox"
+                            checked={check.marcado}
+                            onChange={(e) => toggleCheck(index, checkIndex, e.target.checked)}
+                          />
+                          {check.nombre}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
 
-              <div className="print-item-extras">
-                {item.extras.map((extra, extraIndex) => (
-                  <div className="spec-row" key={extraIndex}>
-                    <AutoGrowInput
-                      placeholder="Etiqueta (ej. Barniz)"
-                      value={extra.etiqueta}
-                      onChange={(v) => updateExtra(index, extraIndex, "etiqueta", v)}
-                    />
-                    <AutoGrowInput
-                      placeholder="Valor"
-                      value={extra.valor}
-                      onChange={(v) => updateExtra(index, extraIndex, "valor", v)}
-                    />
-                    <button
-                      type="button"
-                      className="btn-link"
-                      onClick={() => removeExtra(index, extraIndex)}
-                    >
-                      Quitar
+                  <div className="print-item-extras">
+                    {item.extras.map((extra, extraIndex) => (
+                      <div className="spec-row" key={extraIndex}>
+                        <AutoGrowInput
+                          placeholder="Etiqueta (ej. Barniz)"
+                          value={extra.etiqueta}
+                          onChange={(v) => updateExtra(index, extraIndex, "etiqueta", v)}
+                        />
+                        <AutoGrowInput
+                          placeholder="Valor"
+                          value={extra.valor}
+                          onChange={(v) => updateExtra(index, extraIndex, "valor", v)}
+                        />
+                        <button
+                          type="button"
+                          className="btn-link"
+                          onClick={() => removeExtra(index, extraIndex)}
+                        >
+                          Quitar
+                        </button>
+                      </div>
+                    ))}
+                    <button type="button" className="btn-link" onClick={() => addExtra(index)}>
+                      + Agregar otro segmento
                     </button>
                   </div>
-                ))}
-                <button type="button" className="btn-link" onClick={() => addExtra(index)}>
-                  + Agregar otro segmento
-                </button>
+
+                  <label className="print-item-notas">
+                    Acabados
+                    <AutoGrowInput
+                      multiline
+                      value={item.acabados}
+                      onChange={(v) => updateItem(index, "acabados", v)}
+                    />
+                  </label>
+
+                  <label className="print-item-notas">
+                    Notas
+                    <AutoGrowInput
+                      multiline
+                      value={item.notas}
+                      onChange={(v) => updateItem(index, "notas", v)}
+                    />
+                  </label>
+                </div>
+
+                <PrintItemImagesCarousel
+                  images={item.images}
+                  editable
+                  maxImages={maxImagesFromPliegos(item.numero_pliegos)}
+                  onAdd={(image) => addImage(index, image)}
+                  onReplace={(imageIndex, image) => replaceImage(index, imageIndex, image)}
+                  onRemove={(imageIndex) => removeImage(index, imageIndex)}
+                />
               </div>
-
-              <label className="print-item-notas">
-                Acabados
-                <AutoGrowInput
-                  multiline
-                  value={item.acabados}
-                  onChange={(v) => updateItem(index, "acabados", v)}
-                />
-              </label>
-
-              <label className="print-item-notas">
-                Notas
-                <AutoGrowInput
-                  multiline
-                  value={item.notas}
-                  onChange={(v) => updateItem(index, "notas", v)}
-                />
-              </label>
             </div>
           ) : (
             <div className="print-item-card" key={index}>
@@ -539,48 +598,63 @@ export default function ImprentaSection({ productId, onBack }: Props) {
                 ))}
               </div>
 
-              <div className="print-item-view-section">
-                <span className="print-item-view-field-label">Procesos</span>
-                <span className="print-item-view-field-value">
-                  {item.checks.filter((c) => c.marcado).map((c) => c.nombre).join(", ") ||
-                    "Ninguno"}
-                </span>
-              </div>
-
-              {item.extras.length > 0 && (
-                <div className="print-item-view-section">
-                  <span className="print-item-view-field-label">Otros segmentos</span>
-                  {item.extras.map((extra, i) => (
-                    <span className="print-item-view-field-value" key={i}>
-                      {extra.etiqueta || "(sin etiqueta)"}: {extra.valor || "—"}
+              <div className="print-item-side-layout">
+                <div className="print-item-side-main">
+                  <div className="print-item-view-section">
+                    <span className="print-item-view-field-label">Procesos</span>
+                    <span className="print-item-view-field-value">
+                      {item.checks.filter((c) => c.marcado).map((c) => c.nombre).join(", ") ||
+                        "Ninguno"}
                     </span>
-                  ))}
-                </div>
-              )}
+                  </div>
 
-              {item.acabados && (
-                <div className="print-item-view-section">
-                  <span className="print-item-view-field-label">Acabados</span>
-                  <span
-                    className="print-item-view-field-value"
-                    style={{ whiteSpace: "pre-wrap" }}
-                  >
-                    {item.acabados}
-                  </span>
-                </div>
-              )}
+                  {item.extras.length > 0 && (
+                    <div className="print-item-view-section">
+                      <span className="print-item-view-field-label">Otros segmentos</span>
+                      {item.extras.map((extra, i) => (
+                        <span className="print-item-view-field-value" key={i}>
+                          {extra.etiqueta || "(sin etiqueta)"}: {extra.valor || "—"}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
-              {item.notas && (
-                <div className="print-item-view-section">
-                  <span className="print-item-view-field-label">Notas</span>
-                  <span
-                    className="print-item-view-field-value"
-                    style={{ whiteSpace: "pre-wrap" }}
-                  >
-                    {item.notas}
-                  </span>
+                  {item.acabados && (
+                    <div className="print-item-view-section">
+                      <span className="print-item-view-field-label">Acabados</span>
+                      <span
+                        className="print-item-view-field-value"
+                        style={{ whiteSpace: "pre-wrap" }}
+                      >
+                        {item.acabados}
+                      </span>
+                    </div>
+                  )}
+
+                  {item.notas && (
+                    <div className="print-item-view-section">
+                      <span className="print-item-view-field-label">Notas</span>
+                      <span
+                        className="print-item-view-field-value"
+                        style={{ whiteSpace: "pre-wrap" }}
+                      >
+                        {item.notas}
+                      </span>
+                    </div>
+                  )}
                 </div>
-              )}
+
+                {item.images.length > 0 && (
+                  <PrintItemImagesCarousel
+                    images={item.images}
+                    editable={false}
+                    maxImages={0}
+                    onAdd={() => {}}
+                    onReplace={() => {}}
+                    onRemove={() => {}}
+                  />
+                )}
+              </div>
 
               {item.id && (
                 <>

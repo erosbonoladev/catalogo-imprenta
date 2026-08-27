@@ -95,6 +95,13 @@ export interface PrintItemExtra {
   orden: number;
 }
 
+export interface PrintItemImage {
+  id?: number;
+  print_item_id?: number;
+  imagen: ImageBlob;
+  orden: number;
+}
+
 export const PROCESOS_IMPRENTA = [
   "Suaje",
   "Guillotina",
@@ -123,6 +130,7 @@ export interface PrintItem {
   placas_existentes: PlacasExistentes;
   checks: PrintItemCheck[];
   extras: PrintItemExtra[];
+  images: PrintItemImage[];
   acabados: string;
   notas: string;
   orden: number;
@@ -162,7 +170,7 @@ export const PERMISOS = ["plasticos", "imprenta", "configuraciones"] as const;
 export type Permiso = (typeof PERMISOS)[number];
 
 export const PERMISO_LABELS: Record<Permiso, string> = {
-  plasticos: "Plásticos",
+  plasticos: "Piezas",
   imprenta: "Imprenta",
   configuraciones: "Configuraciones",
 };
