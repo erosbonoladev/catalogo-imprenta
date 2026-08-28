@@ -7,6 +7,7 @@ import PlasticosSection from "./components/PlasticosSection";
 import ImprentaSection from "./components/ImprentaSection";
 import Configuraciones from "./components/Configuraciones";
 import LoginScreen from "./components/LoginScreen";
+import Sidebar from "./components/Sidebar";
 import { useAuth } from "./auth";
 
 type View =
@@ -20,6 +21,7 @@ type View =
 function App() {
   const { user, loading } = useAuth();
   const [view, setView] = useState<View>({ name: "search" });
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
     setView({ name: "search" });
@@ -35,65 +37,72 @@ function App() {
 
   if (!user) {
     return (
-      <main className="app">
+      <main className="app app-login">
         <LoginScreen />
       </main>
     );
   }
 
   return (
-    <main className="app">
-      {view.name === "search" && (
-        <SearchScreen
-          onSelect={(id) => setView({ name: "detail", productId: id })}
-          onNew={() => setView({ name: "form" })}
-          onConfiguraciones={() => setView({ name: "configuraciones" })}
-        />
-      )}
+    <div className="app-shell">
+      <Sidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((o) => !o)}
+        onConfiguraciones={() => setView({ name: "configuraciones" })}
+      />
 
-      {view.name === "detail" && (
-        <ProductDetail
-          productId={view.productId}
-          onBack={() => setView({ name: "search" })}
-          onEdit={(id) => setView({ name: "form", productId: id })}
-          onDeleted={() => setView({ name: "search" })}
-          onOpenPlasticos={(id) => setView({ name: "plasticos", productId: id })}
-          onOpenImprenta={(id) => setView({ name: "imprenta", productId: id })}
-        />
-      )}
+      <main className="app app-content">
+        {view.name === "search" && (
+          <SearchScreen
+            onSelect={(id) => setView({ name: "detail", productId: id })}
+            onNew={() => setView({ name: "form" })}
+          />
+        )}
 
-      {view.name === "form" && (
-        <ProductForm
-          productId={view.productId}
-          onDone={(id) => setView({ name: "detail", productId: id })}
-          onCancel={() =>
-            setView(
-              view.productId
-                ? { name: "detail", productId: view.productId }
-                : { name: "search" },
-            )
-          }
-        />
-      )}
+        {view.name === "detail" && (
+          <ProductDetail
+            productId={view.productId}
+            onBack={() => setView({ name: "search" })}
+            onEdit={(id) => setView({ name: "form", productId: id })}
+            onDeleted={() => setView({ name: "search" })}
+            onOpenPlasticos={(id) => setView({ name: "plasticos", productId: id })}
+            onOpenImprenta={(id) => setView({ name: "imprenta", productId: id })}
+          />
+        )}
 
-      {view.name === "plasticos" && (
-        <PlasticosSection
-          productId={view.productId}
-          onBack={() => setView({ name: "detail", productId: view.productId })}
-        />
-      )}
+        {view.name === "form" && (
+          <ProductForm
+            productId={view.productId}
+            onDone={(id) => setView({ name: "detail", productId: id })}
+            onCancel={() =>
+              setView(
+                view.productId
+                  ? { name: "detail", productId: view.productId }
+                  : { name: "search" },
+              )
+            }
+          />
+        )}
 
-      {view.name === "imprenta" && (
-        <ImprentaSection
-          productId={view.productId}
-          onBack={() => setView({ name: "detail", productId: view.productId })}
-        />
-      )}
+        {view.name === "plasticos" && (
+          <PlasticosSection
+            productId={view.productId}
+            onBack={() => setView({ name: "detail", productId: view.productId })}
+          />
+        )}
 
-      {view.name === "configuraciones" && (
-        <Configuraciones onBack={() => setView({ name: "search" })} />
-      )}
-    </main>
+        {view.name === "imprenta" && (
+          <ImprentaSection
+            productId={view.productId}
+            onBack={() => setView({ name: "detail", productId: view.productId })}
+          />
+        )}
+
+        {view.name === "configuraciones" && (
+          <Configuraciones onBack={() => setView({ name: "search" })} />
+        )}
+      </main>
+    </div>
   );
 }
 

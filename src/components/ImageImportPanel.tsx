@@ -1,22 +1,16 @@
 import { useState } from "react";
 import {
-  createProduct,
   findProductByCodigo,
-  findProductsByNombre,
+  listImageFolderFiles,
   logEvent,
-  pickExcelFile,
-  setPresentacionOriginal,
-  updateProduct,
+  pickImageFolder,
+  readImageFileBlob,
+  updateProductImage,
+  type ImageFolderEntry,
 } from "../db";
-import {
-  buildSpecsForRow,
-  classifyRows,
-  readWorkbook,
-  type ClassifiedRow,
-  type RawImportRow,
-  type RowLookup,
-} from "../fichaImport";
+import { classifyImageEntries, skuFromFilename, type ClassifiedImageRow } from "../imageImport";
 import { isAdmin, useAuth } from "../auth";
+import type { Product } from "../types";
 
 type Phase = "picking" | "validating" | "reviewing" | "committing" | "done";
 
@@ -25,53 +19,52 @@ interface Progress {
   total: number;
 }
 
-interface ImportSummary {
-  nuevas: number;
-  actualizadas: number;
-  omitidas: number;
+interface ImageImportSummary {
+  asignadas: number;
+  sustituidas: number;
+  conservadas: number;
+  noEncontrados: number;
   conErrores: number;
   total: number;
-  errorRows: { fila: number; motivo: string }[];
+  errorRows: { archivo: string; motivo: string }[];
 }
 
 const CHUNK_SIZE = 25;
 
-const STATUS_LABEL: Record<ClassifiedRow["status"], string> = {
-  nueva: "Nueva",
-  duplicada: "Duplicada",
+const STATUS_LABEL: Record<ClassifiedImageRow["status"], string> = {
+  nueva: "Nueva imagen",
+  sustituir: "Sustituir",
+  "no-encontrado": "No encontrada",
   error: "Error",
 };
 
-async function buildLookups(
-  rows: RawImportRow[],
+async function buildImageLookups(
+  entries: ImageFolderEntry[],
   onProgress: (done: number) => void,
-): Promise<Map<number, RowLookup>> {
-  const lookups = new Map<number, RowLookup>();
-  for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
-    const chunk = rows.slice(i, i + CHUNK_SIZE);
+): Promise<Map<string, Product | null>> {
+  const lookups = new Map<string, Product | null>();
+  const skus = Array.from(new Set(entries.map((e) => skuFromFilename(e.name)).filter(Boolean)));
+  for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
+    const chunk = skus.slice(i, i + CHUNK_SIZE);
     await Promise.all(
-      chunk.map(async (row) => {
-        const [byCodigo, byNombre] = await Promise.all([
-          row.clave ? findProductByCodigo(row.clave) : Promise.resolve(null),
-          findProductsByNombre(row.producto),
-        ]);
-        lookups.set(row.fila, { byCodigo, byNombre });
+      chunk.map(async (sku) => {
+        lookups.set(sku, await findProductByCodigo(sku));
       }),
     );
-    onProgress(Math.min(i + CHUNK_SIZE, rows.length));
+    onProgress(Math.min(i + CHUNK_SIZE, skus.length));
   }
   return lookups;
 }
 
-export default function FichaImportPanel() {
+export default function ImageImportPanel() {
   const { user } = useAuth();
   const [phase, setPhase] = useState<Phase>("picking");
   const [error, setError] = useState<string | null>(null);
-  const [rows, setRows] = useState<ClassifiedRow[]>([]);
+  const [rows, setRows] = useState<ClassifiedImageRow[]>([]);
   const [overwriteChoices, setOverwriteChoices] = useState<Map<number, boolean>>(new Map());
   const [validateProgress, setValidateProgress] = useState<Progress>({ done: 0, total: 0 });
   const [commitProgress, setCommitProgress] = useState<Progress>({ done: 0, total: 0 });
-  const [summary, setSummary] = useState<ImportSummary | null>(null);
+  const [summary, setSummary] = useState<ImageImportSummary | null>(null);
 
   if (!isAdmin(user)) {
     return (
@@ -90,38 +83,38 @@ export default function FichaImportPanel() {
     setSummary(null);
   }
 
-  async function handlePickFile() {
+  async function handlePickFolder() {
     setError(null);
-    let bytes: Uint8Array | null;
+    let folder: string | null;
     try {
-      bytes = await pickExcelFile();
+      folder = await pickImageFolder();
     } catch (err) {
-      setError(`No se pudo leer el archivo: ${String(err)}`);
+      setError(`No se pudo abrir la carpeta: ${String(err)}`);
       return;
     }
-    if (!bytes) return;
+    if (!folder) return;
 
-    const result = readWorkbook(bytes);
-    if (!result.ok) {
-      setError(
-        `El archivo no tiene el formato esperado. Faltan estas columnas: ${result.missingHeaders.join(", ")}.`,
-      );
+    let entries: ImageFolderEntry[];
+    try {
+      entries = await listImageFolderFiles(folder);
+    } catch (err) {
+      setError(`No se pudo leer la carpeta: ${String(err)}`);
       return;
     }
-    if (result.rows.length === 0) {
-      setError("El archivo no contiene filas de datos.");
+    if (entries.length === 0) {
+      setError("La carpeta no contiene archivos.");
       return;
     }
 
     setPhase("validating");
-    setValidateProgress({ done: 0, total: result.rows.length });
-    const lookups = await buildLookups(result.rows, (done) =>
-      setValidateProgress({ done, total: result.rows.length }),
+    setValidateProgress({ done: 0, total: entries.length });
+    const lookups = await buildImageLookups(entries, (done) =>
+      setValidateProgress({ done, total: entries.length }),
     );
-    const classified = classifyRows(result.rows, lookups);
+    const classified = classifyImageEntries(entries, lookups);
     const overwrite = new Map<number, boolean>();
     for (const row of classified) {
-      if (row.status === "duplicada") overwrite.set(row.fila, false);
+      if (row.status === "sustituir") overwrite.set(row.fila, false);
     }
     setOverwriteChoices(overwrite);
     setRows(classified);
@@ -136,11 +129,11 @@ export default function FichaImportPanel() {
     });
   }
 
-  function markAllDuplicates(value: boolean) {
+  function markAllSustituir(value: boolean) {
     setOverwriteChoices((prev) => {
       const next = new Map(prev);
       for (const row of rows) {
-        if (row.status === "duplicada") next.set(row.fila, value);
+        if (row.status === "sustituir") next.set(row.fila, value);
       }
       return next;
     });
@@ -150,11 +143,12 @@ export default function FichaImportPanel() {
     setPhase("committing");
     setCommitProgress({ done: 0, total: rows.length });
 
-    let nuevas = 0;
-    let actualizadas = 0;
-    let omitidas = 0;
+    let asignadas = 0;
+    let sustituidas = 0;
+    let conservadas = 0;
+    let noEncontrados = 0;
     let conErrores = 0;
-    const errorRows: { fila: number; motivo: string }[] = [];
+    const errorRows: { archivo: string; motivo: string }[] = [];
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -162,108 +156,64 @@ export default function FichaImportPanel() {
 
       if (row.status === "error") {
         conErrores += 1;
-        errorRows.push({ fila: row.fila, motivo: row.reason ?? "Error desconocido." });
+        errorRows.push({ archivo: row.archivo, motivo: row.reason ?? "Error desconocido." });
+        continue;
+      }
+      if (row.status === "no-encontrado") {
+        noEncontrados += 1;
+        continue;
+      }
+      if (row.status === "sustituir" && !(overwriteChoices.get(row.fila) ?? false)) {
+        conservadas += 1;
         continue;
       }
 
-      const specs = buildSpecsForRow(row).map((spec, idx) => ({
-        ...spec,
-        orden: idx + 1,
-        permite_requisicion: false,
-      }));
-
-      if (row.status === "nueva") {
-        try {
-          const id = await createProduct(
-            {
-              codigo: row.clave,
-              nombre: row.producto,
-              categoria: row.categoria,
-              material: row.material,
-              descripcion: row.descripcion,
-              imagen: null,
-            },
-            specs,
-          );
-          if (row.presentacion.trim()) {
-            await setPresentacionOriginal(id, row.presentacion.trim());
-          }
-          nuevas += 1;
-        } catch (err) {
-          conErrores += 1;
-          errorRows.push({ fila: row.fila, motivo: String(err) });
-          logEvent(
-            "ERROR",
-            `Captura masiva: no se pudo crear la fila ${row.fila}: ${String(err)}`,
-            user?.username ?? null,
-          );
-        }
-        continue;
-      }
-
-      // duplicada
-      const overwrite = overwriteChoices.get(row.fila) ?? false;
-      if (!overwrite) {
-        omitidas += 1;
-        continue;
-      }
       try {
-        const existing = row.matchedProduct;
-        if (!existing) throw new Error("No se encontró el producto original para sobrescribir.");
-        await updateProduct(
-          existing.id,
-          {
-            codigo: row.clave || existing.codigo,
-            nombre: row.producto,
-            categoria: row.categoria,
-            material: row.material,
-            descripcion: row.descripcion,
-            imagen: existing.imagen,
-          },
-          specs,
-        );
-        if (row.presentacion.trim()) {
-          await setPresentacionOriginal(existing.id, row.presentacion.trim());
-        }
-        actualizadas += 1;
+        const product = row.matchedProduct;
+        if (!product) throw new Error("No se encontró la ficha técnica para esta imagen.");
+        const imagen = await readImageFileBlob(row.path);
+        await updateProductImage(product.id, imagen);
+        if (row.status === "sustituir") sustituidas += 1;
+        else asignadas += 1;
       } catch (err) {
         conErrores += 1;
-        errorRows.push({ fila: row.fila, motivo: String(err) });
+        errorRows.push({ archivo: row.archivo, motivo: String(err) });
         logEvent(
           "ERROR",
-          `Captura masiva: no se pudo actualizar la fila ${row.fila}: ${String(err)}`,
+          `Captura masiva de imágenes: no se pudo procesar "${row.archivo}": ${String(err)}`,
           user?.username ?? null,
         );
       }
     }
 
     setCommitProgress({ done: rows.length, total: rows.length });
-    setSummary({ nuevas, actualizadas, omitidas, conErrores, total: rows.length, errorRows });
+    setSummary({ asignadas, sustituidas, conservadas, noEncontrados, conErrores, total: rows.length, errorRows });
     logEvent(
       "INFO",
-      `Captura masiva de fichas técnicas: ${nuevas} nuevas, ${actualizadas} actualizadas, ${omitidas} omitidas, ${conErrores} con errores (total ${rows.length}).`,
+      `Captura masiva de imágenes: ${asignadas} asignadas, ${sustituidas} sustituidas, ${conservadas} conservadas, ${noEncontrados} sin ficha, ${conErrores} con errores (total ${rows.length}).`,
       user?.username ?? null,
     );
     setPhase("done");
   }
 
-  const nuevasCount = rows.filter((r) => r.status === "nueva").length;
-  const duplicadasCount = rows.filter((r) => r.status === "duplicada").length;
+  const nuevaCount = rows.filter((r) => r.status === "nueva").length;
+  const sustituirCount = rows.filter((r) => r.status === "sustituir").length;
+  const noEncontradoCount = rows.filter((r) => r.status === "no-encontrado").length;
   const erroresCount = rows.filter((r) => r.status === "error").length;
 
   return (
     <div>
-      <h2>Captura masiva de fichas técnicas</h2>
+      <h2>Captura masiva de imágenes</h2>
       <p className="hint" style={{ marginTop: "0.4rem" }}>
-        Carga un archivo Excel (.xlsx) con las columnas Clave, Producto, Categoría, Descripción,
-        Presentación / Contenido, Medidas y Material. No afecta la información de Piezas ni de
-        Imprenta.
+        Selecciona una carpeta con imágenes cuyo nombre de archivo sea el código de la ficha
+        técnica (por ejemplo, ABC-123.jpg para el código ABC-123). Solo se actualiza la imagen de
+        cada ficha; el código, nombre, especificaciones y demás datos no se modifican.
       </p>
 
       {phase === "picking" && (
         <div className="import-picker">
-          <button type="button" className="btn btn-primary" onClick={handlePickFile}>
-            Seleccionar archivo Excel
+          <button type="button" className="btn btn-primary" onClick={handlePickFolder}>
+            Seleccionar carpeta de imágenes
           </button>
           {error && <p className="form-error">{error}</p>}
         </div>
@@ -272,7 +222,7 @@ export default function FichaImportPanel() {
       {phase === "validating" && (
         <div className="import-progress">
           <p className="hint" style={{ margin: 0 }}>
-            Validando fila {validateProgress.done} de {validateProgress.total}…
+            Validando archivo {validateProgress.done} de {validateProgress.total}…
           </p>
           <div className="progress-bar">
             <div
@@ -288,33 +238,25 @@ export default function FichaImportPanel() {
       {phase === "reviewing" && (
         <div className="import-review">
           <div className="import-review-summary">
-            <span className="tag">{nuevasCount} nueva(s)</span>
-            <span className="tag">{duplicadasCount} duplicada(s)</span>
+            <span className="tag">{nuevaCount} nueva(s)</span>
+            <span className="tag">{sustituirCount} para sustituir</span>
+            <span className="tag">{noEncontradoCount} sin ficha</span>
             <span className="tag">{erroresCount} con error</span>
-            <span className="tag">{rows.length} fila(s) en total</span>
+            <span className="tag">{rows.length} archivo(s) en total</span>
           </div>
 
           <p className="hint" style={{ margin: 0 }}>
-            Sobrescribir reemplaza todas las especificaciones existentes de esa ficha (incluidas
-            las agregadas manualmente) y sus columnas Categoría/Descripción/Material con lo que
-            traiga el Excel. La imagen y el código no se pierden si la fila no trae uno nuevo.
+            Sustituir reemplaza únicamente la imagen actual de esa ficha técnica; el resto de sus
+            datos no se modifica. Las imágenes sin ficha encontrada o con errores se omiten.
           </p>
 
-          {duplicadasCount > 0 && (
+          {sustituirCount > 0 && (
             <div className="import-review-actions">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => markAllDuplicates(true)}
-              >
-                Marcar todos: Sobrescribir
+              <button type="button" className="btn btn-secondary" onClick={() => markAllSustituir(true)}>
+                Marcar todos: Sustituir
               </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => markAllDuplicates(false)}
-              >
-                Marcar todos: Omitir
+              <button type="button" className="btn btn-secondary" onClick={() => markAllSustituir(false)}>
+                Marcar todos: Conservar actual
               </button>
             </div>
           )}
@@ -323,9 +265,9 @@ export default function FichaImportPanel() {
             <table className="import-review-table">
               <thead>
                 <tr>
-                  <th>Fila</th>
-                  <th>Clave</th>
-                  <th>Producto</th>
+                  <th>Archivo</th>
+                  <th>Código</th>
+                  <th>Ficha encontrada</th>
                   <th>Estado</th>
                   <th>Acción</th>
                   <th>Motivo</th>
@@ -334,16 +276,16 @@ export default function FichaImportPanel() {
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.fila}>
-                    <td>{row.fila}</td>
-                    <td>{row.clave || "—"}</td>
-                    <td>{row.producto || "—"}</td>
+                    <td>{row.archivo}</td>
+                    <td>{row.sku || "—"}</td>
+                    <td>{row.matchedProduct ? `Sí — ${row.matchedProduct.nombre}` : "No"}</td>
                     <td>
                       <span className={`import-status-badge import-status-${row.status}`}>
                         {STATUS_LABEL[row.status]}
                       </span>
                     </td>
                     <td>
-                      {row.status === "duplicada" ? (
+                      {row.status === "sustituir" ? (
                         <div className="import-overwrite-cell">
                           <div className="import-review-actions">
                             <button
@@ -351,24 +293,24 @@ export default function FichaImportPanel() {
                               className={`filter-chip${overwriteChoices.get(row.fila) ? " filter-chip-active" : ""}`}
                               onClick={() => setOverwrite(row.fila, true)}
                             >
-                              Sobrescribir
+                              Sustituir
                             </button>
                             <button
                               type="button"
                               className={`filter-chip${!overwriteChoices.get(row.fila) ? " filter-chip-active" : ""}`}
                               onClick={() => setOverwrite(row.fila, false)}
                             >
-                              Omitir
+                              Conservar actual
                             </button>
                           </div>
                           <span className="import-overwrite-status">
                             {overwriteChoices.get(row.fila)
-                              ? "Se sobrescribirá la ficha existente."
-                              : "Se omitirá esta fila."}
+                              ? "Se sustituirá la imagen existente."
+                              : "Se conservará la imagen actual."}
                           </span>
                         </div>
                       ) : row.status === "nueva" ? (
-                        "Se creará"
+                        "Se asignará"
                       ) : (
                         "Se omitirá"
                       )}
@@ -394,7 +336,7 @@ export default function FichaImportPanel() {
       {phase === "committing" && (
         <div className="import-progress">
           <p className="hint" style={{ margin: 0 }}>
-            Procesando fila {commitProgress.done} de {commitProgress.total}…
+            Procesando imagen {commitProgress.done} de {commitProgress.total}…
           </p>
           <div className="progress-bar">
             <div
@@ -411,24 +353,28 @@ export default function FichaImportPanel() {
         <div className="import-review">
           <div className="import-summary-grid">
             <div className="import-summary-item">
-              <span>{summary.nuevas}</span>
-              <span>Nuevas</span>
+              <span>{summary.total}</span>
+              <span>Imágenes procesadas</span>
             </div>
             <div className="import-summary-item">
-              <span>{summary.actualizadas}</span>
-              <span>Actualizadas</span>
+              <span>{summary.asignadas}</span>
+              <span>Imágenes asignadas</span>
             </div>
             <div className="import-summary-item">
-              <span>{summary.omitidas}</span>
-              <span>Omitidas</span>
+              <span>{summary.sustituidas}</span>
+              <span>Imágenes sustituidas</span>
+            </div>
+            <div className="import-summary-item">
+              <span>{summary.conservadas}</span>
+              <span>Conservadas</span>
+            </div>
+            <div className="import-summary-item">
+              <span>{summary.noEncontrados}</span>
+              <span>Códigos no encontrados</span>
             </div>
             <div className="import-summary-item">
               <span>{summary.conErrores}</span>
-              <span>Con errores</span>
-            </div>
-            <div className="import-summary-item">
-              <span>{summary.total}</span>
-              <span>Total procesado</span>
+              <span>Archivos con error</span>
             </div>
           </div>
 
@@ -437,14 +383,14 @@ export default function FichaImportPanel() {
               <table className="import-review-table">
                 <thead>
                   <tr>
-                    <th>Fila</th>
+                    <th>Archivo</th>
                     <th>Motivo</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {summary.errorRows.map((e) => (
-                    <tr key={e.fila}>
-                      <td>{e.fila}</td>
+                  {summary.errorRows.map((e, idx) => (
+                    <tr key={`${e.archivo}-${idx}`}>
+                      <td>{e.archivo}</td>
                       <td className="import-review-motivo">{e.motivo}</td>
                     </tr>
                   ))}

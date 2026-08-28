@@ -1,14 +1,50 @@
 :root {
   --accent: #1d4ed8;
   --accent-hover: #1e40af;
+  --accent-soft: rgba(29, 78, 216, 0.1);
+  /* Texto/ícono que va ENCIMA de un fondo --accent sólido (botón primario,
+     chip activo). Blanco tiene buen contraste sobre el azul; el naranja del
+     tema oscuro es demasiado claro para texto blanco, así que ahí se vuelve
+     un texto oscuro. */
+  --accent-contrast: #ffffff;
   --bg: #f8fafc;
   --surface: #ffffff;
+  --surface-raised: #ffffff;
+  /* Fondo fijo (no cambia con el tema) para fotos, códigos de barras e
+     imágenes subidas por el usuario: muchas tienen fondo transparente con
+     líneas oscuras (logos, códigos de barras) y se "pierden" si el
+     contenedor se vuelve oscuro en modo oscuro. */
+  --media-bg: #ffffff;
+  --media-placeholder-text: #64748b;
   --border: #e2e8f0;
   --text: #0f172a;
   --text-muted: #64748b;
   --danger: #dc2626;
   --danger-hover: #b91c1c;
+  --danger-soft: rgba(220, 38, 38, 0.1);
   --warning: #d97706;
+  --success: #16a34a;
+  --success-hover: #15803d;
+
+  /* Fondos sólidos con texto blanco encima (botones, badges): valores fijos
+     entre temas, a diferencia de --danger/--success/--warning de arriba que
+     sirven como texto/ícono sobre el fondo de la página y sí cambian con el
+     tema para mantener contraste. */
+  --danger-solid: #dc2626;
+  --danger-solid-hover: #b91c1c;
+  --success-solid: #16a34a;
+  --success-solid-hover: #15803d;
+  --warning-solid: #d97706;
+  --neutral-solid: #64748b;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 6px 16px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 20px 48px rgba(15, 23, 42, 0.25);
+  --transition-fast: 0.15s ease;
+  --transition-theme: 0.2s ease;
 
   color-scheme: light;
   color: var(--text);
@@ -18,12 +54,50 @@
     sans-serif;
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --accent: #f97316;
+  --accent-hover: #fb923c;
+  --accent-soft: rgba(249, 115, 22, 0.15);
+  --accent-contrast: #1a1005;
+  --bg: #0a0a0b;
+  --surface: #17171a;
+  --surface-raised: #1f1f23;
+  --border: #2b2b30;
+  --text: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --danger: #fca5a5;
+  --danger-hover: #fecaca;
+  --danger-soft: rgba(252, 165, 165, 0.15);
+  --warning: #fbbf24;
+  --success: #4ade80;
+  --success-hover: #86efac;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 24px 56px rgba(0, 0, 0, 0.6);
+}
+
 * {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
+  background-color: var(--bg);
+  transition: background-color var(--transition-theme), color var(--transition-theme);
+}
+
+.btn,
+.surface,
+input[type="text"],
+input[type="password"],
+textarea,
+select {
+  transition:
+    background-color var(--transition-theme),
+    color var(--transition-theme),
+    border-color var(--transition-theme),
+    box-shadow var(--transition-fast);
 }
 
 .app {
@@ -43,21 +117,306 @@ h3 {
   margin-top: 2rem;
 }
 
+/* App shell / Sidebar */
+
+.app-shell {
+  display: flex;
+  height: 100vh;
+  /* Sin esto, un .app-content más alto que la ventana (catálogo largo, por
+     ejemplo) estira .sidebar a su misma altura por el stretch por defecto
+     de flex, empujando "Cerrar sesión" y el grupo inferior fuera de vista. */
+  overflow: hidden;
+}
+
+.app-content {
+  flex: 1;
+  min-width: 0;
+  height: 100vh;
+  overflow-y: auto;
+  /* Deja espacio para el botón fijo de la barra lateral (arriba a la
+     izquierda) para que nunca quede encima del título/back-link de la página. */
+  padding-top: 4.5rem;
+}
+
+.sidebar-toggle {
+  position: fixed;
+  top: 1.1rem;
+  left: 1.1rem;
+  z-index: 60;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background-color: var(--surface);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+
+.sidebar-toggle:hover {
+  border-color: var(--accent);
+}
+
+.sidebar-toggle img {
+  width: 20px;
+  height: 20px;
+}
+
+.sidebar {
+  width: 0;
+  height: 100vh;
+  flex-shrink: 0;
+  overflow: hidden;
+  background-color: var(--surface);
+  border-right: 1px solid var(--border);
+  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sidebar-open {
+  width: 260px;
+}
+
+.sidebar-inner {
+  width: 260px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 4.5rem 1rem 1.25rem;
+  overflow-y: auto;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.sidebar-open .sidebar-inner {
+  opacity: 1;
+  transition-delay: 0.06s;
+}
+
+.sidebar-user {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding-bottom: 1.25rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.icon-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background-color: var(--accent-soft);
+}
+
+.icon-badge img {
+  width: 100%;
+  height: 100%;
+}
+
+.sidebar-user-icon {
+  width: 44px;
+  height: 44px;
+  padding: 10px;
+}
+
+.sidebar-user-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+  text-align: center;
+  word-break: break-word;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sidebar-item:hover {
+  background-color: var(--bg);
+}
+
+.sidebar-item-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.sidebar-theme-active {
+  background-color: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.sidebar-spacer {
+  flex: 1;
+  min-height: 3rem;
+}
+
+.sidebar-logout {
+  color: var(--text-muted);
+}
+
+.sidebar-logout:hover {
+  background-color: var(--danger-soft);
+  color: var(--danger);
+}
+
+.sidebar-bottom-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding-top: 1rem;
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 55;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.45);
+    z-index: 50;
+  }
+}
+
+/* Icon buttons (barra lateral, quitar/eliminar en listas) */
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.icon-btn img {
+  width: 18px;
+  height: 18px;
+}
+
+/* Los .svg de Assets/ son trazos negros sólidos sobre fondo transparente
+   (sin fill="currentColor"), así que en tema oscuro se "pierden" contra
+   fondos oscuros igual que las fotos. Se invierten a blanco con filter en
+   vez de ponerles un fondo blanco detrás, para que sigan siendo siluetas
+   limpias en vez de placas cuadradas/circulares. filter en el <img> no
+   afecta el fondo de .icon-badge (ese lo pinta el div contenedor), así que
+   es seguro invertir también el ícono de adentro de la insignia. */
+:root[data-theme="dark"] .icon-btn img,
+:root[data-theme="dark"] .sidebar-toggle img,
+:root[data-theme="dark"] .sidebar-item-icon,
+:root[data-theme="dark"] .icon-badge img {
+  filter: invert(1);
+}
+
+.icon-btn:hover:not(:disabled) {
+  background-color: var(--bg);
+  color: var(--text);
+}
+
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sidebar-icon-btn {
+  border-color: var(--border);
+  background-color: var(--surface);
+}
+
+.sidebar-icon-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background-color: var(--surface);
+}
+
+.icon-btn-remove:hover:not(:disabled) {
+  background-color: var(--danger-soft);
+  color: var(--danger);
+}
+
+.update-check-btn.spinning img {
+  animation: icon-spin 1s linear infinite;
+}
+
+@keyframes icon-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.update-check-error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.update-badge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
 /* Buttons */
 
 .btn {
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 0.6rem 1.1rem;
   font-size: 0.95rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  transition: background-color var(--transition-fast);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .btn-primary {
   background-color: var(--accent);
-  color: white;
+  color: var(--accent-contrast);
 }
 
 .btn-primary:hover {
@@ -82,21 +441,27 @@ h3 {
 }
 
 .btn-danger {
-  background-color: var(--danger);
+  background-color: var(--danger-solid);
   color: white;
 }
 
-.btn-danger:hover {
-  background-color: var(--danger-hover);
+.btn-danger:hover:not(:disabled) {
+  background-color: var(--danger-solid-hover);
+}
+
+.btn-danger:disabled {
+  background-color: var(--border);
+  color: var(--text-muted);
+  cursor: not-allowed;
 }
 
 .btn-success {
-  background-color: #16a34a;
+  background-color: var(--success-solid);
   color: white;
 }
 
 .btn-success:hover {
-  background-color: #15803d;
+  background-color: var(--success-solid-hover);
 }
 
 .btn-link {
@@ -130,23 +495,14 @@ h3 {
 
 .update-checker {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.2rem;
 }
 
 .update-version {
   color: var(--text-muted);
-  font-size: 0.85rem;
-}
-
-.current-user {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-}
-
-.update-hint {
-  margin-top: 0;
-  font-size: 0.9rem;
+  font-size: 0.7rem;
 }
 
 .search-input {
@@ -154,7 +510,7 @@ h3 {
   font-size: 1.1rem;
   padding: 0.9rem 1.1rem;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background-color: var(--surface);
   color: var(--text);
 }
@@ -180,9 +536,9 @@ h3 {
   color: var(--text-muted);
   cursor: pointer;
   transition:
-    background-color 0.15s ease,
-    color 0.15s ease,
-    border-color 0.15s ease;
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
 }
 
 .filter-chip:hover {
@@ -192,7 +548,7 @@ h3 {
 .filter-chip-active {
   background-color: var(--accent);
   border-color: var(--accent);
-  color: white;
+  color: var(--accent-contrast);
 }
 
 .results-grid {
@@ -220,23 +576,23 @@ h3 {
   text-align: left;
   background-color: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
   cursor: pointer;
   padding: 0;
   transition:
-    box-shadow 0.15s ease,
-    transform 0.15s ease;
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .product-card:hover {
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-md);
   transform: translateY(-2px);
 }
 
 .product-card-image {
   aspect-ratio: 4 / 3;
-  background-color: var(--bg);
+  background-color: var(--media-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -250,7 +606,9 @@ h3 {
 }
 
 .product-card-placeholder {
-  color: var(--text-muted);
+  /* Siempre sobre un fondo --media-bg (fijo, claro), no sobre el fondo de
+     la página, así que usa un gris fijo en vez de --text-muted del tema. */
+  color: var(--media-placeholder-text);
   font-size: 0.85rem;
 }
 
@@ -289,9 +647,9 @@ h3 {
   flex: 1 1 320px;
   max-width: 420px;
   aspect-ratio: 4 / 3;
-  background-color: var(--surface);
+  background-color: var(--media-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -368,6 +726,15 @@ h3 {
   margin-top: 1rem;
 }
 
+.last-modified {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1rem;
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
 .confirm-delete {
   display: flex;
   align-items: center;
@@ -412,7 +779,7 @@ textarea {
   font-size: 1rem;
   padding: 0.6rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--text);
   background-color: var(--surface);
 }
@@ -423,10 +790,21 @@ textarea {
   line-height: 1.4;
 }
 
+input[type="text"]:hover:not(:disabled, :focus),
+textarea:hover:not(:disabled, :focus) {
+  border-color: var(--text-muted);
+}
+
 input[type="text"]:focus,
 textarea:focus {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
+}
+
+input[type="text"]:disabled,
+textarea:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 .image-picker {
@@ -439,8 +817,9 @@ textarea:focus {
   width: 96px;
   height: 96px;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
+  background-color: var(--media-bg);
 }
 
 .specs-editor {
@@ -472,18 +851,96 @@ textarea:focus {
   gap: 0.75rem;
 }
 
-/* Password gate */
+/* Login */
 
-.password-gate {
-  max-width: 420px;
-  margin: 3rem auto 0;
+html,
+body,
+#root {
+  height: 100%;
 }
 
-.password-gate form {
+.app-login {
+  max-width: none;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.5rem;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 2.5rem 2rem 2rem;
+}
+
+.login-header {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 2rem;
+}
+
+.login-header-icon {
+  width: 60px;
+  height: 60px;
+  padding: 14px;
+}
+
+.login-card form {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  margin-top: 1.25rem;
+}
+
+.login-input {
+  font-family: inherit;
+  font-size: 1rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  background-color: var(--bg);
+}
+
+.login-input::placeholder {
+  color: var(--text-muted);
+}
+
+.login-input:hover:not(:disabled) {
+  border-color: var(--text-muted);
+}
+
+.login-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+
+.login-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.login-error {
+  text-align: center;
+  background-color: var(--danger-soft);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.75rem;
+}
+
+.login-submit {
+  width: 100%;
+  padding: 0.75rem 1.1rem;
+  font-size: 1rem;
+  margin-top: 0.25rem;
+}
+
+.login-form-busy {
+  opacity: 0.85;
 }
 
 /* Plásticos / Imprenta private sections */
@@ -528,19 +985,20 @@ textarea:focus {
 .piece-thumb {
   width: 48px;
   height: 48px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   object-fit: cover;
   border: 1px solid var(--border);
+  background-color: var(--media-bg);
   flex-shrink: 0;
 }
 
 .piece-thumb-empty {
-  background-color: var(--bg);
+  background-color: var(--media-bg);
 }
 
 .print-item-card {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   padding: 1rem;
   display: flex;
   flex-direction: column;
@@ -615,7 +1073,7 @@ textarea:focus {
   gap: 0.6rem;
   background-color: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   padding: 0.9rem;
 }
 
@@ -639,8 +1097,8 @@ textarea:focus {
   justify-content: center;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background-color: var(--surface);
+  border-radius: var(--radius-md);
+  background-color: var(--media-bg);
 }
 
 .print-item-images-frame img {
@@ -693,13 +1151,17 @@ textarea:focus {
   align-items: center;
   gap: 0.5rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 0.6rem 0.8rem;
   background-color: var(--surface);
   color: var(--text);
   cursor: pointer;
   font-size: 0.9rem;
   text-align: left;
+}
+
+.user-list-item:hover {
+  border-color: var(--accent);
 }
 
 .user-list-item-active {
@@ -720,7 +1182,7 @@ textarea:focus {
   font-size: 1rem;
   padding: 0.6rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--text);
   background-color: var(--surface);
 }
@@ -741,7 +1203,7 @@ textarea:focus {
 .connected-users-list li {
   padding: 0.5rem 0;
   border-bottom: 1px solid var(--border);
-  color: #16a34a;
+  color: var(--success);
   font-weight: 500;
 }
 
@@ -752,9 +1214,11 @@ textarea:focus {
 }
 
 .log-terminal {
-  background-color: var(--text);
-  color: var(--surface);
-  border-radius: 10px;
+  /* Colores fijos (no ligados a --bg/--text): un terminal de registro se
+     lee siempre en oscuro, sin importar el tema claro/oscuro de la app. */
+  background-color: #0b1220;
+  color: #e2e8f0;
+  border-radius: var(--radius-lg);
   padding: 1rem 1.1rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.82rem;
@@ -798,13 +1262,15 @@ textarea:focus {
   left: 50%;
   bottom: 2rem;
   transform: translateX(-50%);
-  background-color: var(--text);
-  color: var(--surface);
+  /* Colores fijos (no ligados a --bg/--text): la píldora del toast siempre
+     se ve oscura, sin importar el tema claro/oscuro de la app. */
+  background-color: #0f172a;
+  color: #f8fafc;
   padding: 0.75rem 1.25rem;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 0.9rem;
   font-weight: 500;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.25);
+  box-shadow: var(--shadow-lg);
   z-index: 1000;
   animation: toast-in 0.15s ease-out;
 }
@@ -835,13 +1301,13 @@ textarea:focus {
 
 .modal-card {
   background-color: var(--surface);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 1.75rem;
   max-width: 640px;
   width: 100%;
   max-height: 85vh;
   overflow-y: auto;
-  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.35);
+  box-shadow: var(--shadow-lg);
 }
 
 .order-modal-items {
@@ -853,7 +1319,7 @@ textarea:focus {
 
 .order-modal-item {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   padding: 0.9rem;
 }
 
@@ -875,7 +1341,7 @@ textarea:focus {
   gap: 0.15rem;
   background-color: var(--bg);
   border: 1px dashed var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 0.55rem 0.75rem;
 }
 
@@ -892,7 +1358,7 @@ textarea:focus {
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--accent);
-  background-color: rgba(29, 78, 216, 0.12);
+  background-color: var(--accent-soft);
   border-radius: 999px;
   padding: 0.05rem 0.5rem;
 }
@@ -916,9 +1382,29 @@ textarea:focus {
   font-size: 1rem;
   padding: 0.6rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--text);
   background-color: var(--surface);
+}
+
+.user-form select:hover:not(:disabled),
+.print-item-fields select:hover:not(:disabled),
+.order-modal-item select:hover:not(:disabled) {
+  border-color: var(--text-muted);
+}
+
+.user-form select:focus,
+.print-item-fields select:focus,
+.order-modal-item select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.user-form select:disabled,
+.print-item-fields select:disabled,
+.order-modal-item select:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 /* Past Producción orders / Compras (browsable history under a print item card) */
@@ -934,7 +1420,7 @@ textarea:focus {
 
 .print-item-history-order {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 0.6rem 0.75rem;
   display: flex;
   flex-direction: column;
@@ -987,7 +1473,7 @@ textarea:focus {
 
 .plastic-item-card {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   padding: 1.1rem;
   display: flex;
   flex-direction: column;
@@ -1035,9 +1521,9 @@ textarea:focus {
   justify-content: space-between;
   gap: 0.6rem;
   width: 100%;
-  background-color: var(--bg);
+  background-color: var(--media-bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   padding: 0.7rem;
 }
 
@@ -1051,7 +1537,7 @@ textarea:focus {
   width: 100%;
   aspect-ratio: 3 / 1;
   object-fit: contain;
-  background-color: var(--surface);
+  background-color: var(--media-bg);
 }
 
 .plastic-item-image-box .product-card-placeholder,
@@ -1136,7 +1622,7 @@ textarea:focus {
   text-align: left;
   padding: 0.5rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background-color: transparent;
   cursor: pointer;
 }
@@ -1190,7 +1676,7 @@ textarea:focus {
   margin: 0.6rem 0 0;
 }
 
-/* Configuraciones: captura masiva de fichas técnicas */
+/* Configuraciones: captura masiva de fichas técnicas / imágenes */
 
 .import-picker {
   display: flex;
@@ -1246,7 +1732,7 @@ textarea:focus {
   max-height: 55vh;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 
 .import-review-table {
@@ -1282,15 +1768,20 @@ textarea:focus {
 }
 
 .import-status-nueva {
-  background-color: #16a34a;
+  background-color: var(--success-solid);
 }
 
-.import-status-duplicada {
-  background-color: var(--warning);
+.import-status-duplicada,
+.import-status-sustituir {
+  background-color: var(--warning-solid);
+}
+
+.import-status-no-encontrado {
+  background-color: var(--neutral-solid);
 }
 
 .import-status-error {
-  background-color: var(--danger);
+  background-color: var(--danger-solid);
 }
 
 .import-review-motivo {
@@ -1319,7 +1810,7 @@ textarea:focus {
 .import-summary-item {
   background-color: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   padding: 0.75rem 0.9rem;
   display: flex;
   flex-direction: column;
@@ -1336,14 +1827,3 @@ textarea:focus {
   color: var(--text-muted);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --bg: #0f172a;
-    --surface: #1e293b;
-    --border: #334155;
-    --text: #f1f5f9;
-    --text-muted: #94a3b8;
-    --warning: #f59e0b;
-  }
-}

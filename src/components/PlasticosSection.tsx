@@ -11,6 +11,7 @@ import { hasPermission, useAuth } from "../auth";
 import AutoGrowInput from "./AutoGrowInput";
 import Toast from "./Toast";
 import PlasticProductPicker from "./PlasticProductPicker";
+import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   productId: number;
@@ -312,8 +313,14 @@ function PlasticItemCard({
           <h3>{item.data.nombre || "(sin nombre)"}</h3>
         )}
         {editMode && (
-          <button type="button" className="btn-link" onClick={onRemove}>
-            Quitar de este juego
+          <button
+            type="button"
+            className="icon-btn icon-btn-remove"
+            onClick={onRemove}
+            title="Quitar de este juego"
+            aria-label="Quitar de este juego"
+          >
+            <img src={basuraIcon} alt="" aria-hidden="true" />
           </button>
         )}
       </div>

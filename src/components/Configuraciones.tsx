@@ -5,12 +5,13 @@ import UsersPanel from "./UsersPanel";
 import ConnectedUsersPanel from "./ConnectedUsersPanel";
 import LogsPanel from "./LogsPanel";
 import FichaImportPanel from "./FichaImportPanel";
+import ImageImportPanel from "./ImageImportPanel";
 
 interface Props {
   onBack: () => void;
 }
 
-type Tab = "usuarios" | "conectados" | "registro" | "captura";
+type Tab = "usuarios" | "conectados" | "registro" | "captura" | "captura-imagenes";
 
 const BASE_TABS: { value: Tab; label: string }[] = [
   { value: "usuarios", label: "Usuarios" },
@@ -20,6 +21,7 @@ const BASE_TABS: { value: Tab; label: string }[] = [
 
 const ADMIN_TABS: { value: Tab; label: string }[] = [
   { value: "captura", label: "Captura masiva de fichas técnicas" },
+  { value: "captura-imagenes", label: "Captura masiva de imágenes" },
 ];
 
 export default function Configuraciones({ onBack }: Props) {
@@ -73,6 +75,7 @@ export default function Configuraciones({ onBack }: Props) {
       {tab === "conectados" && <ConnectedUsersPanel />}
       {tab === "registro" && <LogsPanel />}
       {tab === "captura" && <FichaImportPanel />}
+      {tab === "captura-imagenes" && <ImageImportPanel />}
     </div>
   );
 }

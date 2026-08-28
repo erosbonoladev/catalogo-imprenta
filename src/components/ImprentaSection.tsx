@@ -25,6 +25,7 @@ import AutoGrowInput from "./AutoGrowInput";
 import Toast from "./Toast";
 import OrderModal from "./OrderModal";
 import PrintItemImagesCarousel from "./PrintItemImagesCarousel";
+import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   productId: number;
@@ -390,8 +391,14 @@ export default function ImprentaSection({ productId, onBack }: Props) {
                   value={item.nombre}
                   onChange={(v) => updateItem(index, "nombre", v)}
                 />
-                <button type="button" className="btn-link" onClick={() => removeItem(index)}>
-                  Quitar
+                <button
+                  type="button"
+                  className="icon-btn icon-btn-remove"
+                  onClick={() => removeItem(index)}
+                  title="Quitar producto de impresión"
+                  aria-label="Quitar producto de impresión"
+                >
+                  <img src={basuraIcon} alt="" aria-hidden="true" />
                 </button>
               </div>
 
@@ -531,10 +538,12 @@ export default function ImprentaSection({ productId, onBack }: Props) {
                         />
                         <button
                           type="button"
-                          className="btn-link"
+                          className="icon-btn icon-btn-remove"
                           onClick={() => removeExtra(index, extraIndex)}
+                          title="Quitar segmento"
+                          aria-label="Quitar segmento"
                         >
-                          Quitar
+                          <img src={basuraIcon} alt="" aria-hidden="true" />
                         </button>
                       </div>
                     ))}
@@ -682,10 +691,12 @@ export default function ImprentaSection({ productId, onBack }: Props) {
                                 </span>
                                 <button
                                   type="button"
-                                  className="btn-link"
+                                  className="icon-btn icon-btn-remove"
                                   onClick={() => handleDeleteOrder(item.id!, order)}
+                                  title="Borrar orden de producción"
+                                  aria-label="Borrar orden de producción"
                                 >
-                                  Borrar
+                                  <img src={basuraIcon} alt="" aria-hidden="true" />
                                 </button>
                               </div>
                               <div className="print-item-view-fields">
@@ -764,10 +775,12 @@ export default function ImprentaSection({ productId, onBack }: Props) {
                                   <span className="print-item-checks-label">Orden compra</span>
                                   <button
                                     type="button"
-                                    className="btn-link"
+                                    className="icon-btn icon-btn-remove"
                                     onClick={() => handleDeletePurchase(p.order, p)}
+                                    title="Borrar orden de compra"
+                                    aria-label="Borrar orden de compra"
                                   >
-                                    Borrar
+                                    <img src={basuraIcon} alt="" aria-hidden="true" />
                                   </button>
                                 </div>
                                 <div className="print-item-view-fields">

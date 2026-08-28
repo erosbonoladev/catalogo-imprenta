@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getImageSrc, pickImage } from "../db";
 import type { ImageBlob, PrintItemImage } from "../types";
+import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   images: PrintItemImage[];
@@ -105,8 +106,14 @@ export default function PrintItemImagesCarousel({
                 <button type="button" className="btn-link" onClick={handleReplace}>
                   Reemplazar
                 </button>
-                <button type="button" className="btn-link" onClick={() => onRemove(index)}>
-                  Eliminar
+                <button
+                  type="button"
+                  className="icon-btn icon-btn-remove"
+                  onClick={() => onRemove(index)}
+                  title="Eliminar imagen"
+                  aria-label="Eliminar imagen"
+                >
+                  <img src={basuraIcon} alt="" aria-hidden="true" />
                 </button>
               </>
             )}

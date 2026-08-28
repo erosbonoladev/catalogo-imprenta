@@ -12,6 +12,7 @@ import {
 import type { ProductInput, ProductSpec } from "../types";
 import { useAuth } from "../auth";
 import AutoGrowInput from "./AutoGrowInput";
+import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   productId?: number;
@@ -70,9 +71,21 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
     );
   }
 
+  function toggleSpecRequisicion(index: number) {
+    setDirty(true);
+    setSpecs((prev) =>
+      prev.map((spec, i) =>
+        i === index ? { ...spec, permite_requisicion: !spec.permite_requisicion } : spec,
+      ),
+    );
+  }
+
   function addSpecRow() {
     setDirty(true);
-    setSpecs((prev) => [...prev, { etiqueta: "", valor: "", orden: prev.length + 1 }]);
+    setSpecs((prev) => [
+      ...prev,
+      { etiqueta: "", valor: "", orden: prev.length + 1, permite_requisicion: false },
+    ]);
   }
 
   function removeSpecRow(index: number) {
@@ -201,12 +214,22 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
                 value={spec.valor}
                 onChange={(v) => updateSpec(index, "valor", v)}
               />
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={spec.permite_requisicion}
+                  onChange={() => toggleSpecRequisicion(index)}
+                />
+                Permitir requisición
+              </label>
               <button
                 type="button"
-                className="btn-link"
+                className="icon-btn icon-btn-remove"
                 onClick={() => removeSpecRow(index)}
+                title="Quitar especificación"
+                aria-label="Quitar especificación"
               >
-                Quitar
+                <img src={basuraIcon} alt="" aria-hidden="true" />
               </button>
             </div>
           ))}

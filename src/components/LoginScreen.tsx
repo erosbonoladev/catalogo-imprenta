@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useAuth } from "../auth";
+import usuarioIcon from "../../Assets/usuario.svg";
 
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -20,34 +21,43 @@ export default function LoginScreen() {
   }
 
   return (
-    <div className="password-gate">
-      <h1>Catálogo Imprenta</h1>
-      <p className="hint">Ingresa tu usuario y contraseña para continuar.</p>
+    <div className="login-card">
+      <div className="login-header">
+        <div className="icon-badge login-header-icon">
+          <img src={usuarioIcon} alt="" aria-hidden="true" />
+        </div>
+      </div>
 
-      <form onSubmit={handleSubmit}>
-        <label>
-          Usuario
-          <input
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            autoFocus
-          />
-        </label>
+      <form onSubmit={handleSubmit} className={busy ? "login-form-busy" : undefined}>
+        <input
+          type="text"
+          className="login-input"
+          placeholder="Usuario"
+          aria-label="Usuario"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          autoFocus
+          disabled={busy}
+        />
 
-        <label>
-          Contraseña
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
+        <input
+          type="password"
+          className="login-input"
+          placeholder="Contraseña"
+          aria-label="Contraseña"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          disabled={busy}
+        />
 
-        {error && <p className="form-error">{error}</p>}
+        {error && (
+          <p className="form-error login-error" role="alert">
+            {error}
+          </p>
+        )}
 
         <div className="form-actions">
-          <button type="submit" className="btn btn-primary" disabled={busy}>
+          <button type="submit" className="btn btn-primary login-submit" disabled={busy}>
             {busy ? "Ingresando…" : "Iniciar sesión"}
           </button>
         </div>

@@ -1,15 +1,12 @@
 import { useEffect, useState } from "react";
 import { searchProducts } from "../db";
 import type { Product, SearchFilter } from "../types";
-import { hasPermission, useAuth } from "../auth";
 import ProductCard from "./ProductCard";
-import UpdateChecker from "./UpdateChecker";
 import Pagination from "./Pagination";
 
 interface Props {
   onSelect: (id: number) => void;
   onNew: () => void;
-  onConfiguraciones: () => void;
 }
 
 const FILTROS: { value: SearchFilter; label: string }[] = [
@@ -21,8 +18,7 @@ const FILTROS: { value: SearchFilter; label: string }[] = [
 
 const PAGE_SIZE = 20; // 5 filas x 4 columnas por página
 
-export default function SearchScreen({ onSelect, onNew, onConfiguraciones }: Props) {
-  const { user, logout } = useAuth();
+export default function SearchScreen({ onSelect, onNew }: Props) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<SearchFilter>("todo");
   const [results, setResults] = useState<Product[]>([]);
@@ -62,18 +58,8 @@ export default function SearchScreen({ onSelect, onNew, onConfiguraciones }: Pro
       <header className="search-header">
         <h1>Catálogo Imprenta</h1>
         <div className="search-header-actions">
-          <UpdateChecker />
-          {user && <span className="current-user">{user.username}</span>}
-          {hasPermission(user, "configuraciones") && (
-            <button className="btn btn-secondary" onClick={onConfiguraciones}>
-              Configuraciones
-            </button>
-          )}
           <button className="btn btn-primary" onClick={onNew}>
             + Agregar producto
-          </button>
-          <button className="btn btn-secondary" onClick={logout}>
-            Cerrar sesión
           </button>
         </div>
       </header>

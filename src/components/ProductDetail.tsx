@@ -13,6 +13,12 @@ interface Props {
   onOpenImprenta: (productId: number) => void;
 }
 
+function formatFechaCorta(fechaSql: string): string {
+  const [fecha] = fechaSql.split(" ");
+  const [y, m, d] = fecha.split("-");
+  return `${d}/${m}/${y}`;
+}
+
 export default function ProductDetail({
   productId,
   onBack,
@@ -96,13 +102,15 @@ export default function ProductDetail({
                     <th>{spec.etiqueta}</th>
                     <td>{spec.valor}</td>
                     <td className="specs-table-actions">
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-requisicion"
-                        onClick={() => setRequisicionSpec(spec)}
-                      >
-                        Requisición
-                      </button>
+                      {spec.permite_requisicion && hasPermission(user, "requisiciones") && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-requisicion"
+                          onClick={() => setRequisicionSpec(spec)}
+                        >
+                          Requisición
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -167,6 +175,10 @@ export default function ProductDetail({
           onClose={() => setRequisicionSpec(null)}
         />
       )}
+
+      <p className="last-modified">
+        Última modificación: {formatFechaCorta(product.actualizado_en)}
+      </p>
     </div>
   );
 }

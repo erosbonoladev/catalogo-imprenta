@@ -1,7 +1,8 @@
 import { createClient } from "@libsql/client/web";
 import { open } from "@tauri-apps/plugin-dialog";
-import { readFile } from "@tauri-apps/plugin-fs";
+import { readDir, readFile } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
+import { join } from "@tauri-apps/api/path";
 import type {
   AppLog,
   ConnectedUser,
@@ -58,6 +59,7 @@ interface ProductRow {
   imagen_mime: string | null;
   presentacion_original: string | null;
   creado_en: string;
+  actualizado_en: string | null;
 }
 
 function rowToProduct(row: ProductRow): Product {
@@ -71,6 +73,7 @@ function rowToProduct(row: ProductRow): Product {
     imagen: toImageBlob(row.imagen, row.imagen_mime),
     presentacion_original: row.presentacion_original ?? "",
     creado_en: row.creado_en,
+    actualizado_en: row.actualizado_en ?? row.creado_en,
   };
 }
 
@@ -106,6 +109,19 @@ export async function getProduct(id: number): Promise<Product | null> {
   return row ? rowToProduct(row) : null;
 }
 
+interface ProductSpecRow {
+  id: number;
+  product_id: number;
+  etiqueta: string;
+  valor: string;
+  orden: number;
+  permite_requisicion: number;
+}
+
+function rowToProductSpec(row: ProductSpecRow): ProductSpec {
+  return { ...row, permite_requisicion: Boolean(row.permite_requisicion) };
+}
+
 export async function getProductSpecs(
   productId: number,
 ): Promise<ProductSpec[]> {
@@ -113,7 +129,7 @@ export async function getProductSpecs(
     sql: "SELECT * FROM product_specs WHERE product_id = ?1 ORDER BY orden, id",
     args: [productId],
   });
-  return result.rows as unknown as ProductSpec[];
+  return (result.rows as unknown as ProductSpecRow[]).map(rowToProductSpec);
 }
 
 export async function createProduct(
@@ -121,8 +137,8 @@ export async function createProduct(
   specs: ProductSpec[],
 ): Promise<number> {
   const result = await client.execute({
-    sql: `INSERT INTO products (codigo, nombre, categoria, material, descripcion, imagen, imagen_mime)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+    sql: `INSERT INTO products (codigo, nombre, categoria, material, descripcion, imagen, imagen_mime, actualizado_en)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))`,
     args: [
       product.codigo,
       product.nombre,
@@ -145,7 +161,8 @@ export async function updateProduct(
 ): Promise<void> {
   await client.execute({
     sql: `UPDATE products
-          SET codigo = ?1, nombre = ?2, categoria = ?3, material = ?4, descripcion = ?5, imagen = ?6, imagen_mime = ?7
+          SET codigo = ?1, nombre = ?2, categoria = ?3, material = ?4, descripcion = ?5, imagen = ?6, imagen_mime = ?7,
+              actualizado_en = datetime('now')
           WHERE id = ?8`,
     args: [
       product.codigo,
@@ -175,8 +192,8 @@ async function insertSpecs(
     const valor = spec.valor.trim();
     if (!etiqueta || !valor) continue;
     await client.execute({
-      sql: `INSERT INTO product_specs (product_id, etiqueta, valor, orden) VALUES (?1, ?2, ?3, ?4)`,
-      args: [productId, etiqueta, valor, orden],
+      sql: `INSERT INTO product_specs (product_id, etiqueta, valor, orden, permite_requisicion) VALUES (?1, ?2, ?3, ?4, ?5)`,
+      args: [productId, etiqueta, valor, orden, spec.permite_requisicion ? 1 : 0],
     });
     orden += 1;
   }
@@ -262,7 +279,7 @@ export async function codigoEnUso(
   );
 }
 
-const MIME_BY_EXT: Record<string, string> = {
+export const MIME_BY_EXT: Record<string, string> = {
   png: "image/png",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
@@ -298,6 +315,46 @@ export async function pickExcelFile(): Promise<Uint8Array | null> {
   });
   if (!selected || Array.isArray(selected)) return null;
   return readFile(selected);
+}
+
+export interface ImageFolderEntry {
+  name: string;
+  path: string;
+}
+
+export async function pickImageFolder(): Promise<string | null> {
+  const selected = await open({ directory: true, multiple: false });
+  if (!selected || Array.isArray(selected)) return null;
+  return selected;
+}
+
+export async function listImageFolderFiles(
+  folderPath: string,
+): Promise<ImageFolderEntry[]> {
+  const entries = await readDir(folderPath);
+  const files: ImageFolderEntry[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile) continue;
+    files.push({ name: entry.name, path: await join(folderPath, entry.name) });
+  }
+  return files;
+}
+
+export async function readImageFileBlob(path: string): Promise<ImageBlob> {
+  const data = await readFile(path);
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const mime = MIME_BY_EXT[ext] ?? "application/octet-stream";
+  return { data, mime };
+}
+
+export async function updateProductImage(
+  id: number,
+  imagen: ImageBlob,
+): Promise<void> {
+  await client.execute({
+    sql: "UPDATE products SET imagen = ?1, imagen_mime = ?2 WHERE id = ?3",
+    args: [imagen.data, imagen.mime, id],
+  });
 }
 
 // --- Usuarios y permisos ---

@@ -13,6 +13,7 @@ export interface Product {
   imagen: ImageBlob | null;
   presentacion_original: string;
   creado_en: string;
+  actualizado_en: string;
 }
 
 export interface ProductSpec {
@@ -21,6 +22,7 @@ export interface ProductSpec {
   etiqueta: string;
   valor: string;
   orden: number;
+  permite_requisicion: boolean;
 }
 
 export interface ProductInput {
@@ -166,13 +168,14 @@ export interface PrintItemPurchase {
 
 export type SearchFilter = "todo" | "nombre" | "sku" | "material";
 
-export const PERMISOS = ["plasticos", "imprenta", "configuraciones"] as const;
+export const PERMISOS = ["plasticos", "imprenta", "configuraciones", "requisiciones"] as const;
 export type Permiso = (typeof PERMISOS)[number];
 
 export const PERMISO_LABELS: Record<Permiso, string> = {
   plasticos: "Piezas",
   imprenta: "Imprenta",
   configuraciones: "Configuraciones",
+  requisiciones: "Requisiciones",
 };
 
 export type Rol = "usuario" | "admin";
