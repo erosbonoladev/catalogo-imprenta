@@ -25,6 +25,14 @@ export interface ProductSpec {
   permite_requisicion: boolean;
 }
 
+export interface ProductDescription {
+  id?: number;
+  product_id?: number;
+  etiqueta: string;
+  texto: string;
+  orden: number;
+}
+
 export interface ProductInput {
   codigo: string;
   nombre: string;
@@ -168,7 +176,18 @@ export interface PrintItemPurchase {
 
 export type SearchFilter = "todo" | "nombre" | "sku" | "material";
 
-export const PERMISOS = ["plasticos", "imprenta", "configuraciones", "requisiciones"] as const;
+export const PERMISOS = [
+  "plasticos",
+  "imprenta",
+  "configuraciones",
+  "requisiciones",
+  "backups_ver",
+  "backups_crear",
+  "backups_descargar",
+  "backups_restaurar",
+  "backups_configurar",
+  "backups_eliminar",
+] as const;
 export type Permiso = (typeof PERMISOS)[number];
 
 export const PERMISO_LABELS: Record<Permiso, string> = {
@@ -176,7 +195,71 @@ export const PERMISO_LABELS: Record<Permiso, string> = {
   imprenta: "Imprenta",
   configuraciones: "Configuraciones",
   requisiciones: "Requisiciones",
+  backups_ver: "Backups: ver",
+  backups_crear: "Backups: crear manual",
+  backups_descargar: "Backups: descargar",
+  backups_restaurar: "Backups: restaurar",
+  backups_configurar: "Backups: configurar programación",
+  backups_eliminar: "Backups: eliminar",
 };
+
+export const PERMISOS_BACKUPS: Permiso[] = [
+  "backups_ver",
+  "backups_crear",
+  "backups_descargar",
+  "backups_restaurar",
+  "backups_configurar",
+  "backups_eliminar",
+];
+
+export const BACKUP_TIPOS = [
+  "BACKUP_AUTOMATICO",
+  "BACKUP_MANUAL",
+  "BACKUP_PRE_IMPORTACION",
+  "BACKUP_PRE_RESTAURACION",
+  "RESTAURACION",
+  "RESTAURACION_ARCHIVO_SUBIDO",
+  "CONFIGURACION_CAMBIADA",
+] as const;
+export type BackupTipo = (typeof BACKUP_TIPOS)[number];
+
+export type BackupEstado = "EN_PROCESO" | "EXITOSO" | "FALLIDO";
+
+export interface BackupRecord {
+  id: number;
+  tipo: BackupTipo;
+  origen: string;
+  usuario: string | null;
+  archivo: string;
+  ubicacion: string;
+  tamano_bytes: number;
+  checksum_sha256: string;
+  estado: BackupEstado;
+  detalle: string;
+  creado_en: string;
+}
+
+export interface BackupManifest {
+  version: 1;
+  creadoEn: string;
+  tablas: Record<string, number>;
+}
+
+export type BackupFrecuencia = "diario" | "cada_n_horas" | "semanal";
+
+export interface BackupSettings {
+  automatico_activado: boolean;
+  frecuencia: BackupFrecuencia;
+  hora_ejecucion: string;
+  intervalo_horas: number | null;
+  dia_semana: number | null;
+  retencion_diaria_dias: number;
+  retencion_semanal_dias: number;
+  retencion_mensual_dias: number;
+  ultimo_automatico_en: string | null;
+  actualizado_en: string;
+  actualizado_por: string | null;
+}
 
 export type Rol = "usuario" | "admin";
 

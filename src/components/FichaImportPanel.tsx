@@ -5,6 +5,7 @@ import {
   findProductsByNombre,
   logEvent,
   pickExcelFile,
+  runBackupNow,
   setPresentacionOriginal,
   updateProduct,
 } from "../db";
@@ -18,7 +19,7 @@ import {
 } from "../fichaImport";
 import { isAdmin, useAuth } from "../auth";
 
-type Phase = "picking" | "validating" | "reviewing" | "committing" | "done";
+type Phase = "picking" | "validating" | "reviewing" | "backing-up" | "committing" | "done";
 
 interface Progress {
   done: number;
@@ -147,6 +148,21 @@ export default function FichaImportPanel() {
   }
 
   async function handleConfirm() {
+    setError(null);
+    setPhase("backing-up");
+    const backup = await runBackupNow(
+      "BACKUP_PRE_IMPORTACION",
+      "Captura masiva de fichas técnicas",
+      user?.username ?? null,
+    );
+    if (!backup.ok) {
+      setPhase("reviewing");
+      setError(
+        `No se pudo crear el backup previo — la importación no se realizó. ${backup.errors.join("; ")}`,
+      );
+      return;
+    }
+
     setPhase("committing");
     setCommitProgress({ done: 0, total: rows.length });
 
@@ -380,6 +396,8 @@ export default function FichaImportPanel() {
             </table>
           </div>
 
+          {error && <p className="form-error">{error}</p>}
+
           <div className="form-actions">
             <button type="button" className="btn btn-primary" onClick={handleConfirm}>
               Confirmar importación
@@ -387,6 +405,17 @@ export default function FichaImportPanel() {
             <button type="button" className="btn btn-secondary" onClick={reset}>
               Cancelar importación
             </button>
+          </div>
+        </div>
+      )}
+
+      {phase === "backing-up" && (
+        <div className="import-progress">
+          <p className="hint" style={{ margin: 0 }}>
+            Creando backup previo — la importación no comenzará hasta que se verifique…
+          </p>
+          <div className="progress-bar">
+            <div className="progress-bar-fill" style={{ width: "100%" }} />
           </div>
         </div>
       )}

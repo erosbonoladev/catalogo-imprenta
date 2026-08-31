@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useAuth } from "../auth";
-import usuarioIcon from "../../Assets/usuario.svg";
+import clioLogo from "../../Assets/clio.png";
 
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -24,7 +24,7 @@ export default function LoginScreen() {
     <div className="login-card">
       <div className="login-header">
         <div className="icon-badge login-header-icon">
-          <img src={usuarioIcon} alt="" aria-hidden="true" />
+          <img src={clioLogo} alt="Clio" />
         </div>
       </div>
 

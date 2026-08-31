@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
-import { deleteProduct, getImageSrc, getProduct, getProductSpecs } from "../db";
-import type { Product, ProductSpec } from "../types";
+import {
+  deleteProduct,
+  getImageSrc,
+  getProduct,
+  getProductDescriptions,
+  getProductSpecs,
+} from "../db";
+import type { Product, ProductDescription, ProductSpec } from "../types";
+import { buildDescriptionSlots } from "../descriptions";
 import { hasPermission, useAuth } from "../auth";
 import RequisicionModal from "./RequisicionModal";
 
@@ -30,6 +37,8 @@ export default function ProductDetail({
   const { user } = useAuth();
   const [product, setProduct] = useState<Product | null>(null);
   const [specs, setSpecs] = useState<ProductSpec[]>([]);
+  const [descriptions, setDescriptions] = useState<ProductDescription[]>([]);
+  const [descIndex, setDescIndex] = useState(0);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [requisicionSpec, setRequisicionSpec] = useState<ProductSpec | null>(null);
@@ -37,13 +46,16 @@ export default function ProductDetail({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [prod, specList] = await Promise.all([
+      const [prod, specList, descriptionList] = await Promise.all([
         getProduct(productId),
         getProductSpecs(productId),
+        getProductDescriptions(productId),
       ]);
       if (cancelled) return;
       setProduct(prod);
       setSpecs(specList);
+      setDescriptions(descriptionList);
+      setDescIndex(0);
       setImageSrc(await getImageSrc(prod?.imagen ?? null));
     })();
     return () => {
@@ -66,6 +78,12 @@ export default function ProductDetail({
     await deleteProduct(productId);
     onDeleted();
   }
+
+  const descriptionSlots = buildDescriptionSlots(product.descripcion, descriptions).filter(
+    (slot) => slot.texto.trim(),
+  );
+  const activeDescIndex = Math.min(descIndex, Math.max(0, descriptionSlots.length - 1));
+  const activeDescSlot = descriptionSlots[activeDescIndex];
 
   return (
     <div className="product-detail">
@@ -90,8 +108,31 @@ export default function ProductDetail({
             {product.material && <span className="tag">{product.material}</span>}
           </p>
 
-          {product.descripcion && (
-            <p className="product-detail-description">{product.descripcion}</p>
+          {activeDescSlot && (
+            <div className="description-viewer">
+              <div className="description-viewer-header">
+                <button
+                  type="button"
+                  className="icon-btn description-nav-btn"
+                  onClick={() => setDescIndex((i) => i - 1)}
+                  disabled={activeDescIndex <= 0}
+                  aria-label="Descripción anterior"
+                >
+                  ‹
+                </button>
+                <span className="description-viewer-label">{activeDescSlot.etiqueta}</span>
+                <button
+                  type="button"
+                  className="icon-btn description-nav-btn"
+                  onClick={() => setDescIndex((i) => i + 1)}
+                  disabled={activeDescIndex >= descriptionSlots.length - 1}
+                  aria-label="Siguiente descripción"
+                >
+                  ›
+                </button>
+              </div>
+              <p className="product-detail-description">{activeDescSlot.texto}</p>
+            </div>
           )}
 
           {specs.length > 0 && (

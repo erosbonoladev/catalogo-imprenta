@@ -56,7 +56,7 @@ export default function SearchScreen({ onSelect, onNew }: Props) {
   return (
     <div className="search-screen">
       <header className="search-header">
-        <h1>Catálogo Imprenta</h1>
+        <h1>Clio</h1>
         <div className="search-header-actions">
           <button className="btn btn-primary" onClick={onNew}>
             + Agregar producto

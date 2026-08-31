@@ -1,10 +1,15 @@
 import { createClient } from "@libsql/client/web";
-import { open } from "@tauri-apps/plugin-dialog";
-import { readDir, readFile } from "@tauri-apps/plugin-fs";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { exists, mkdir, readDir, readFile, remove, writeFile } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
-import { join } from "@tauri-apps/api/path";
+import { appDataDir, join } from "@tauri-apps/api/path";
 import type {
   AppLog,
+  BackupEstado,
+  BackupFrecuencia,
+  BackupRecord,
+  BackupSettings,
+  BackupTipo,
   ConnectedUser,
   EstadoRequisicion,
   Folio,
@@ -23,6 +28,7 @@ import type {
   PrintItemOrder,
   PrintItemPurchase,
   Product,
+  ProductDescription,
   ProductInput,
   ProductSpec,
   Requisicion,
@@ -36,6 +42,15 @@ import type {
 import { PROCESOS_IMPRENTA } from "./types";
 import { buildRequisicionMessage } from "./requisiciones";
 import { FOLIO_PREFIJOS, buildFolioString, fechaLocalDeHoy, formatFechaFolioLocal } from "./folios";
+import {
+  type DumpTable,
+  backupFileName,
+  buildBackupSql,
+  extractRestoreStatements,
+  gzipText,
+  sha256Hex,
+  validateBackupSql,
+} from "./backup";
 
 const client = createClient({
   url: import.meta.env.VITE_TURSO_URL,
@@ -135,6 +150,7 @@ export async function getProductSpecs(
 export async function createProduct(
   product: ProductInput,
   specs: ProductSpec[],
+  descriptions: ProductDescription[] = [],
 ): Promise<number> {
   const result = await client.execute({
     sql: `INSERT INTO products (codigo, nombre, categoria, material, descripcion, imagen, imagen_mime, actualizado_en)
@@ -151,6 +167,7 @@ export async function createProduct(
   });
   const productId = Number(result.lastInsertRowid);
   await insertSpecs(productId, specs);
+  await insertDescriptions(productId, descriptions);
   return productId;
 }
 
@@ -158,6 +175,7 @@ export async function updateProduct(
   id: number,
   product: ProductInput,
   specs: ProductSpec[],
+  descriptions: ProductDescription[] = [],
 ): Promise<void> {
   await client.execute({
     sql: `UPDATE products
@@ -180,6 +198,11 @@ export async function updateProduct(
     args: [id],
   });
   await insertSpecs(id, specs);
+  await client.execute({
+    sql: "DELETE FROM product_descriptions WHERE product_id = ?1",
+    args: [id],
+  });
+  await insertDescriptions(id, descriptions);
 }
 
 async function insertSpecs(
@@ -199,9 +222,48 @@ async function insertSpecs(
   }
 }
 
+interface ProductDescriptionRow {
+  id: number;
+  product_id: number;
+  etiqueta: string;
+  texto: string;
+  orden: number;
+}
+
+export async function getProductDescriptions(
+  productId: number,
+): Promise<ProductDescription[]> {
+  const result = await client.execute({
+    sql: "SELECT * FROM product_descriptions WHERE product_id = ?1 ORDER BY orden, id",
+    args: [productId],
+  });
+  return result.rows as unknown as ProductDescriptionRow[];
+}
+
+async function insertDescriptions(
+  productId: number,
+  descriptions: ProductDescription[],
+): Promise<void> {
+  let orden = 1;
+  for (const description of descriptions) {
+    const etiqueta = description.etiqueta.trim();
+    const texto = description.texto.trim();
+    if (!etiqueta || !texto) continue;
+    await client.execute({
+      sql: `INSERT INTO product_descriptions (product_id, etiqueta, texto, orden) VALUES (?1, ?2, ?3, ?4)`,
+      args: [productId, etiqueta, texto, orden],
+    });
+    orden += 1;
+  }
+}
+
 export async function deleteProduct(id: number): Promise<void> {
   await client.execute({
     sql: "DELETE FROM product_specs WHERE product_id = ?1",
+    args: [id],
+  });
+  await client.execute({
+    sql: "DELETE FROM product_descriptions WHERE product_id = ?1",
     args: [id],
   });
   await client.execute({
@@ -1321,4 +1383,350 @@ export async function createRequisicion(
     args: [mensaje, row.id],
   });
   return rowToRequisicion({ ...row, mensaje });
+}
+
+// --- Backups ---
+
+/**
+ * Lee toda la BD (todas las tablas reales, incluidas las marcadas como
+ * muertas en docs/DATABASE.md — un backup es una foto completa, no un
+ * recorte a lo que la app usa hoy) y arma el dump SQL. Usado tanto por el
+ * botón "Crear backup ahora" como por el hook previo a importaciones.
+ */
+export async function createBackupSql(): Promise<{ sql: string; manifest: import("./types").BackupManifest }> {
+  const tablesResult = await client.execute(
+    "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+  );
+  const tables: DumpTable[] = [];
+  for (const row of tablesResult.rows as unknown as { name: string; sql: string }[]) {
+    const columnsResult = await client.execute(`PRAGMA table_info(${row.name})`);
+    const columns = (columnsResult.rows as unknown as { name: string }[]).map((c) => c.name);
+    const rowsResult = await client.execute(`SELECT * FROM ${row.name}`);
+    tables.push({
+      name: row.name,
+      createSql: row.sql,
+      columns,
+      rows: rowsResult.rows as unknown as Record<string, unknown>[],
+    });
+  }
+  return buildBackupSql(tables);
+}
+
+/**
+ * Ejecuta un dump de restauración contra la BD en vivo. El PRAGMA/BEGIN/COMMIT
+ * del propio texto del dump se descarta — client.migrate() maneja la
+ * transacción de forma atómica vía el driver, con PRAGMA foreign_keys=off
+ * antes del BEGIN y foreign_keys=on después del COMMIT (fuera de la
+ * transacción, donde SQLite sí lo respeta — dentro es un no-op). Con
+ * client.batch() normal el PRAGMA del propio dump quedaba dentro del BEGIN
+ * implícito del driver y no tenía efecto, rompiendo la restauración en
+ * cualquier tabla cuyo orden alfabético no respetara sus foreign keys.
+ */
+export async function executeRestoreSql(sql: string): Promise<void> {
+  const statements = extractRestoreStatements(sql);
+  await client.migrate(statements);
+}
+
+/** Conteos reales post-restauración contra los del manifiesto del backup usado — verificación real, no solo "el proceso terminó". */
+export async function verifyRestoreCounts(
+  expectedManifest: import("./types").BackupManifest,
+): Promise<{ ok: boolean; mismatches: string[] }> {
+  const mismatches: string[] = [];
+  for (const [table, expected] of Object.entries(expectedManifest.tablas)) {
+    try {
+      const r = await client.execute(`SELECT COUNT(*) as n FROM ${table}`);
+      const actual = Number((r.rows[0] as unknown as { n: number }).n);
+      if (actual !== expected) mismatches.push(`${table}: esperado ${expected}, encontrado ${actual}`);
+    } catch (err) {
+      mismatches.push(`${table}: no se pudo verificar (${String(err)})`);
+    }
+  }
+  return { ok: mismatches.length === 0, mismatches };
+}
+
+export const MAX_RESTORE_FILE_BYTES = 200 * 1024 * 1024;
+
+export interface PickedFile {
+  name: string;
+  data: Uint8Array;
+}
+
+export async function pickBackupFile(): Promise<PickedFile | null> {
+  const selected = await open({
+    multiple: false,
+    filters: [{ name: "Backup de Clio", extensions: ["gz", "sql"] }],
+  });
+  if (!selected || Array.isArray(selected)) return null;
+  const data = await readFile(selected);
+  const name = selected.split(/[/\\]/).pop() ?? selected;
+  return { name, data };
+}
+
+export interface RunBackupResult {
+  ok: boolean;
+  record: BackupRecord;
+  errors: string[];
+}
+
+/**
+ * Orquesta un backup completo (dump → verificar → guardar local → registrar)
+ * — usado tanto por "Crear backup ahora" como por el hook obligatorio antes
+ * de capturas masivas y antes de restaurar. Un solo lugar, no triplicado por
+ * cada llamador.
+ */
+export async function runBackupNow(
+  tipo: BackupTipo,
+  origen: string,
+  usuario: string | null,
+): Promise<RunBackupResult> {
+  const record = await createBackupRecord({
+    tipo,
+    origen,
+    usuario,
+    archivo: "",
+    ubicacion: "",
+    estado: "EN_PROCESO",
+  });
+  try {
+    const { sql } = await createBackupSql();
+    const validation = validateBackupSql(sql);
+    const fileName = backupFileName();
+    const gz = await gzipText(sql);
+    const checksum = await sha256Hex(sql);
+    const path = await saveLocalBackupFile(fileName, gz);
+    await client.execute({
+      sql: "UPDATE backup_history SET archivo = ?1, ubicacion = ?2 WHERE id = ?3",
+      args: [fileName, path, record.id],
+    });
+    const estado: BackupEstado = validation.ok ? "EXITOSO" : "FALLIDO";
+    const detalle = validation.ok ? "" : validation.errors.join("; ");
+    await updateBackupRecord(record.id, {
+      estado,
+      tamano_bytes: gz.length,
+      checksum_sha256: checksum,
+      detalle,
+    });
+    await logEvent(
+      validation.ok ? "INFO" : "ERROR",
+      `Backup ${tipo} (${origen}): ${validation.ok ? "exitoso" : `falló verificación — ${detalle}`} — ${fileName}`,
+      usuario,
+    );
+    return {
+      ok: validation.ok,
+      record: { ...record, estado, archivo: fileName, ubicacion: path, tamano_bytes: gz.length, checksum_sha256: checksum, detalle },
+      errors: validation.errors,
+    };
+  } catch (err) {
+    const detalle = `No se pudo crear el backup: ${String(err)}`;
+    await updateBackupRecord(record.id, { estado: "FALLIDO", detalle });
+    await logEvent("ERROR", `Backup ${tipo} (${origen}) falló: ${String(err)}`, usuario);
+    return { ok: false, record: { ...record, estado: "FALLIDO", detalle }, errors: [detalle] };
+  }
+}
+
+interface BackupRecordRow {
+  id: number;
+  tipo: string;
+  origen: string;
+  usuario: string | null;
+  archivo: string;
+  ubicacion: string;
+  tamano_bytes: number;
+  checksum_sha256: string;
+  estado: string;
+  detalle: string;
+  creado_en: string;
+}
+
+function rowToBackupRecord(row: BackupRecordRow): BackupRecord {
+  return { ...row, tipo: row.tipo as BackupTipo, estado: row.estado as BackupEstado };
+}
+
+export async function createBackupRecord(input: {
+  tipo: BackupTipo;
+  origen: string;
+  usuario: string | null;
+  archivo: string;
+  ubicacion: string;
+  estado: BackupEstado;
+  tamano_bytes?: number;
+  checksum_sha256?: string;
+  detalle?: string;
+}): Promise<BackupRecord> {
+  const result = await client.execute({
+    sql: `INSERT INTO backup_history
+            (tipo, origen, usuario, archivo, ubicacion, tamano_bytes, checksum_sha256, estado, detalle)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+          RETURNING *`,
+    args: [
+      input.tipo,
+      input.origen,
+      input.usuario,
+      input.archivo,
+      input.ubicacion,
+      input.tamano_bytes ?? 0,
+      input.checksum_sha256 ?? "",
+      input.estado,
+      input.detalle ?? "",
+    ],
+  });
+  return rowToBackupRecord(result.rows[0] as unknown as BackupRecordRow);
+}
+
+export async function updateBackupRecord(
+  id: number,
+  update: { estado: BackupEstado; tamano_bytes?: number; checksum_sha256?: string; detalle?: string },
+): Promise<void> {
+  await client.execute({
+    sql: `UPDATE backup_history
+          SET estado = ?1, tamano_bytes = COALESCE(?2, tamano_bytes), checksum_sha256 = COALESCE(?3, checksum_sha256), detalle = ?4
+          WHERE id = ?5`,
+    args: [update.estado, update.tamano_bytes ?? null, update.checksum_sha256 ?? null, update.detalle ?? "", id],
+  });
+}
+
+export async function listBackupHistory(limit = 100): Promise<BackupRecord[]> {
+  const result = await client.execute({
+    sql: "SELECT * FROM backup_history ORDER BY creado_en DESC, id DESC LIMIT ?1",
+    args: [limit],
+  });
+  return (result.rows as unknown as BackupRecordRow[]).map(rowToBackupRecord);
+}
+
+export async function deleteBackupRecord(id: number): Promise<void> {
+  const result = await client.execute({
+    sql: "SELECT * FROM backup_history WHERE id = ?1",
+    args: [id],
+  });
+  const row = result.rows[0] as unknown as BackupRecordRow | undefined;
+  if (row && !row.ubicacion.startsWith("http")) {
+    await deleteLocalBackupFile(row.ubicacion);
+  }
+  await client.execute({ sql: "DELETE FROM backup_history WHERE id = ?1", args: [id] });
+}
+
+export async function getLatestBackup(estado?: BackupEstado): Promise<BackupRecord | null> {
+  const result = estado
+    ? await client.execute({
+        sql: "SELECT * FROM backup_history WHERE estado = ?1 ORDER BY creado_en DESC, id DESC LIMIT 1",
+        args: [estado],
+      })
+    : await client.execute("SELECT * FROM backup_history ORDER BY creado_en DESC, id DESC LIMIT 1");
+  const row = result.rows[0] as unknown as BackupRecordRow | undefined;
+  return row ? rowToBackupRecord(row) : null;
+}
+
+interface BackupSettingsRow {
+  automatico_activado: number;
+  frecuencia: string;
+  hora_ejecucion: string;
+  intervalo_horas: number | null;
+  dia_semana: number | null;
+  retencion_diaria_dias: number;
+  retencion_semanal_dias: number;
+  retencion_mensual_dias: number;
+  ultimo_automatico_en: string | null;
+  actualizado_en: string;
+  actualizado_por: string | null;
+}
+
+function rowToBackupSettings(row: BackupSettingsRow): BackupSettings {
+  return {
+    automatico_activado: Boolean(row.automatico_activado),
+    frecuencia: row.frecuencia as BackupFrecuencia,
+    hora_ejecucion: row.hora_ejecucion,
+    intervalo_horas: row.intervalo_horas,
+    dia_semana: row.dia_semana,
+    retencion_diaria_dias: row.retencion_diaria_dias,
+    retencion_semanal_dias: row.retencion_semanal_dias,
+    retencion_mensual_dias: row.retencion_mensual_dias,
+    ultimo_automatico_en: row.ultimo_automatico_en,
+    actualizado_en: row.actualizado_en,
+    actualizado_por: row.actualizado_por,
+  };
+}
+
+export async function getBackupSettings(): Promise<BackupSettings> {
+  const result = await client.execute("SELECT * FROM backup_settings WHERE id = 1");
+  return rowToBackupSettings(result.rows[0] as unknown as BackupSettingsRow);
+}
+
+/**
+ * Carpeta local de backups disparados desde la propia app (manual,
+ * pre-importación, pre-restauración) — bajo el directorio de datos de la
+ * app, ya cubierto por las capabilities fs:allow-home-*-recursive
+ * existentes, sin pedir un permiso nuevo ni forzar rebuild.
+ */
+export async function getBackupsDir(): Promise<string> {
+  const dir = await join(await appDataDir(), "backups");
+  if (!(await exists(dir))) {
+    await mkdir(dir, { recursive: true });
+  }
+  return dir;
+}
+
+export async function saveLocalBackupFile(fileName: string, bytes: Uint8Array): Promise<string> {
+  const dir = await getBackupsDir();
+  const path = await join(dir, fileName);
+  await writeFile(path, bytes);
+  return path;
+}
+
+export async function readLocalBackupFile(path: string): Promise<Uint8Array> {
+  return readFile(path);
+}
+
+export async function localBackupFileExists(path: string): Promise<boolean> {
+  try {
+    return await exists(path);
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteLocalBackupFile(path: string): Promise<void> {
+  if (await localBackupFileExists(path)) {
+    await remove(path);
+  }
+}
+
+export async function saveBackupFileAs(defaultFileName: string, bytes: Uint8Array): Promise<boolean> {
+  const target = await save({ defaultPath: defaultFileName });
+  if (!target) return false;
+  await writeFile(target, bytes);
+  return true;
+}
+
+export async function updateBackupSettings(
+  settings: Pick<
+    BackupSettings,
+    | "automatico_activado"
+    | "frecuencia"
+    | "hora_ejecucion"
+    | "intervalo_horas"
+    | "dia_semana"
+    | "retencion_diaria_dias"
+    | "retencion_semanal_dias"
+    | "retencion_mensual_dias"
+  >,
+  usuario: string | null,
+): Promise<void> {
+  await client.execute({
+    sql: `UPDATE backup_settings
+          SET automatico_activado = ?1, frecuencia = ?2, hora_ejecucion = ?3, intervalo_horas = ?4,
+              dia_semana = ?5, retencion_diaria_dias = ?6, retencion_semanal_dias = ?7,
+              retencion_mensual_dias = ?8, actualizado_en = datetime('now'), actualizado_por = ?9
+          WHERE id = 1`,
+    args: [
+      settings.automatico_activado ? 1 : 0,
+      settings.frecuencia,
+      settings.hora_ejecucion,
+      settings.intervalo_horas,
+      settings.dia_semana,
+      settings.retencion_diaria_dias,
+      settings.retencion_semanal_dias,
+      settings.retencion_mensual_dias,
+      usuario,
+    ],
+  });
 }

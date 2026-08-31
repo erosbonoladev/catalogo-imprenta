@@ -602,7 +602,7 @@ h3 {
 .product-card-image img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .product-card-placeholder {
@@ -685,6 +685,45 @@ h3 {
   color: var(--text);
   line-height: 1.5;
   margin-bottom: 1.25rem;
+}
+
+.description-viewer {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  margin-bottom: 1.25rem;
+  overflow: hidden;
+}
+
+.description-viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  background-color: var(--bg);
+}
+
+.description-nav-btn {
+  border: 1px solid var(--border);
+  background-color: var(--surface);
+  flex-shrink: 0;
+}
+
+.description-nav-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.description-viewer-label {
+  flex: 1;
+  text-align: center;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.description-viewer .product-detail-description {
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 0;
 }
 
 .specs-table {
@@ -822,6 +861,48 @@ textarea:disabled {
   background-color: var(--media-bg);
 }
 
+.descriptions-editor {
+  border-top: 1px solid var(--border);
+  padding-top: 1.1rem;
+}
+
+.descriptions-editor h2 {
+  margin-top: 0;
+}
+
+.descriptions-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.descriptions-add-btn {
+  font-size: 0.85rem;
+}
+
+.description-tab-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.description-tab-content textarea {
+  flex: 1;
+}
+
+.description-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background-color: var(--bg);
+}
+
 .specs-editor {
   border-top: 1px solid var(--border);
   padding-top: 1.1rem;
@@ -885,9 +966,13 @@ body,
 }
 
 .login-header-icon {
-  width: 60px;
-  height: 60px;
-  padding: 14px;
+  width: 84px;
+  height: 84px;
+  padding: 10px;
+}
+
+.login-header-icon img {
+  object-fit: contain;
 }
 
 .login-card form {
@@ -1825,5 +1910,86 @@ body,
 .import-summary-item span:last-child {
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+
+/* Backups */
+
+.backups-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.backups-status-card,
+.backups-settings-card,
+.backups-history-card {
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.5rem;
+}
+
+.backups-status-card h2 {
+  margin-top: 0;
+}
+
+.backups-settings-card h3,
+.backups-history-card h3 {
+  margin-top: 0;
+}
+
+.backups-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0 1.25rem;
+}
+
+.backups-status-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.backups-status-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.backups-history-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.backups-history-table td {
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.backups-history-estado {
+  text-align: center;
+  font-weight: 700;
+}
+
+.backups-history-estado-exitoso {
+  color: var(--success);
+}
+
+.backups-history-estado-fallido {
+  color: var(--danger);
+}
+
+.backups-history-estado-en_proceso {
+  color: var(--text-muted);
+}
+
+.backups-history-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  white-space: nowrap;
 }
 

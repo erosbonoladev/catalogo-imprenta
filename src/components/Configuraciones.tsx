@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
 import { hasPermission, isAdmin, useAuth } from "../auth";
 import { logEvent } from "../db";
+import { PERMISOS_BACKUPS } from "../types";
 import UsersPanel from "./UsersPanel";
 import ConnectedUsersPanel from "./ConnectedUsersPanel";
 import LogsPanel from "./LogsPanel";
 import FichaImportPanel from "./FichaImportPanel";
 import ImageImportPanel from "./ImageImportPanel";
+import BackupsPanel from "./BackupsPanel";
 
 interface Props {
   onBack: () => void;
 }
 
-type Tab = "usuarios" | "conectados" | "registro" | "captura" | "captura-imagenes";
+type Tab = "usuarios" | "conectados" | "registro" | "backups" | "captura" | "captura-imagenes";
 
 const BASE_TABS: { value: Tab; label: string }[] = [
   { value: "usuarios", label: "Usuarios" },
@@ -26,9 +28,17 @@ const ADMIN_TABS: { value: Tab; label: string }[] = [
 
 export default function Configuraciones({ onBack }: Props) {
   const { user } = useAuth();
-  const allowed = hasPermission(user, "configuraciones");
-  const tabs = isAdmin(user) ? [...BASE_TABS, ...ADMIN_TABS] : BASE_TABS;
-  const [tab, setTab] = useState<Tab>("usuarios");
+  const allowedGeneral = hasPermission(user, "configuraciones");
+  const allowedBackups = PERMISOS_BACKUPS.some((p) => hasPermission(user, p));
+  const allowed = allowedGeneral || allowedBackups;
+
+  const tabs: { value: Tab; label: string }[] = [
+    ...(allowedGeneral ? BASE_TABS : []),
+    ...(allowedBackups ? [{ value: "backups" as Tab, label: "Backups" }] : []),
+    ...(allowedGeneral && isAdmin(user) ? ADMIN_TABS : []),
+  ];
+
+  const [tab, setTab] = useState<Tab>(allowedGeneral ? "usuarios" : "backups");
 
   useEffect(() => {
     if (allowed) return;
@@ -74,6 +84,7 @@ export default function Configuraciones({ onBack }: Props) {
       {tab === "usuarios" && <UsersPanel />}
       {tab === "conectados" && <ConnectedUsersPanel />}
       {tab === "registro" && <LogsPanel />}
+      {tab === "backups" && <BackupsPanel />}
       {tab === "captura" && <FichaImportPanel />}
       {tab === "captura-imagenes" && <ImageImportPanel />}
     </div>

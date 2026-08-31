@@ -4,12 +4,14 @@ import {
   createProduct,
   getImageSrc,
   getProduct,
+  getProductDescriptions,
   getProductSpecs,
   logEvent,
   pickImage,
   updateProduct,
 } from "../db";
-import type { ProductInput, ProductSpec } from "../types";
+import type { ProductDescription, ProductInput, ProductSpec } from "../types";
+import { DESCRIPCIONES_FIJAS, DESCRIPCION_CATALOGO, ensureFixedDescriptions } from "../descriptions";
 import { useAuth } from "../auth";
 import AutoGrowInput from "./AutoGrowInput";
 import basuraIcon from "../../Assets/basura.svg";
@@ -33,6 +35,14 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
   const { user } = useAuth();
   const [product, setProduct] = useState<ProductInput>(emptyProduct);
   const [specs, setSpecs] = useState<ProductSpec[]>([]);
+  const [descriptions, setDescriptions] = useState<ProductDescription[]>(
+    ensureFixedDescriptions([]),
+  );
+  const [activeDescTab, setActiveDescTab] = useState(0);
+  const [addingDescription, setAddingDescription] = useState(false);
+  const [newDescNombre, setNewDescNombre] = useState("");
+  const [newDescTexto, setNewDescTexto] = useState("");
+  const [descError, setDescError] = useState<string | null>(null);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -41,9 +51,10 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
   useEffect(() => {
     if (!productId) return;
     (async () => {
-      const [existing, existingSpecs] = await Promise.all([
+      const [existing, existingSpecs, existingDescriptions] = await Promise.all([
         getProduct(productId),
         getProductSpecs(productId),
+        getProductDescriptions(productId),
       ]);
       if (!existing) return;
       setProduct({
@@ -55,6 +66,7 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
         imagen: existing.imagen,
       });
       setSpecs(existingSpecs);
+      setDescriptions(ensureFixedDescriptions(existingDescriptions));
       setImageSrc(await getImageSrc(existing.imagen));
     })();
   }, [productId]);
@@ -93,6 +105,49 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
     setSpecs((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function updateDescriptionText(index: number, value: string) {
+    setDirty(true);
+    setDescriptions((prev) =>
+      prev.map((d, i) => (i === index ? { ...d, texto: value } : d)),
+    );
+  }
+
+  function removeDescription(index: number) {
+    setDirty(true);
+    setDescriptions((prev) => prev.filter((_, i) => i !== index));
+    setActiveDescTab(0);
+  }
+
+  function handleAddDescription() {
+    const nombre = newDescNombre.trim();
+    if (!nombre) {
+      setDescError("El nombre de la descripción es obligatorio.");
+      return;
+    }
+    const nombresExistentes = [DESCRIPCION_CATALOGO, ...descriptions.map((d) => d.etiqueta)].map(
+      (n) => n.trim().toLowerCase(),
+    );
+    if (nombresExistentes.includes(nombre.toLowerCase())) {
+      setDescError(`Ya existe una descripción llamada "${nombre}".`);
+      return;
+    }
+    setDirty(true);
+    const nuevoIndex = descriptions.length;
+    setDescriptions((prev) => [...prev, { etiqueta: nombre, texto: newDescTexto.trim(), orden: 0 }]);
+    setActiveDescTab(nuevoIndex + 1);
+    setNewDescNombre("");
+    setNewDescTexto("");
+    setAddingDescription(false);
+    setDescError(null);
+  }
+
+  function handleCancelAddDescription() {
+    setNewDescNombre("");
+    setNewDescTexto("");
+    setAddingDescription(false);
+    setDescError(null);
+  }
+
   async function handlePickImage() {
     const image = await pickImage();
     if (!image) return;
@@ -121,10 +176,10 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
       const payload: ProductInput = { ...product, codigo, nombre };
       let id: number;
       if (productId) {
-        await updateProduct(productId, payload, specs);
+        await updateProduct(productId, payload, specs, descriptions);
         id = productId;
       } else {
-        id = await createProduct(payload, specs);
+        id = await createProduct(payload, specs, descriptions);
       }
       onDone(id);
     } catch (err) {
@@ -184,14 +239,94 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
           </label>
         </div>
 
-        <label>
-          Descripción
-          <AutoGrowInput
-            multiline
-            value={product.descripcion}
-            onChange={(v) => updateField("descripcion", v)}
-          />
-        </label>
+        <div className="descriptions-editor">
+          <h2>Descripciones</h2>
+          <div className="descriptions-tabs" role="tablist" aria-label="Tipo de descripción">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeDescTab === 0}
+              className={`filter-chip${activeDescTab === 0 ? " filter-chip-active" : ""}`}
+              onClick={() => setActiveDescTab(0)}
+            >
+              {DESCRIPCION_CATALOGO}
+            </button>
+            {descriptions.map((d, index) => (
+              <button
+                key={index}
+                type="button"
+                role="tab"
+                aria-selected={activeDescTab === index + 1}
+                className={`filter-chip${activeDescTab === index + 1 ? " filter-chip-active" : ""}`}
+                onClick={() => setActiveDescTab(index + 1)}
+              >
+                {d.etiqueta}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="btn-link descriptions-add-btn"
+              onClick={() => setAddingDescription(true)}
+            >
+              + Agregar nueva descripción
+            </button>
+          </div>
+
+          {activeDescTab === 0 ? (
+            <AutoGrowInput
+              multiline
+              value={product.descripcion}
+              onChange={(v) => updateField("descripcion", v)}
+              placeholder="Descripción para el catálogo"
+            />
+          ) : (
+            <div className="description-tab-content">
+              <AutoGrowInput
+                multiline
+                value={descriptions[activeDescTab - 1]?.texto ?? ""}
+                onChange={(v) => updateDescriptionText(activeDescTab - 1, v)}
+                placeholder={`Descripción para ${descriptions[activeDescTab - 1]?.etiqueta ?? ""}`}
+              />
+              {activeDescTab - 1 >= DESCRIPCIONES_FIJAS.length && (
+                <button
+                  type="button"
+                  className="icon-btn icon-btn-remove"
+                  onClick={() => removeDescription(activeDescTab - 1)}
+                  title="Quitar esta descripción"
+                  aria-label="Quitar esta descripción"
+                >
+                  <img src={basuraIcon} alt="" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          )}
+
+          {addingDescription && (
+            <div className="description-add-form">
+              <label>
+                Nombre de la descripción
+                <AutoGrowInput
+                  value={newDescNombre}
+                  onChange={setNewDescNombre}
+                  placeholder="ej. Redes sociales"
+                />
+              </label>
+              <label>
+                Descripción
+                <AutoGrowInput multiline value={newDescTexto} onChange={setNewDescTexto} />
+              </label>
+              {descError && <p className="form-error">{descError}</p>}
+              <div className="form-actions">
+                <button type="button" className="btn btn-primary" onClick={handleAddDescription}>
+                  Guardar
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={handleCancelAddDescription}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
         <div className="image-picker">
           {imageSrc && <img src={imageSrc} alt="Vista previa" />}

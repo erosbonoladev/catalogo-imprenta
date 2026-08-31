@@ -1,4 +1,5 @@
 import { hasPermission, useAuth } from "../auth";
+import { PERMISOS_BACKUPS } from "../types";
 import { useTheme } from "../theme";
 import UpdateChecker from "./UpdateChecker";
 import barraLateralIcon from "../../Assets/barra-lateral.svg";
@@ -17,6 +18,8 @@ export default function Sidebar({ open, onToggle, onConfiguraciones }: Props) {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === "dark";
+  const showConfiguraciones =
+    hasPermission(user, "configuraciones") || PERMISOS_BACKUPS.some((p) => hasPermission(user, p));
 
   return (
     <>
@@ -64,7 +67,7 @@ export default function Sidebar({ open, onToggle, onConfiguraciones }: Props) {
           </button>
 
           <div className="sidebar-bottom-group">
-            {hasPermission(user, "configuraciones") && (
+            {showConfiguraciones && (
               <button
                 type="button"
                 className="icon-btn sidebar-icon-btn"
