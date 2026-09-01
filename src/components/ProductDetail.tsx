@@ -10,6 +10,7 @@ import type { Product, ProductDescription, ProductSpec } from "../types";
 import { buildDescriptionSlots } from "../descriptions";
 import { hasPermission, useAuth } from "../auth";
 import RequisicionModal from "./RequisicionModal";
+import PreciosModal from "./PreciosModal";
 
 interface Props {
   productId: number;
@@ -42,6 +43,7 @@ export default function ProductDetail({
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [requisicionSpec, setRequisicionSpec] = useState<ProductSpec | null>(null);
+  const [showPrecios, setShowPrecios] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -186,6 +188,11 @@ export default function ProductDetail({
                 Imprenta
               </button>
             )}
+            {hasPermission(user, "precios_ver") && (
+              <button className="btn btn-secondary" onClick={() => setShowPrecios(true)}>
+                Precios
+              </button>
+            )}
             {confirmingDelete ? (
               <span className="confirm-delete">
                 ¿Eliminar este producto?
@@ -216,6 +223,8 @@ export default function ProductDetail({
           onClose={() => setRequisicionSpec(null)}
         />
       )}
+
+      {showPrecios && <PreciosModal product={product} onClose={() => setShowPrecios(false)} />}
 
       <p className="last-modified">
         Última modificación: {formatFechaCorta(product.actualizado_en)}

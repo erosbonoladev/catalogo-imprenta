@@ -187,6 +187,11 @@ export const PERMISOS = [
   "backups_restaurar",
   "backups_configurar",
   "backups_eliminar",
+  "precios_ver",
+  "precios_modificar",
+  "remisiones_acceso",
+  "remisiones_crear",
+  "remisiones_cancelar",
 ] as const;
 export type Permiso = (typeof PERMISOS)[number];
 
@@ -201,6 +206,11 @@ export const PERMISO_LABELS: Record<Permiso, string> = {
   backups_restaurar: "Backups: restaurar",
   backups_configurar: "Backups: configurar programación",
   backups_eliminar: "Backups: eliminar",
+  precios_ver: "Precios: ver",
+  precios_modificar: "Precios: modificar",
+  remisiones_acceso: "Remisiones: acceso",
+  remisiones_crear: "Remisiones: crear",
+  remisiones_cancelar: "Remisiones: cancelar",
 };
 
 export const PERMISOS_BACKUPS: Permiso[] = [
@@ -331,7 +341,7 @@ export interface RequisicionInput {
   folio: string;
 }
 
-export type TipoFolio = "requisicion" | "compra" | "produccion";
+export type TipoFolio = "requisicion" | "compra" | "produccion" | "remision";
 
 export interface Folio {
   id: number;
@@ -340,4 +350,109 @@ export interface Folio {
   folio: string;
   sku: string;
   creado_en: string;
+}
+
+// --- Precios ---
+
+export interface Precio {
+  id: number;
+  sku: string;
+  sku_principal: string;
+  nombre: string;
+  precio: number;
+  actualizado_en: string;
+  actualizado_por: string | null;
+  creado_en: string;
+}
+
+export interface PrecioInput {
+  sku: string;
+  nombre: string;
+  precio: number;
+  usuario: string | null;
+}
+
+export interface PrecioHistorialEntry {
+  id: number;
+  sku: string;
+  precio_anterior: number | null;
+  precio_nuevo: number;
+  usuario: string | null;
+  creado_en: string;
+}
+
+// --- Remisiones ---
+
+export type TipoRemision = "interna" | "externa";
+
+export interface Remision {
+  id: number;
+  folio: string;
+  fecha: string;
+  tipo: TipoRemision;
+  pedido_bodegas: string;
+  cancelada: boolean;
+  subtotal: number;
+  descuento_pct: number;
+  descuento: number;
+  iva: number;
+  total: number;
+  precio_texto: string;
+  usuario: string | null;
+  creado_en: string;
+}
+
+export interface RemisionRenglon {
+  id: number;
+  remision_id: number;
+  numero_renglon: number;
+  sku: string;
+  producto_nombre: string;
+  cantidad: number;
+  precio_unitario: number;
+  importe: number;
+}
+
+export interface RemisionRenglonInput {
+  sku: string;
+  producto_nombre: string;
+  cantidad: number;
+  precio_unitario: number;
+  importe: number;
+}
+
+export interface RemisionInput {
+  folio: string;
+  fecha: string;
+  tipo: TipoRemision;
+  pedido_bodegas: string;
+  subtotal: number;
+  descuento_pct: number;
+  descuento: number;
+  iva: number;
+  total: number;
+  precio_texto: string;
+  usuario: string | null;
+}
+
+export interface RemisionConRenglones extends Remision {
+  renglones: RemisionRenglon[];
+}
+
+export interface RemisionHistorialRow {
+  fecha: string;
+  folio: string;
+  pedido_bodegas: string;
+  cancelada: boolean;
+  numero_renglon: number;
+  sku: string;
+  cantidad: number;
+  producto_nombre: string;
+  precio_unitario: number;
+  importe: number;
+  subtotal: number;
+  descuento_pct: number;
+  descuento: number;
+  iva: number;
+  total: number;
 }

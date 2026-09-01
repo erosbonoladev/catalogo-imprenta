@@ -8,6 +8,7 @@ import ImprentaSection from "./components/ImprentaSection";
 import Configuraciones from "./components/Configuraciones";
 import LoginScreen from "./components/LoginScreen";
 import Sidebar from "./components/Sidebar";
+import RemisionesSection from "./components/RemisionesSection";
 import { useAuth } from "./auth";
 
 type View =
@@ -16,7 +17,8 @@ type View =
   | { name: "form"; productId?: number }
   | { name: "plasticos"; productId: number }
   | { name: "imprenta"; productId: number }
-  | { name: "configuraciones" };
+  | { name: "configuraciones" }
+  | { name: "remisiones" };
 
 function App() {
   const { user, loading } = useAuth();
@@ -49,6 +51,7 @@ function App() {
         open={sidebarOpen}
         onToggle={() => setSidebarOpen((o) => !o)}
         onConfiguraciones={() => setView({ name: "configuraciones" })}
+        onRemisiones={() => setView({ name: "remisiones" })}
       />
 
       <main className="app app-content">
@@ -100,6 +103,10 @@ function App() {
 
         {view.name === "configuraciones" && (
           <Configuraciones onBack={() => setView({ name: "search" })} />
+        )}
+
+        {view.name === "remisiones" && (
+          <RemisionesSection onBack={() => setView({ name: "search" })} />
         )}
       </main>
     </div>

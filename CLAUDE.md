@@ -4,7 +4,7 @@ Guía para Claude Code en este repo. Esto es un **índice**: reglas siempre vige
 
 ## Qué es
 
-Catálogo de escritorio para una imprenta industrial. Login individual → catálogo base (ficha técnica: imagen, material, categoría, descripción, specs) abierto a todo usuario autenticado. Tres secciones internas permission-gated (Piezas, Imprenta, Configuraciones) más Requisiciones. Corre en Windows y macOS contra una BD cloud compartida (Turso). Estado real de cada módulo: [docs/MODULES.md](docs/MODULES.md) — no asumir que algo existe sin confirmarlo ahí o en el código.
+Catálogo de escritorio para una imprenta industrial. Login individual → catálogo base (ficha técnica: imagen, material, categoría, descripción, specs) abierto a todo usuario autenticado. Secciones internas permission-gated: Piezas, Imprenta, Configuraciones, Requisiciones, Precios (botón en la ficha técnica + captura masiva) y Remisiones (documentos de venta con PDF sobre plantilla oficial). Corre en Windows y macOS contra una BD cloud compartida (Turso). Estado real de cada módulo: [docs/MODULES.md](docs/MODULES.md) — no asumir que algo existe sin confirmarlo ahí o en el código.
 
 ## Stack
 
@@ -22,6 +22,8 @@ Requiere `.env` en la raíz (gitignored) con `VITE_TURSO_URL`, `VITE_TURSO_AUTH_
 - `npm run build` — type-check + build de producción (`dist/`).
 - `cd src-tauri && cargo check` — chequeo rápido de Rust.
 
+Si `npm run tauri dev` falla compilando Rust con una ruta de archivo que no coincide con la carpeta real del proyecto: es caché stale de `src-tauri/target`, no un bug de código — ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#rust--capabilities) (`cargo clean` y volver a correr).
+
 Empaquetado (GitHub Actions, secrets, firma): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#empaquetado). Repo: `github.com/erosbonoladev/catalogo-imprenta`.
 
 ## Reglas SIEMPRE vigentes
@@ -37,6 +39,7 @@ Empaquetado (GitHub Actions, secrets, firma): [docs/ARCHITECTURE.md](docs/ARCHIT
 - No "arreglar" el token de Turso embebido en el bundle escondiéndolo distinto — es un constraint aceptado, ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#constraints-aceptados-no-son-descuidos).
 - Toda importación masiva (fichas, imágenes, y cualquier futura) debe crear un backup previo (`runBackupNow`) antes de escribir — si falla, la importación no arranca. No quitar ese hook ni "optimizarlo" saltándoselo.
 - El repo `erosbonoladev/clio-backups` (separado de este) corre el backup automático programado — no es un repo huérfano ni un fork accidental. Ver [docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md).
+- El precio/nombre guardado en `remision_renglones` es un snapshot histórico — nunca se recalcula ni se vuelve a leer de `precios`/`products` después de creada la remisión, aunque el precio del producto cambie luego. Ver [docs/DATABASE.md](docs/DATABASE.md).
 
 ## Convenciones de código
 
@@ -51,7 +54,7 @@ Empaquetado (GitHub Actions, secrets, firma): [docs/ARCHITECTURE.md](docs/ARCHIT
 | Usuarios, roles, `hasPermission`/`isAdmin`, sesión/login | [docs/PERMISSIONS.md](docs/PERMISSIONS.md) |
 | Arquitectura general, imágenes, navegación, Rust/capabilities, empaquetado | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Qué existe y en qué estado (antes de decir "esto ya está" o "esto falta") | [docs/MODULES.md](docs/MODULES.md) |
-| Flujo completo de Requisiciones, Folios, Producción/Compra, importación Excel/imágenes, PDF | [docs/WORKFLOWS.md](docs/WORKFLOWS.md) |
+| Flujo completo de Requisiciones, Remisiones, Folios, Producción/Compra, captura masiva (fichas/imágenes/precios), PDF | [docs/WORKFLOWS.md](docs/WORKFLOWS.md) |
 | Backups, restauración, recuperación ante fallas | [docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md) |
 
 App: `com.mariat.catalogo-imprenta` / "Clio".

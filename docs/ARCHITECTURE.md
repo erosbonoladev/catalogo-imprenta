@@ -12,7 +12,7 @@ Todo pasa por `src/db.ts` (único archivo que importa `@libsql/client`). Cliente
 
 Sin router. `App.tsx` primero revisa `useAuth()` (`user`/`loading`); sin sesión válida renderiza `LoginScreen` y bloquea todo lo demás. Con sesión, un `useState<View>` intercambia componentes — `View` es una unión discriminada con payload (`{name: "detail", productId}`, etc.), no strings sueltos. No introducir `react-router` sin una razón de peso.
 
-El **Sidebar no es un menú de navegación** — es chrome persistente (colapsar, usuario, toggle de tema, logout, engranaje de Configuraciones gateado, `UpdateChecker`). Las transiciones entre pantallas siguen siendo props/callbacks (`onSelect`, `onBack`, `onOpenImprenta`, etc.) de cada pantalla.
+El **Sidebar no es un menú de navegación** — es chrome persistente (colapsar, usuario, toggle de tema, atajo a Remisiones gateado, logout, engranaje de Configuraciones gateado, `UpdateChecker`). Las transiciones entre pantallas siguen siendo props/callbacks (`onSelect`, `onBack`, `onOpenImprenta`, `onRemisiones`, `onConfiguraciones`, etc.) de cada pantalla — el Sidebar solo tiene dos "atajos" especiales (Remisiones y Configuraciones) que llaman de vuelta a `App.tsx`, no una lista general de destinos. El de Remisiones es una fila con ícono+texto (`Assets/remisiones.svg`) justo debajo del toggle de tema, separada por `.sidebar-divider`; el de Configuraciones sigue siendo el ícono cuadrado solo en `.sidebar-bottom-group` — no es el mismo patrón visual para los dos, a propósito (el usuario pidió esa ubicación específicamente para Remisiones).
 
 ## Imágenes
 
@@ -27,6 +27,8 @@ Toda pantalla editable (`ProductForm`, `PlasticosSection`, `ImprentaSection`, `U
 Comandos (`src-tauri/src/lib.rs`): solo `hash_password`/`verify_password` (bcrypt puro). Plugins: `dialog`, `fs`, `opener`, `updater`, `process`. Comandos custom (`#[tauri::command]`) no necesitan entrada en capabilities; los permisos de plugin sí (`src-tauri/capabilities/default.json`).
 
 **Gotcha recurrente**: `<plugin>:default` casi nunca cubre todo lo que el plugin puede hacer — es el subconjunto "seguro". El permiso real hay que buscarlo en el `permissions/default.toml` propio del crate (fuente en crates.io / `~/.cargo/registry/src/`). Ya pasó dos veces: `sql:default` no traía `allow-execute` (solo lectura funcionaba); `fs:default` no cubre archivos fuera del sandbox de la app. Cambios de capability requieren rebuild completo (matar y reiniciar `tauri dev`), no alcanza con HMR.
+
+**Otro gotcha, distinto**: si `npm run tauri dev` falla en la compilación de Rust con algo como `failed to read plugin permissions: ... No such file or directory` apuntando a una ruta que **no** coincide con la carpeta real del proyecto (ej. le falta un segmento del path), es caché de `src-tauri/target` con rutas absolutas viejas — pasa si el proyecto se movió/renombró de carpeta en algún momento. No es un bug de código: `cd src-tauri && cargo clean` (borra el `target/` regenerable, no toca nada versionado) y volver a correr `npm run tauri dev` — la primera compilación después de esto tarda varios minutos (recompila todo el árbol de dependencias de Tauri desde cero), las siguientes vuelven a ser incrementales.
 
 ## Backups
 

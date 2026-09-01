@@ -7,19 +7,22 @@ import usuarioIcon from "../../Assets/usuario.svg";
 import estrellasIcon from "../../Assets/estrellas.svg";
 import cierreSesionIcon from "../../Assets/cierre-de-sesion-de-usuario.svg";
 import configuracionIcon from "../../Assets/configuracion.svg";
+import remisionesIcon from "../../Assets/remisiones.svg";
 
 interface Props {
   open: boolean;
   onToggle: () => void;
   onConfiguraciones: () => void;
+  onRemisiones: () => void;
 }
 
-export default function Sidebar({ open, onToggle, onConfiguraciones }: Props) {
+export default function Sidebar({ open, onToggle, onConfiguraciones, onRemisiones }: Props) {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === "dark";
   const showConfiguraciones =
     hasPermission(user, "configuraciones") || PERMISOS_BACKUPS.some((p) => hasPermission(user, p));
+  const showRemisiones = hasPermission(user, "remisiones_acceso");
 
   return (
     <>
@@ -52,6 +55,16 @@ export default function Sidebar({ open, onToggle, onConfiguraciones }: Props) {
             <img src={estrellasIcon} alt="" aria-hidden="true" className="sidebar-item-icon" />
             <span>{isDark ? "Modo oscuro" : "Modo claro"}</span>
           </button>
+
+          {showRemisiones && (
+            <>
+              <div className="sidebar-divider" />
+              <button type="button" className="sidebar-item" onClick={onRemisiones}>
+                <img src={remisionesIcon} alt="" aria-hidden="true" className="sidebar-item-icon" />
+                <span>Remisiones</span>
+              </button>
+            </>
+          )}
 
           {/* Espacio reservado para futuras funcionalidades por usuario. */}
           <div className="sidebar-spacer" />

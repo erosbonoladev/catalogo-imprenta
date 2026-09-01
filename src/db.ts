@@ -21,6 +21,8 @@ import type {
   PlasticPiece,
   PlasticProduct,
   PlasticProductInput,
+  Precio,
+  PrecioInput,
   PrintItem,
   PrintItemCheck,
   PrintItemExtra,
@@ -31,17 +33,25 @@ import type {
   ProductDescription,
   ProductInput,
   ProductSpec,
+  Remision,
+  RemisionConRenglones,
+  RemisionHistorialRow,
+  RemisionInput,
+  RemisionRenglon,
+  RemisionRenglonInput,
   Requisicion,
   RequisicionInput,
   Rol,
   SearchFilter,
   TipoFolio,
+  TipoRemision,
   User,
   UserInput,
 } from "./types";
 import { PROCESOS_IMPRENTA } from "./types";
 import { buildRequisicionMessage } from "./requisiciones";
 import { FOLIO_PREFIJOS, buildFolioString, fechaLocalDeHoy, formatFechaFolioLocal } from "./folios";
+import { computeSkuPrincipal } from "./precios";
 import {
   type DumpTable,
   backupFileName,
@@ -1729,4 +1739,227 @@ export async function updateBackupSettings(
       usuario,
     ],
   });
+}
+
+// --- Precios ---
+
+interface PrecioRow {
+  id: number;
+  sku: string;
+  sku_principal: string;
+  nombre: string;
+  precio: number;
+  actualizado_en: string;
+  actualizado_por: string | null;
+  creado_en: string;
+}
+
+function rowToPrecio(row: PrecioRow): Precio {
+  return {
+    id: row.id,
+    sku: row.sku,
+    sku_principal: row.sku_principal,
+    nombre: row.nombre,
+    precio: row.precio,
+    actualizado_en: row.actualizado_en,
+    actualizado_por: row.actualizado_por,
+    creado_en: row.creado_en,
+  };
+}
+
+export async function upsertPrecio(
+  input: PrecioInput & {
+    // Solo la usa la captura masiva — preserva la fecha declarada en el
+    // Excel en vez del momento real de importación (ver src/precios.ts). La
+    // edición manual desde PreciosModal nunca la pasa.
+    actualizadoEn?: string;
+  },
+): Promise<Precio> {
+  const skuPrincipal = computeSkuPrincipal(input.sku);
+  const existing = await client.execute({
+    sql: "SELECT precio FROM precios WHERE sku = ?1",
+    args: [input.sku],
+  });
+  const precioAnterior =
+    (existing.rows[0] as unknown as { precio: number } | undefined)?.precio ?? null;
+
+  const result = await client.execute({
+    sql: `INSERT INTO precios (sku, sku_principal, nombre, precio, actualizado_en, actualizado_por)
+          VALUES (?1, ?2, ?3, ?4, COALESCE(?5, datetime('now')), ?6)
+          ON CONFLICT(sku) DO UPDATE SET
+            sku_principal = ?2, nombre = ?3, precio = ?4,
+            actualizado_en = COALESCE(?5, datetime('now')), actualizado_por = ?6
+          RETURNING *`,
+    args: [input.sku, skuPrincipal, input.nombre, input.precio, input.actualizadoEn ?? null, input.usuario],
+  });
+  const row = result.rows[0] as unknown as PrecioRow;
+
+  await client.execute({
+    sql: "INSERT INTO precios_historial (sku, precio_anterior, precio_nuevo, usuario) VALUES (?1, ?2, ?3, ?4)",
+    args: [input.sku, precioAnterior, input.precio, input.usuario],
+  });
+
+  return rowToPrecio(row);
+}
+
+export async function getPrecio(sku: string): Promise<Precio | null> {
+  const result = await client.execute({
+    sql: "SELECT * FROM precios WHERE sku = ?1",
+    args: [sku],
+  });
+  const row = result.rows[0] as unknown as PrecioRow | undefined;
+  return row ? rowToPrecio(row) : null;
+}
+
+export async function getPreciosBySkuPrincipal(skuPrincipal: string): Promise<Precio[]> {
+  const result = await client.execute({
+    sql: "SELECT * FROM precios WHERE sku_principal = ?1 ORDER BY sku",
+    args: [skuPrincipal],
+  });
+  return (result.rows as unknown as PrecioRow[]).map(rowToPrecio);
+}
+
+export async function getPreciosList(): Promise<Precio[]> {
+  const result = await client.execute("SELECT * FROM precios ORDER BY sku");
+  return (result.rows as unknown as PrecioRow[]).map(rowToPrecio);
+}
+
+// Búsqueda para el renglón de una remisión: el SKU (normal o con letra, ej.
+// "7078E") y el nombre que se muestran ahí son los de `precios`, no los de
+// `products` — un SKU con letra puede no tener ficha técnica propia.
+export async function searchPrecios(query: string): Promise<Precio[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  const result = await client.execute({
+    sql: "SELECT * FROM precios WHERE sku LIKE ?1 OR nombre LIKE ?1 ORDER BY sku",
+    args: [`%${trimmed}%`],
+  });
+  return (result.rows as unknown as PrecioRow[]).map(rowToPrecio);
+}
+
+// --- Remisiones ---
+
+interface RemisionRow {
+  id: number;
+  folio: string;
+  fecha: string;
+  tipo: string;
+  pedido_bodegas: string | null;
+  cancelada: number;
+  subtotal: number;
+  descuento_pct: number;
+  descuento: number;
+  iva: number;
+  total: number;
+  precio_texto: string;
+  usuario: string | null;
+  creado_en: string;
+}
+
+function rowToRemision(row: RemisionRow): Remision {
+  return {
+    id: row.id,
+    folio: row.folio,
+    fecha: row.fecha,
+    tipo: row.tipo as TipoRemision,
+    pedido_bodegas: row.pedido_bodegas ?? "",
+    cancelada: !!row.cancelada,
+    subtotal: row.subtotal,
+    descuento_pct: row.descuento_pct,
+    descuento: row.descuento,
+    iva: row.iva,
+    total: row.total,
+    precio_texto: row.precio_texto,
+    usuario: row.usuario,
+    creado_en: row.creado_en,
+  };
+}
+
+export async function createRemision(
+  input: RemisionInput,
+  renglones: RemisionRenglonInput[],
+): Promise<RemisionConRenglones> {
+  // Header + renglones se escriben en un solo client.batch() (transacción
+  // atómica de libSQL) en vez de INSERTs secuenciales sueltos: si el folio ya
+  // fue consumido por createFolio() pero la escritura fallara a medias, se
+  // habría quedado un documento fantasma con folio quemado y renglones
+  // incompletos — ver createFolio() más arriba, mismo problema que resuelve
+  // su subconsulta atómica, pero aplicado a un insert de header+líneas.
+  // Cada renglón ubica su remision_id por folio (único por generación) en vez
+  // de depender del id devuelto por el INSERT del header, porque batch() arma
+  // todos los statements de antemano y no puede encadenar el resultado de uno
+  // como argumento del siguiente.
+  const statements = [
+    {
+      sql: `INSERT INTO remisiones
+              (folio, fecha, tipo, pedido_bodegas, subtotal, descuento_pct, descuento, iva, total, precio_texto, usuario)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            RETURNING *`,
+      args: [
+        input.folio,
+        input.fecha,
+        input.tipo,
+        input.pedido_bodegas,
+        input.subtotal,
+        input.descuento_pct,
+        input.descuento,
+        input.iva,
+        input.total,
+        input.precio_texto,
+        input.usuario,
+      ],
+    },
+    ...renglones.map((r, i) => ({
+      sql: `INSERT INTO remision_renglones
+              (remision_id, numero_renglon, sku, producto_nombre, cantidad, precio_unitario, importe)
+            VALUES ((SELECT id FROM remisiones WHERE folio = ?1), ?2, ?3, ?4, ?5, ?6, ?7)
+            RETURNING *`,
+      args: [input.folio, i + 1, r.sku, r.producto_nombre, r.cantidad, r.precio_unitario, r.importe],
+    })),
+  ];
+
+  const results = await client.batch(statements, "write");
+  const headerRow = results[0].rows[0] as unknown as RemisionRow;
+  const savedRenglones = results.slice(1).map((r) => r.rows[0] as unknown as RemisionRenglon);
+
+  return { ...rowToRemision(headerRow), renglones: savedRenglones };
+}
+
+export async function listRemisiones(limit = 30): Promise<Remision[]> {
+  const result = await client.execute({
+    sql: "SELECT * FROM remisiones ORDER BY id DESC LIMIT ?1",
+    args: [limit],
+  });
+  return (result.rows as unknown as RemisionRow[]).map(rowToRemision);
+}
+
+export async function cancelRemision(id: number, usuario: string | null): Promise<void> {
+  await client.execute({
+    sql: "UPDATE remisiones SET cancelada = 1 WHERE id = ?1",
+    args: [id],
+  });
+  await logEvent("WARNING", `Remisión #${id} cancelada`, usuario);
+}
+
+export async function listRemisionRenglonesParaHistorial(): Promise<RemisionHistorialRow[]> {
+  const result = await client.execute(`
+    SELECT
+      r.fecha AS fecha, r.folio AS folio, r.pedido_bodegas AS pedido_bodegas, r.cancelada AS cancelada,
+      rr.numero_renglon AS numero_renglon, rr.sku AS sku, rr.cantidad AS cantidad,
+      rr.producto_nombre AS producto_nombre, rr.precio_unitario AS precio_unitario, rr.importe AS importe,
+      r.subtotal AS subtotal, r.descuento_pct AS descuento_pct, r.descuento AS descuento, r.iva AS iva, r.total AS total
+    FROM remision_renglones rr
+    JOIN remisiones r ON r.id = rr.remision_id
+    ORDER BY r.fecha, r.id, rr.numero_renglon
+  `);
+  return (
+    result.rows as unknown as (Omit<RemisionHistorialRow, "pedido_bodegas" | "cancelada"> & {
+      pedido_bodegas: string | null;
+      cancelada: number;
+    })[]
+  ).map((row) => ({
+    ...row,
+    pedido_bodegas: row.pedido_bodegas ?? "",
+    cancelada: !!row.cancelada,
+  }));
 }

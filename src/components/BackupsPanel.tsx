@@ -7,7 +7,9 @@ import {
   deleteBackupRecord,
   executeRestoreSql,
   getBackupSettings,
+  getPreciosList,
   listBackupHistory,
+  listRemisionRenglonesParaHistorial,
   localBackupFileExists,
   logEvent,
   pickBackupFile,
@@ -18,6 +20,7 @@ import {
   verifyRestoreCounts,
 } from "../db";
 import { gunzipToText, isGzip, sha256Hex, validateBackupSql, type BackupValidation } from "../backup";
+import { buildPreciosListWorkbook, buildRemisionesHistorialWorkbook } from "../excelExport";
 import type { BackupFrecuencia, BackupRecord, BackupSettings, BackupTipo } from "../types";
 import Toast from "./Toast";
 
@@ -116,6 +119,8 @@ export default function BackupsPanel() {
   const [loading, setLoading] = useState(true);
 
   const [creating, setCreating] = useState(false);
+  const [exportingPrecios, setExportingPrecios] = useState(false);
+  const [exportingRemisiones, setExportingRemisiones] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const [restoreFlow, setRestoreFlow] = useState<RestoreFlow | null>(null);
@@ -170,6 +175,38 @@ export default function BackupsPanel() {
       await refresh();
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function handleExportPreciosList() {
+    if (exportingPrecios) return;
+    setExportingPrecios(true);
+    try {
+      const precios = await getPreciosList();
+      const bytes = buildPreciosListWorkbook(precios);
+      const saved = await saveBackupFileAs("Lista de precios.xlsx", bytes);
+      if (saved) {
+        await logEvent("INFO", "Lista de precios exportada.", user?.username ?? null);
+        setToastMessage("Lista de precios exportada.");
+      }
+    } finally {
+      setExportingPrecios(false);
+    }
+  }
+
+  async function handleExportRemisionesHistorial() {
+    if (exportingRemisiones) return;
+    setExportingRemisiones(true);
+    try {
+      const rows = await listRemisionRenglonesParaHistorial();
+      const bytes = buildRemisionesHistorialWorkbook(rows);
+      const saved = await saveBackupFileAs("Historial de remisiones.xlsx", bytes);
+      if (saved) {
+        await logEvent("INFO", "Historial de remisiones exportado.", user?.username ?? null);
+        setToastMessage("Historial de remisiones exportado.");
+      }
+    } finally {
+      setExportingRemisiones(false);
     }
   }
 
@@ -470,6 +507,22 @@ export default function BackupsPanel() {
               Subir archivo de restauración
             </button>
           )}
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleExportPreciosList}
+            disabled={exportingPrecios}
+          >
+            {exportingPrecios ? "Generando…" : "Lista de precios"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleExportRemisionesHistorial}
+            disabled={exportingRemisiones}
+          >
+            {exportingRemisiones ? "Generando…" : "Historial de remisiones"}
+          </button>
         </div>
       </div>
 

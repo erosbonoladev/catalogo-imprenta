@@ -5,15 +5,14 @@ import { PERMISOS_BACKUPS } from "../types";
 import UsersPanel from "./UsersPanel";
 import ConnectedUsersPanel from "./ConnectedUsersPanel";
 import LogsPanel from "./LogsPanel";
-import FichaImportPanel from "./FichaImportPanel";
-import ImageImportPanel from "./ImageImportPanel";
+import CapturaMasivaPanel from "./CapturaMasivaPanel";
 import BackupsPanel from "./BackupsPanel";
 
 interface Props {
   onBack: () => void;
 }
 
-type Tab = "usuarios" | "conectados" | "registro" | "backups" | "captura" | "captura-imagenes";
+type Tab = "usuarios" | "conectados" | "registro" | "backups" | "captura-masiva";
 
 const BASE_TABS: { value: Tab; label: string }[] = [
   { value: "usuarios", label: "Usuarios" },
@@ -22,8 +21,7 @@ const BASE_TABS: { value: Tab; label: string }[] = [
 ];
 
 const ADMIN_TABS: { value: Tab; label: string }[] = [
-  { value: "captura", label: "Captura masiva de fichas técnicas" },
-  { value: "captura-imagenes", label: "Captura masiva de imágenes" },
+  { value: "captura-masiva", label: "Captura masiva" },
 ];
 
 export default function Configuraciones({ onBack }: Props) {
@@ -85,8 +83,7 @@ export default function Configuraciones({ onBack }: Props) {
       {tab === "conectados" && <ConnectedUsersPanel />}
       {tab === "registro" && <LogsPanel />}
       {tab === "backups" && <BackupsPanel />}
-      {tab === "captura" && <FichaImportPanel />}
-      {tab === "captura-imagenes" && <ImageImportPanel />}
+      {tab === "captura-masiva" && <CapturaMasivaPanel />}
     </div>
   );
 }

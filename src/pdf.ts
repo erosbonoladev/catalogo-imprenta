@@ -1,6 +1,8 @@
 import { jsPDF } from "jspdf";
-import type { PrintItem, PrintItemOrder, Product } from "./types";
+import type { PrintItem, PrintItemOrder, Product, Remision, RemisionRenglon } from "./types";
 import clioLogoUrl from "../Assets/clio.png";
+import remisionTemplateUrl from "../Assets/remision-template.png";
+import { formatMoney } from "./excelExport";
 
 interface Logo {
   img: HTMLImageElement;
@@ -288,6 +290,169 @@ export async function buildRequisicionPdf(
   doc.text(`Nombre del juego: ${product.nombre}`, marginX, y);
   y += 15;
   doc.text(`SKU: ${product.codigo}`, marginX, y);
+
+  return new Uint8Array(doc.output("arraybuffer"));
+}
+
+// --- Remisión (plantilla Assets/remision.pdf, rasterizada como fondo) ---
+
+interface RemisionTemplate {
+  img: HTMLImageElement;
+  w: number;
+  h: number;
+}
+
+let remisionTemplatePromise: Promise<RemisionTemplate | null> | null = null;
+
+function getRemisionTemplate(): Promise<RemisionTemplate | null> {
+  if (!remisionTemplatePromise) {
+    remisionTemplatePromise = (async () => {
+      try {
+        const img = new Image();
+        img.src = remisionTemplateUrl;
+        await img.decode();
+        return { img, w: img.naturalWidth, h: img.naturalHeight };
+      } catch (err) {
+        console.warn("No se pudo cargar la plantilla de remisión:", err);
+        return null;
+      }
+    })();
+  }
+  return remisionTemplatePromise;
+}
+
+// Tamaño real de la plantilla (MediaBox de Assets/remision.pdf), no "letter".
+const REMISION_PAGE_WIDTH = 595.5;
+const REMISION_PAGE_HEIGHT = 842.25;
+
+// Coordenadas medidas en px sobre el raster original (1696×2400) de
+// Assets/remision-template.png y convertidas a pt (escala 595.5/1696).
+const REMISION_ROWS_PER_PAGE = 15;
+const REMISION_FIRST_ROW_Y = 279.0;
+const REMISION_ROW_HEIGHT = 28.4;
+
+const REMISION_FOLIO_X = 525.0;
+const REMISION_FOLIO_Y = 176.5;
+const REMISION_FECHA_X = 372.9;
+const REMISION_FECHA_Y = 220.4;
+const REMISION_PEDIDO_X = 520.4;
+const REMISION_PEDIDO_Y = 220.4;
+
+// Rectángulos blancos para tapar los valores de ejemplo (XXXXXX/DD-MM-AA/
+// JALISCO) horneados en la plantilla original antes de escribir el valor real.
+const REMISION_ERASE_FOLIO: [number, number, number, number] = [493, 160, 62, 22];
+const REMISION_ERASE_FECHA: [number, number, number, number] = [326, 205, 95, 20];
+const REMISION_ERASE_PEDIDO: [number, number, number, number] = [493, 205, 56, 22];
+// El valor de "Precio en texto" no viene horneado en la plantilla (a
+// diferencia de folio/fecha/pedido), pero igual se tapa con blanco antes de
+// escribir el generado — por si queda una versión previa dibujada debajo en
+// algún reintento, nunca debe mezclarse con la anterior.
+const REMISION_ERASE_PRECIO_TEXTO: [number, number, number, number] = [10, 716, 415, 50];
+
+const REMISION_COL_CLAVE_X = 45.6;
+const REMISION_COL_CANTIDAD_X = 101.8;
+const REMISION_COL_PRODUCTO_X = 140.4;
+const REMISION_COL_PRODUCTO_WIDTH = 279.1;
+// Un poco más a la izquierda del borde de la columna para que precios de 4-5
+// cifras no se salgan del recuadro impreso.
+const REMISION_COL_PRECIO_X = 468;
+const REMISION_COL_IMPORTE_X = 565.3;
+
+const REMISION_PRECIO_TEXTO_X = 15.8;
+const REMISION_PRECIO_TEXTO_Y = 728.4;
+const REMISION_PRECIO_TEXTO_WIDTH = 404;
+const REMISION_TOTALES_X = 565.3;
+const REMISION_SUBTOTAL_Y = 708.3;
+const REMISION_DESCUENTO_PCT_Y = 717.7;
+const REMISION_DESCUENTO_Y = 727.2;
+const REMISION_IVA_Y = 737.0;
+const REMISION_TOTAL_Y = 763.5;
+
+// El renglón solo tiene una línea de alto — un nombre de producto que no
+// quepa se corta con "…" en vez de perder texto sin ningún indicio visible
+// en un documento impreso/legal como la remisión.
+function truncateToWidth(doc: jsPDF, text: string, maxWidth: number): string {
+  if (doc.getTextWidth(text) <= maxWidth) return text;
+  let truncated = text;
+  while (truncated.length > 0 && doc.getTextWidth(`${truncated}…`) > maxWidth) {
+    truncated = truncated.slice(0, -1).trimEnd();
+  }
+  return `${truncated}…`;
+}
+
+function formatFechaRemision(fechaIso: string): string {
+  const [y, m, d] = fechaIso.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+export async function buildRemisionPdf(
+  remision: Remision,
+  renglones: RemisionRenglon[],
+): Promise<Uint8Array> {
+  const template = await getRemisionTemplate();
+  const doc = new jsPDF({ unit: "pt", format: [REMISION_PAGE_WIDTH, REMISION_PAGE_HEIGHT] });
+
+  function drawBackground() {
+    if (!template) return;
+    doc.addImage(template.img, "PNG", 0, 0, REMISION_PAGE_WIDTH, REMISION_PAGE_HEIGHT);
+  }
+
+  const totalPages = Math.max(1, Math.ceil(renglones.length / REMISION_ROWS_PER_PAGE));
+
+  for (let page = 0; page < totalPages; page++) {
+    if (page > 0) doc.addPage();
+    drawBackground();
+
+    // El folio/fecha/pedido se repiten en cada página (no solo la primera) —
+    // un documento de varias páginas debe poder identificarse completo aunque
+    // se separen las hojas.
+    doc.setFillColor(255, 255, 255);
+    doc.rect(...REMISION_ERASE_FOLIO, "F");
+    doc.rect(...REMISION_ERASE_FECHA, "F");
+    doc.rect(...REMISION_ERASE_PEDIDO, "F");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10.5);
+    doc.text(remision.folio, REMISION_FOLIO_X, REMISION_FOLIO_Y, { align: "center" });
+    doc.setFont("helvetica", "normal");
+    doc.text(formatFechaRemision(remision.fecha), REMISION_FECHA_X, REMISION_FECHA_Y, {
+      align: "center",
+    });
+    doc.text(remision.pedido_bodegas || "—", REMISION_PEDIDO_X, REMISION_PEDIDO_Y, {
+      align: "center",
+    });
+
+    const pageRows = renglones.slice(page * REMISION_ROWS_PER_PAGE, (page + 1) * REMISION_ROWS_PER_PAGE);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    pageRows.forEach((renglon, i) => {
+      const y = REMISION_FIRST_ROW_Y + i * REMISION_ROW_HEIGHT;
+      doc.text(renglon.sku, REMISION_COL_CLAVE_X, y, { align: "center" });
+      doc.text(String(renglon.cantidad), REMISION_COL_CANTIDAD_X, y, { align: "center" });
+      const producto = truncateToWidth(doc, renglon.producto_nombre, REMISION_COL_PRODUCTO_WIDTH);
+      doc.text(producto, REMISION_COL_PRODUCTO_X, y);
+      doc.text(formatMoney(renglon.precio_unitario), REMISION_COL_PRECIO_X, y, { align: "right" });
+      doc.text(formatMoney(renglon.importe), REMISION_COL_IMPORTE_X, y, { align: "right" });
+    });
+
+    if (page === totalPages - 1) {
+      doc.setFillColor(255, 255, 255);
+      doc.rect(...REMISION_ERASE_PRECIO_TEXTO, "F");
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text(remision.precio_texto, REMISION_PRECIO_TEXTO_X, REMISION_PRECIO_TEXTO_Y, {
+        maxWidth: REMISION_PRECIO_TEXTO_WIDTH,
+      });
+
+      doc.setFontSize(10);
+      doc.text(formatMoney(remision.subtotal), REMISION_TOTALES_X, REMISION_SUBTOTAL_Y, { align: "right" });
+      doc.text(`${remision.descuento_pct}%`, REMISION_TOTALES_X, REMISION_DESCUENTO_PCT_Y, { align: "right" });
+      doc.text(formatMoney(remision.descuento), REMISION_TOTALES_X, REMISION_DESCUENTO_Y, { align: "right" });
+      doc.text(formatMoney(remision.iva), REMISION_TOTALES_X, REMISION_IVA_Y, { align: "right" });
+      doc.setFont("helvetica", "bold");
+      doc.text(formatMoney(remision.total), REMISION_TOTALES_X, REMISION_TOTAL_Y, { align: "right" });
+    }
+  }
 
   return new Uint8Array(doc.output("arraybuffer"));
 }
