@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getPreciosBySkuPrincipal, upsertPrecio } from "../db";
+import { getPrecio, getPreciosBySkuPrincipal, upsertPrecio } from "../db";
 import { computeSkuPrincipal } from "../precios";
 import { formatMoney } from "../excelExport";
 import type { Precio, Product } from "../types";
@@ -28,6 +28,20 @@ export default function PreciosModal({ product, onClose }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const [addingNew, setAddingNew] = useState(false);
+  const [newSku, setNewSku] = useState("");
+  const [newNombre, setNewNombre] = useState("");
+  const [newPrecio, setNewPrecio] = useState("");
+  const [addError, setAddError] = useState<string | null>(null);
+  const [addSaving, setAddSaving] = useState(false);
+  const [duplicatePrecio, setDuplicatePrecio] = useState<Precio | null>(null);
+
+  async function refreshPrecios() {
+    const skuPrincipal = computeSkuPrincipal(product.codigo);
+    const list = await getPreciosBySkuPrincipal(skuPrincipal);
+    setPrecios(list);
+  }
 
   useEffect(() => {
     if (!canVer) return;
@@ -122,6 +136,75 @@ export default function PreciosModal({ product, onClose }: Props) {
     }
   }
 
+  function resetNewForm() {
+    setAddingNew(false);
+    setNewSku("");
+    setNewNombre("");
+    setNewPrecio("");
+    setAddError(null);
+    setDuplicatePrecio(null);
+  }
+
+  function validateNewForm(): { sku: string; nombre: string; precio: number } | null {
+    const sku = newSku.trim();
+    const nombre = newNombre.trim();
+    if (!sku) {
+      setAddError("El SKU es obligatorio.");
+      return null;
+    }
+    if (!nombre) {
+      setAddError("El nombre es obligatorio.");
+      return null;
+    }
+    const precio = Number(newPrecio.replace(",", "."));
+    if (!Number.isFinite(precio) || precio < 0) {
+      setAddError("El precio debe ser un número mayor o igual a 0.");
+      return null;
+    }
+    return { sku, nombre, precio };
+  }
+
+  // Chequea el SKU exacto (no el sku_principal) — variantes con letra
+  // (7078E) son productos relacionados válidos bajo el mismo grupo, no
+  // duplicados del SKU base.
+  async function handleSubmitNew() {
+    setAddError(null);
+    const parsed = validateNewForm();
+    if (!parsed) return;
+    setAddSaving(true);
+    try {
+      const existing = await getPrecio(parsed.sku);
+      if (existing) {
+        setDuplicatePrecio(existing);
+        return;
+      }
+      await upsertPrecio({ ...parsed, usuario: user?.username ?? null });
+      await refreshPrecios();
+      resetNewForm();
+      setToastMessage("Producto agregado.");
+    } catch (err) {
+      setAddError(`No se pudo guardar el producto: ${String(err)}`);
+    } finally {
+      setAddSaving(false);
+    }
+  }
+
+  async function handleConfirmarActualizarExistente() {
+    const parsed = validateNewForm();
+    if (!parsed || !duplicatePrecio) return;
+    setAddSaving(true);
+    try {
+      await upsertPrecio({ ...parsed, usuario: user?.username ?? null });
+      await refreshPrecios();
+      resetNewForm();
+      setToastMessage("Producto actualizado.");
+    } catch (err) {
+      setAddError(`No se pudo actualizar el producto: ${String(err)}`);
+    } finally {
+      setAddSaving(false);
+    }
+  }
+
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true">
       <div className="modal-card">
@@ -170,6 +253,89 @@ export default function PreciosModal({ product, onClose }: Props) {
         )}
 
         {error && <p className="form-error">{error}</p>}
+
+        {canModificar && (
+          <>
+            {!addingNew ? (
+              <button type="button" className="btn-link" onClick={() => setAddingNew(true)}>
+                Agregar nuevo producto
+              </button>
+            ) : (
+              <div className="remision-manual-entry">
+                <div className="form-row">
+                  <label>
+                    SKU
+                    <input
+                      type="text"
+                      value={newSku}
+                      onChange={(e) => setNewSku(e.target.value)}
+                      disabled={addSaving}
+                      autoFocus
+                    />
+                  </label>
+                  <label>
+                    Nombre del producto
+                    <input
+                      type="text"
+                      value={newNombre}
+                      onChange={(e) => setNewNombre(e.target.value)}
+                      disabled={addSaving}
+                    />
+                  </label>
+                  <label>
+                    Precio
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={newPrecio}
+                      onChange={(e) => setNewPrecio(e.target.value)}
+                      disabled={addSaving}
+                      style={{ width: "6rem" }}
+                    />
+                  </label>
+                </div>
+                <p className="hint" style={{ margin: 0 }}>
+                  La fecha de modificación se asigna automáticamente al guardar.
+                </p>
+
+                {duplicatePrecio ? (
+                  <span className="confirm-delete">
+                    El SKU {duplicatePrecio.sku} ya existe ({duplicatePrecio.nombre} —{" "}
+                    {formatMoney(duplicatePrecio.precio)}). ¿Actualizarlo con estos datos?
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={handleConfirmarActualizarExistente}
+                      disabled={addSaving}
+                    >
+                      Actualizar
+                    </button>
+                    <button type="button" className="btn-link" onClick={resetNewForm} disabled={addSaving}>
+                      Cancelar
+                    </button>
+                  </span>
+                ) : (
+                  <>
+                    {addError && <p className="form-error">{addError}</p>}
+                    <div className="form-actions">
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={handleSubmitNew}
+                        disabled={addSaving}
+                      >
+                        {addSaving ? "Guardando…" : "Guardar producto"}
+                      </button>
+                      <button type="button" className="btn-link" onClick={resetNewForm} disabled={addSaving}>
+                        Cancelar
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </>
+        )}
 
         <div className="form-actions">
           {canModificar && (

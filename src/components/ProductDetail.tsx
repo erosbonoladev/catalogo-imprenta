@@ -103,7 +103,14 @@ export default function ProductDetail({
         </div>
 
         <div className="product-detail-info">
-          <span className="product-card-code">#{product.codigo}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <span className="product-card-code">#{product.codigo}</span>
+            {hasPermission(user, "precios_ver") && (
+              <button type="button" className="btn-link" onClick={() => setShowPrecios(true)}>
+                Precios
+              </button>
+            )}
+          </div>
           <h1>{product.nombre}</h1>
           <p className="product-detail-tags">
             {product.categoria && <span className="tag">{product.categoria}</span>}
@@ -186,11 +193,6 @@ export default function ProductDetail({
                 onClick={() => onOpenImprenta(product.id)}
               >
                 Imprenta
-              </button>
-            )}
-            {hasPermission(user, "precios_ver") && (
-              <button className="btn btn-secondary" onClick={() => setShowPrecios(true)}>
-                Precios
               </button>
             )}
             {confirmingDelete ? (

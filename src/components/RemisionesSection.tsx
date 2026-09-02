@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { hasPermission, useAuth } from "../auth";
-import { cancelRemision, listRemisiones, logEvent } from "../db";
+import { deleteRemision, listRemisiones, logEvent } from "../db";
 import { formatMoney } from "../excelExport";
 import type { Remision } from "../types";
 import RemisionDetalleModal from "./RemisionDetalleModal";
@@ -23,12 +23,12 @@ export default function RemisionesSection({ onBack }: Props) {
   const { user } = useAuth();
   const allowed = hasPermission(user, "remisiones_acceso");
   const canCrear = hasPermission(user, "remisiones_crear");
-  const canCancelar = hasPermission(user, "remisiones_cancelar");
+  const canBorrar = hasPermission(user, "remisiones_cancelar");
 
   const [tipo, setTipo] = useState<TipoSel>("interna");
   const [recientes, setRecientes] = useState<Remision[]>([]);
   const [loadingRecientes, setLoadingRecientes] = useState(true);
-  const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [verRemision, setVerRemision] = useState<Remision | null>(null);
 
@@ -63,10 +63,10 @@ export default function RemisionesSection({ onBack }: Props) {
     );
   }
 
-  async function handleCancelar(id: number) {
-    await cancelRemision(id, user?.username ?? null);
-    setConfirmCancelId(null);
-    setToastMessage("Remisión cancelada.");
+  async function handleBorrar(id: number) {
+    await deleteRemision(id, user?.username ?? null);
+    setConfirmDeleteId(null);
+    setToastMessage("Remisión eliminada.");
     await refreshRecientes();
   }
 
@@ -123,15 +123,14 @@ export default function RemisionesSection({ onBack }: Props) {
                         <button type="button" className="btn-link" onClick={() => setVerRemision(r)}>
                           Ver
                         </button>
-                        {canCancelar &&
-                          !r.cancelada &&
-                          (confirmCancelId === r.id ? (
+                        {canBorrar &&
+                          (confirmDeleteId === r.id ? (
                             <span className="confirm-delete">
-                              ¿Cancelar?
-                              <button className="btn btn-danger" onClick={() => handleCancelar(r.id)}>
+                              ¿Borrar?
+                              <button className="btn btn-danger" onClick={() => handleBorrar(r.id)}>
                                 Sí
                               </button>
-                              <button className="btn-link" onClick={() => setConfirmCancelId(null)}>
+                              <button className="btn-link" onClick={() => setConfirmDeleteId(null)}>
                                 No
                               </button>
                             </span>
@@ -139,9 +138,9 @@ export default function RemisionesSection({ onBack }: Props) {
                             <button
                               type="button"
                               className="btn-link"
-                              onClick={() => setConfirmCancelId(r.id)}
+                              onClick={() => setConfirmDeleteId(r.id)}
                             >
-                              Cancelar
+                              Borrar
                             </button>
                           ))}
                       </td>
@@ -159,7 +158,11 @@ export default function RemisionesSection({ onBack }: Props) {
       <Toast message={toastMessage ?? ""} show={!!toastMessage} onHide={() => setToastMessage(null)} />
 
       {verRemision && (
-        <RemisionDetalleModal remision={verRemision} onClose={() => setVerRemision(null)} />
+        <RemisionDetalleModal
+          remision={verRemision}
+          onClose={() => setVerRemision(null)}
+          onUpdated={refreshRecientes}
+        />
       )}
     </div>
   );

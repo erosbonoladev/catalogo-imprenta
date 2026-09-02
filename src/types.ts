@@ -210,7 +210,7 @@ export const PERMISO_LABELS: Record<Permiso, string> = {
   precios_modificar: "Precios: modificar",
   remisiones_acceso: "Remisiones: acceso",
   remisiones_crear: "Remisiones: crear",
-  remisiones_cancelar: "Remisiones: cancelar",
+  remisiones_cancelar: "Remisiones: borrar",
 };
 
 export const PERMISOS_BACKUPS: Permiso[] = [
@@ -354,6 +354,8 @@ export interface Folio {
 
 // --- Precios ---
 
+export type TipoPrecio = "interno" | "externo";
+
 export interface Precio {
   id: number;
   sku: string;
@@ -363,6 +365,9 @@ export interface Precio {
   actualizado_en: string;
   actualizado_por: string | null;
   creado_en: string;
+  // NULL = productos guardados antes de esta clasificación — se tratan como
+  // "interno" en la exportación (ver excelExport.ts), nunca como "externo".
+  tipo: TipoPrecio | null;
 }
 
 export interface PrecioInput {
@@ -370,6 +375,10 @@ export interface PrecioInput {
   nombre: string;
   precio: number;
   usuario: string | null;
+  // Opcional: si se omite al actualizar un precio existente, upsertPrecio()
+  // conserva la clasificación que ya tenía (ver COALESCE en su query) — no
+  // reclasifica accidentalmente un producto por una simple edición de precio.
+  tipo?: TipoPrecio;
 }
 
 export interface PrecioHistorialEntry {

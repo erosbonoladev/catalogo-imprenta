@@ -1996,6 +1996,7 @@ interface PrecioRow {
   actualizado_en: string;
   actualizado_por: string | null;
   creado_en: string;
+  tipo: string | null;
 }
 
 function rowToPrecio(row: PrecioRow): Precio {
@@ -2008,6 +2009,7 @@ function rowToPrecio(row: PrecioRow): Precio {
     actualizado_en: row.actualizado_en,
     actualizado_por: row.actualizado_por,
     creado_en: row.creado_en,
+    tipo: row.tipo === "interno" || row.tipo === "externo" ? row.tipo : null,
   };
 }
 
@@ -2028,13 +2030,22 @@ export async function upsertPrecio(
     (existing.rows[0] as unknown as { precio: number } | undefined)?.precio ?? null;
 
   const result = await client.execute({
-    sql: `INSERT INTO precios (sku, sku_principal, nombre, precio, actualizado_en, actualizado_por)
-          VALUES (?1, ?2, ?3, ?4, COALESCE(?5, datetime('now')), ?6)
+    sql: `INSERT INTO precios (sku, sku_principal, nombre, precio, actualizado_en, actualizado_por, tipo)
+          VALUES (?1, ?2, ?3, ?4, COALESCE(?5, datetime('now')), ?6, ?7)
           ON CONFLICT(sku) DO UPDATE SET
             sku_principal = ?2, nombre = ?3, precio = ?4,
-            actualizado_en = COALESCE(?5, datetime('now')), actualizado_por = ?6
+            actualizado_en = COALESCE(?5, datetime('now')), actualizado_por = ?6,
+            tipo = COALESCE(?7, precios.tipo)
           RETURNING *`,
-    args: [input.sku, skuPrincipal, input.nombre, input.precio, input.actualizadoEn ?? null, input.usuario],
+    args: [
+      input.sku,
+      skuPrincipal,
+      input.nombre,
+      input.precio,
+      input.actualizadoEn ?? null,
+      input.usuario,
+      input.tipo ?? null,
+    ],
   });
   const row = result.rows[0] as unknown as PrecioRow;
 
@@ -2179,6 +2190,65 @@ export async function createRemisionConFolio(
   }
 }
 
+// Edita una remisión existente conservando folio, fecha, tipo, usuario
+// (creador) y creado_en — actualiza pedido_bodegas y los totales
+// (recalculados a partir de los renglones editados) y reemplaza los
+// renglones por completo (mismo patrón replace-and-reinsert que
+// specs/descriptions), nunca genera un folio nuevo ni una segunda remisión.
+export async function updateRemisionConRenglones(
+  id: number,
+  totales: Pick<
+    RemisionInput,
+    "pedido_bodegas" | "subtotal" | "descuento_pct" | "descuento" | "iva" | "total" | "precio_texto"
+  >,
+  renglones: RemisionRenglonInput[],
+): Promise<RemisionConRenglones> {
+  const tx = await client.transaction("write");
+  try {
+    const headerResult = await tx.execute({
+      sql: `UPDATE remisiones
+              SET pedido_bodegas = ?1, subtotal = ?2, descuento_pct = ?3, descuento = ?4, iva = ?5,
+                  total = ?6, precio_texto = ?7
+            WHERE id = ?8
+            RETURNING *`,
+      args: [
+        totales.pedido_bodegas,
+        totales.subtotal,
+        totales.descuento_pct,
+        totales.descuento,
+        totales.iva,
+        totales.total,
+        totales.precio_texto,
+        id,
+      ],
+    });
+    const headerRow = headerResult.rows[0] as unknown as RemisionRow | undefined;
+    if (!headerRow) throw new Error("Remisión no encontrada.");
+
+    await tx.execute({ sql: "DELETE FROM remision_renglones WHERE remision_id = ?1", args: [id] });
+
+    const savedRenglones: RemisionRenglon[] = [];
+    for (const [i, r] of renglones.entries()) {
+      const rowResult = await tx.execute({
+        sql: `INSERT INTO remision_renglones
+                (remision_id, numero_renglon, sku, producto_nombre, cantidad, precio_unitario, importe)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+              RETURNING *`,
+        args: [id, i + 1, r.sku, r.producto_nombre, r.cantidad, r.precio_unitario, r.importe],
+      });
+      savedRenglones.push(rowResult.rows[0] as unknown as RemisionRenglon);
+    }
+
+    await tx.commit();
+    return { ...rowToRemision(headerRow), renglones: savedRenglones };
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
+}
+
 export async function listRemisiones(limit = 30): Promise<Remision[]> {
   const result = await client.execute({
     sql: "SELECT * FROM remisiones ORDER BY id DESC LIMIT ?1",
@@ -2195,12 +2265,21 @@ export async function getRemisionRenglones(remisionId: number): Promise<Remision
   return result.rows as unknown as RemisionRenglon[];
 }
 
-export async function cancelRemision(id: number, usuario: string | null): Promise<void> {
-  await client.execute({
-    sql: "UPDATE remisiones SET cancelada = 1 WHERE id = ?1",
-    args: [id],
-  });
-  await logEvent("WARNING", `Remisión #${id} cancelada`, usuario);
+// Mismo patrón que deletePrintItemOrder/deletePrintItemPurchase (Imprenta):
+// borrado real, no un flag — remision_renglones se borra primero por la FK.
+export async function deleteRemision(id: number, usuario: string | null): Promise<void> {
+  const tx = await client.transaction("write");
+  try {
+    await tx.execute({ sql: "DELETE FROM remision_renglones WHERE remision_id = ?1", args: [id] });
+    await tx.execute({ sql: "DELETE FROM remisiones WHERE id = ?1", args: [id] });
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
+  await logEvent("WARNING", `Remisión #${id} eliminada`, usuario);
 }
 
 export async function listRemisionRenglonesParaHistorial(): Promise<RemisionHistorialRow[]> {

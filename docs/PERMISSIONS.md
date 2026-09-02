@@ -26,11 +26,11 @@ PERMISOS = [
 | `backups_restaurar` | Backups: restaurar | "Subir archivo de restauración" y "Restaurar" desde historial — cubre ambas vías, no hay un permiso separado para "subir archivo" (mismo riesgo, mismo gate) |
 | `backups_configurar` | Backups: configurar programación | Sección "Programación" en `BackupsPanel` |
 | `backups_eliminar` | Backups: eliminar | Botón "Eliminar" por fila del historial |
-| `precios_ver` | Precios: ver | Botón "Precios" en `ProductDetail` y apertura de `PreciosModal` |
-| `precios_modificar` | Precios: modificar | Dentro de `PreciosModal`: si falta, la tabla es de solo lectura (sin inputs editables ni botón "Guardar") |
+| `precios_ver` | Precios: ver | Botón "Precios" junto al SKU en `ProductDetail` y apertura de `PreciosModal` |
+| `precios_modificar` | Precios: modificar | Dentro de `PreciosModal`: si falta, la tabla es de solo lectura (sin inputs editables ni botón "Guardar") — también gatea "Agregar nuevo producto" |
 | `remisiones_acceso` | Remisiones: acceso | Botón "Remisiones" en `Sidebar` (fila ícono+texto debajo de "Modo oscuro", separada por un divisor) + `RemisionesSection` (re-chequea al entrar) |
-| `remisiones_crear` | Remisiones: crear | Muestra/oculta `RemisionForm` dentro de `RemisionesSection` |
-| `remisiones_cancelar` | Remisiones: cancelar | Botón "Cancelar" por fila en la lista de remisiones recientes |
+| `remisiones_crear` | Remisiones: crear | Muestra/oculta `RemisionForm` dentro de `RemisionesSection`; también gatea el botón "Editar" dentro de `RemisionDetalleModal` (mismo permiso que crear, no uno nuevo) |
+| `remisiones_cancelar` | Remisiones: borrar | Botón "Borrar" por fila en la lista de remisiones recientes (borrado real vía `deleteRemision`, con confirmación — la etiqueta cambió de "cancelar" a "borrar" cuando se reemplazó ese botón, pero el string interno del permiso no cambió para no invalidar asignaciones existentes) |
 
 El string interno `plasticos` no cambió (ni el nombre de tabla `plastic_products`) aunque la UI diga "Piezas" — no renombrar uno sin el otro.
 
