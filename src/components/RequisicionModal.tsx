@@ -2,7 +2,7 @@ import { useState } from "react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
-import { createFolio, createRequisicion, logEvent } from "../db";
+import { createRequisicionConFolio, logEvent } from "../db";
 import { buildRequisicionPdf } from "../pdf";
 import { buildWhatsAppUrl, WHATSAPP_BODEGA_NUMBER } from "../requisiciones";
 import type { Product, Requisicion } from "../types";
@@ -54,14 +54,11 @@ export default function RequisicionModal({
 
     setSaving(true);
     try {
-      const folio = await createFolio("requisicion", product.codigo);
-      const pdfBytes = await buildRequisicionPdf(product, {
-        folio: folio.folio,
-        etiqueta,
-        cantidad: cantidadNum,
-      });
-
-      const requisicion = await createRequisicion({
+      // Folio + requisición se generan juntos en una sola transacción (ver
+      // createRequisicionConFolio) — así una falla justo después de consumir
+      // el folio no lo deja huérfano. El PDF se arma después, ya con el folio
+      // confirmado, y su guardado sigue siendo best-effort más abajo.
+      const requisicion = await createRequisicionConFolio(product.codigo, {
         productId: product.id,
         productNombre: product.nombre,
         productCodigo: product.codigo,
@@ -69,7 +66,11 @@ export default function RequisicionModal({
         descripcion,
         cantidad: cantidadNum,
         usuario: user?.username ?? null,
-        folio: folio.folio,
+      });
+      const pdfBytes = await buildRequisicionPdf(product, {
+        folio: requisicion.folio,
+        etiqueta,
+        cantidad: cantidadNum,
       });
       setResultado(requisicion);
       logEvent(
@@ -84,7 +85,7 @@ export default function RequisicionModal({
       try {
         const path = await save({
           title: "Guardar requisición de material",
-          defaultPath: `${folio.folio}.pdf`,
+          defaultPath: `${requisicion.folio}.pdf`,
           filters: [{ name: "PDF", extensions: ["pdf"] }],
         });
         if (path) {
@@ -101,7 +102,7 @@ export default function RequisicionModal({
       } catch (err) {
         logEvent(
           "ERROR",
-          `No se pudo guardar el PDF de la requisición ${folio.folio}: ${String(err)}`,
+          `No se pudo guardar el PDF de la requisición ${requisicion.folio}: ${String(err)}`,
           user?.username ?? null,
         );
       }

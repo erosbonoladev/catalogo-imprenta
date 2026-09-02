@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
-import { createFolio, createRemision, getPrecio, getPreciosBySkuPrincipal, logEvent, searchPrecios } from "../db";
+import { createRemisionConFolio, getPrecio, getPreciosBySkuPrincipal, logEvent, searchPrecios } from "../db";
 import { buildRemisionPdf } from "../pdf";
 import { formatMoney } from "../excelExport";
 import { numeroATextoMoneda } from "../numeroALetras";
@@ -169,7 +169,6 @@ export default function RemisionForm({ onCreated }: Props) {
     // más sobre un documento que ya existe.
     let created: RemisionConRenglones;
     try {
-      const folio = await createFolio("remision", parsedRows[0].sku || "GRAL");
       const fecha = fechaLocalDeHoy();
       const renglonesInput: RemisionRenglonInput[] = parsedRows.map((r) => ({
         sku: r.sku,
@@ -178,8 +177,7 @@ export default function RemisionForm({ onCreated }: Props) {
         precio_unitario: r.precioNum,
         importe: r.cantidadNum * r.precioNum,
       }));
-      const remisionInput: RemisionInput = {
-        folio: folio.folio,
+      const remisionInput: Omit<RemisionInput, "folio"> = {
         fecha,
         tipo: "interna",
         pedido_bodegas: PEDIDO_BODEGAS_INTERNA,
@@ -191,7 +189,7 @@ export default function RemisionForm({ onCreated }: Props) {
         precio_texto: precioTexto,
         usuario: user?.username ?? null,
       };
-      created = await createRemision(remisionInput, renglonesInput);
+      created = await createRemisionConFolio(parsedRows[0].sku || "GRAL", remisionInput, renglonesInput);
     } catch (err) {
       setError(`No se pudo generar la remisión: ${String(err)}`);
       setGenerating(false);

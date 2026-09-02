@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { createUser, listUsers, updateUser, usernameEnUso } from "../db";
 import { PERMISOS, PERMISO_LABELS } from "../types";
 import type { Permiso, Rol, User } from "../types";
+import { isAdmin, useAuth } from "../auth";
 import Toast from "./Toast";
 
 const MIN_PASSWORD_LENGTH = 8;
@@ -27,6 +28,7 @@ const emptyForm: FormState = {
 };
 
 export default function UsersPanel() {
+  const { user: actingUser, token } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -34,10 +36,29 @@ export default function UsersPanel() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [showToast, setShowToast] = useState(false);
+  const allowed = isAdmin(actingUser);
 
   useEffect(() => {
-    refresh();
-  }, []);
+    // No disparar listUsers() (usernames/roles/permisos de todo el mundo) si
+    // igual se va a mostrar "Acceso denegado" — el gate de abajo bloquea la
+    // vista, pero por sí solo no evita que este efecto ya haya traído los
+    // datos a memoria.
+    if (allowed) refresh();
+  }, [allowed]);
+
+  // Administrar usuarios y permisos (incluida la posibilidad de otorgarse
+  // rol admin) es más sensible que el resto de Configuraciones — antes vivía
+  // bajo el permiso general "configuraciones", que cualquier persona con
+  // acceso a Logs/Conectados también podía tener. Se re-chequea acá, no solo
+  // ocultando la pestaña en Configuraciones.tsx.
+  if (!allowed) {
+    return (
+      <div>
+        <h2>Acceso denegado</h2>
+        <p className="hint">Administrar usuarios requiere una cuenta administradora.</p>
+      </div>
+    );
+  }
 
   async function refresh() {
     const list = await listUsers();
@@ -115,10 +136,16 @@ export default function UsersPanel() {
       }
     }
 
+    if (!token || !actingUser) {
+      setError("Tu sesión ya no es válida — vuelve a iniciar sesión.");
+      return;
+    }
+
     setSaving(true);
     try {
+      const actor = { id: actingUser.id, token };
       if (creating) {
-        const id = await createUser({
+        const id = await createUser(actor, {
           username,
           password: form.password,
           activo: form.activo,
@@ -128,7 +155,7 @@ export default function UsersPanel() {
         await refresh();
         selectUser({ id, username, activo: form.activo, rol: form.rol, permisos: form.permisos, creado_en: "" });
       } else {
-        await updateUser(selectedId, {
+        await updateUser(actor, selectedId, {
           username,
           password: form.password || undefined,
           activo: form.activo,

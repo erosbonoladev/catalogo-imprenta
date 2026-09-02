@@ -15,12 +15,12 @@ interface Props {
 type Tab = "usuarios" | "conectados" | "registro" | "backups" | "captura-masiva";
 
 const BASE_TABS: { value: Tab; label: string }[] = [
-  { value: "usuarios", label: "Usuarios" },
   { value: "conectados", label: "Usuarios conectados" },
   { value: "registro", label: "Registro" },
 ];
 
 const ADMIN_TABS: { value: Tab; label: string }[] = [
+  { value: "usuarios", label: "Usuarios" },
   { value: "captura-masiva", label: "Captura masiva" },
 ];
 
@@ -30,13 +30,17 @@ export default function Configuraciones({ onBack }: Props) {
   const allowedBackups = PERMISOS_BACKUPS.some((p) => hasPermission(user, p));
   const allowed = allowedGeneral || allowedBackups;
 
+  // Administrar usuarios/permisos y Captura masiva quedan detrás de isAdmin,
+  // no solo del permiso general "configuraciones" — ver UsersPanel.tsx: ese
+  // permiso también da acceso a Logs/Conectados, y otorgarlo no debería
+  // implicar poder crear cuentas admin o editar permisos de otros.
   const tabs: { value: Tab; label: string }[] = [
     ...(allowedGeneral ? BASE_TABS : []),
     ...(allowedBackups ? [{ value: "backups" as Tab, label: "Backups" }] : []),
     ...(allowedGeneral && isAdmin(user) ? ADMIN_TABS : []),
   ];
 
-  const [tab, setTab] = useState<Tab>(allowedGeneral ? "usuarios" : "backups");
+  const [tab, setTab] = useState<Tab>(allowedGeneral && isAdmin(user) ? "usuarios" : allowedGeneral ? "conectados" : "backups");
 
   useEffect(() => {
     if (allowed) return;

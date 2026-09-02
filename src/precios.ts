@@ -161,6 +161,10 @@ export interface ClassifiedPrecioRow extends RawPrecioRow {
   skuPrincipal?: string;
 }
 
+// Tope de sanidad, no de calidad de datos — bloquea una celda corrupta, no
+// acorta nombres de producto legítimos.
+const MAX_FIELD_LENGTH = 500;
+
 export function classifyPrecioRows(
   rows: RawPrecioRow[],
   productExists: Map<string, boolean>,
@@ -171,6 +175,9 @@ export function classifyPrecioRows(
     }
     if (!row.nombre) {
       return { ...row, status: "error", reason: "Falta el nombre." };
+    }
+    if (row.sku.length > MAX_FIELD_LENGTH || row.nombre.length > MAX_FIELD_LENGTH) {
+      return { ...row, status: "error", reason: "SKU o Nombre excede el largo permitido." };
     }
     const precio = parsePrecioValor(row.precioRaw);
     if (precio === null) {

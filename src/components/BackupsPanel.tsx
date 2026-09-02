@@ -103,7 +103,7 @@ interface RestoreFlow {
 }
 
 export default function BackupsPanel() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const canVer = hasPermission(user, "backups_ver");
   const canCrear = hasPermission(user, "backups_crear");
   const canDescargar = hasPermission(user, "backups_descargar");
@@ -231,14 +231,14 @@ export default function BackupsPanel() {
   }
 
   async function handleDeleteConfirmed(record: BackupRecord) {
-    if (!canEliminar) return;
+    if (!canEliminar || !token || !user) return;
     const isLatestValid = ultimoExitoso?.id === record.id;
     if (isLatestValid) {
       setToastMessage("No se puede eliminar el backup exitoso más reciente.");
       setConfirmDeleteId(null);
       return;
     }
-    await deleteBackupRecord(record.id);
+    await deleteBackupRecord({ id: user.id, token }, record.id);
     await logEvent(
       "WARNING",
       `Backup eliminado: ${record.archivo} (${record.tipo})`,
@@ -359,6 +359,7 @@ export default function BackupsPanel() {
   async function confirmRestore() {
     if (!restoreFlow || restoreFlow.status !== "ready" || !restoreFlow.validation?.manifest) return;
     if (restoreFlow.confirmText.trim().toUpperCase() !== "RESTAURAR") return;
+    if (!token || !user) return;
 
     setRestoreFlow({ ...restoreFlow, status: "running", message: "Creando backup de emergencia…" });
     const usuario = user?.username ?? null;
@@ -376,7 +377,7 @@ export default function BackupsPanel() {
 
     setRestoreFlow((prev) => (prev ? { ...prev, message: "Restaurando…" } : prev));
     try {
-      await executeRestoreSql(restoreFlow.sql);
+      await executeRestoreSql({ id: user.id, token }, restoreFlow.sql);
     } catch (err) {
       setRestoreFlow({ ...restoreFlow, status: "error", message: `Falló la restauración: ${String(err)}` });
       await logEvent("ERROR", `Restauración fallida (${restoreFlow.fileName}): ${String(err)}`, usuario);
@@ -422,10 +423,11 @@ export default function BackupsPanel() {
   }
 
   async function handleSaveSettings() {
-    if (!settingsDraft || !canConfigurar) return;
+    if (!settingsDraft || !canConfigurar || !token || !user) return;
     setSavingSettings(true);
     try {
       await updateBackupSettings(
+        { id: user.id, token },
         {
           automatico_activado: settingsDraft.automatico_activado,
           frecuencia: settingsDraft.frecuencia,

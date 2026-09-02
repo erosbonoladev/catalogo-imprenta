@@ -225,6 +225,23 @@ export interface RowLookup {
   byNombre: Product[];
 }
 
+// Topes de sanidad, no de calidad de datos — solo bloquean una celda
+// corrupta/pegada por accidente con miles de caracteres, no acortan
+// descripciones legítimas.
+const MAX_SHORT_FIELD_LENGTH = 500;
+const MAX_LONG_FIELD_LENGTH = 10_000;
+
+function fieldTooLong(row: RawImportRow): string | null {
+  if (row.clave.length > MAX_SHORT_FIELD_LENGTH) return "Clave";
+  if (row.producto.length > MAX_SHORT_FIELD_LENGTH) return "Producto";
+  if (row.categoria.length > MAX_SHORT_FIELD_LENGTH) return "Categoría";
+  if (row.material.length > MAX_SHORT_FIELD_LENGTH) return "Material";
+  if (row.descripcion.length > MAX_LONG_FIELD_LENGTH) return "Descripción";
+  if (row.presentacion.length > MAX_LONG_FIELD_LENGTH) return "Presentación / Contenido";
+  if (row.medidas.length > MAX_LONG_FIELD_LENGTH) return "Medidas";
+  return null;
+}
+
 export function classifyRows(
   rows: RawImportRow[],
   lookups: Map<number, RowLookup>,
@@ -232,6 +249,11 @@ export function classifyRows(
   const results: ClassifiedRow[] = rows.map((row) => {
     if (!row.producto) {
       return { ...row, status: "error", reason: "Falta el nombre del producto (columna Producto)." };
+    }
+
+    const tooLongField = fieldTooLong(row);
+    if (tooLongField) {
+      return { ...row, status: "error", reason: `La columna "${tooLongField}" excede el largo permitido.` };
     }
 
     const lookup = lookups.get(row.fila) ?? { byCodigo: null, byNombre: [] };

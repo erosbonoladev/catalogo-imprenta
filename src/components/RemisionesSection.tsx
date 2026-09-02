@@ -3,6 +3,7 @@ import { hasPermission, useAuth } from "../auth";
 import { cancelRemision, listRemisiones, logEvent } from "../db";
 import { formatMoney } from "../excelExport";
 import type { Remision } from "../types";
+import RemisionDetalleModal from "./RemisionDetalleModal";
 import RemisionForm from "./RemisionForm";
 import Toast from "./Toast";
 
@@ -29,6 +30,7 @@ export default function RemisionesSection({ onBack }: Props) {
   const [loadingRecientes, setLoadingRecientes] = useState(true);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [verRemision, setVerRemision] = useState<Remision | null>(null);
 
   useEffect(() => {
     if (!allowed) {
@@ -118,6 +120,9 @@ export default function RemisionesSection({ onBack }: Props) {
                       <td>{formatMoney(r.total)}</td>
                       <td>{r.cancelada ? "Cancelada" : "Activa"}</td>
                       <td className="backups-history-actions">
+                        <button type="button" className="btn-link" onClick={() => setVerRemision(r)}>
+                          Ver
+                        </button>
                         {canCancelar &&
                           !r.cancelada &&
                           (confirmCancelId === r.id ? (
@@ -152,6 +157,10 @@ export default function RemisionesSection({ onBack }: Props) {
       {tipo === "externa" && <p className="hint">Remisión externa — próximamente.</p>}
 
       <Toast message={toastMessage ?? ""} show={!!toastMessage} onHide={() => setToastMessage(null)} />
+
+      {verRemision && (
+        <RemisionDetalleModal remision={verRemision} onClose={() => setVerRemision(null)} />
+      )}
     </div>
   );
 }

@@ -12,7 +12,7 @@ No asumir que algo existe por aparecer en una conversación previa o en un doc v
 | Imprenta — historial de órdenes de producción/compra | IMPLEMENTADO | `imprenta` | Ver [WORKFLOWS.md](WORKFLOWS.md#producción--compra) |
 | Requisiciones — crear y enviar por WhatsApp | IMPLEMENTADO | `requisiciones` | Ver [WORKFLOWS.md](WORKFLOWS.md#requisiciones) |
 | Requisiciones — seguimiento de estado tras creación | **NO IMPLEMENTADO** | — | `ESTADOS_REQUISICION` existe en `types.ts` pero ninguna función de `db.ts` lee/lista/actualiza `estado`; no hay pantalla de seguimiento. Toda requisición queda en `pendiente` para siempre en la BD |
-| Folios (numeración de documentos) | IMPLEMENTADO (solo escritura) | — | Sin listado/consulta histórica, solo `createFolio` |
+| Folios (numeración de documentos) | IMPLEMENTADO (solo escritura) | — | Sin listado/consulta histórica. Escrito por `createFolio` (Compra/Producción/Requisición) o dentro de `createRemisionConFolio`/`createRequisicionConFolio` (ver [DATABASE.md](DATABASE.md)) |
 | Importación masiva de fichas (Excel) | IMPLEMENTADO | `isAdmin` (no es permiso otorgable) | Usa `xlsx`; ver [WORKFLOWS.md](WORKFLOWS.md#importación-de-fichas-excel) |
 | Importación masiva de imágenes | IMPLEMENTADO | `isAdmin` | Empareja por nombre de archivo = `codigo` |
 | Exportación a PDF (orden/compra/requisición) | IMPLEMENTADO | — | `jspdf`, ver [WORKFLOWS.md](WORKFLOWS.md#pdf) |

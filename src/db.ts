@@ -1,4 +1,4 @@
-import { createClient } from "@libsql/client/web";
+import { createClient, type Client, type Transaction } from "@libsql/client/web";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { exists, mkdir, readDir, readFile, remove, writeFile } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
@@ -162,23 +162,37 @@ export async function createProduct(
   specs: ProductSpec[],
   descriptions: ProductDescription[] = [],
 ): Promise<number> {
-  const result = await client.execute({
-    sql: `INSERT INTO products (codigo, nombre, categoria, material, descripcion, imagen, imagen_mime, actualizado_en)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))`,
-    args: [
-      product.codigo,
-      product.nombre,
-      product.categoria,
-      product.material,
-      product.descripcion,
-      product.imagen?.data ?? null,
-      product.imagen?.mime ?? null,
-    ],
-  });
-  const productId = Number(result.lastInsertRowid);
-  await insertSpecs(productId, specs);
-  await insertDescriptions(productId, descriptions);
-  return productId;
+  // Header + specs + descriptions en una sola transacción interactiva: antes
+  // eran client.execute() sueltos, así que una falla a medias (ej. conexión
+  // caída justo después del INSERT del producto) dejaba una ficha sin sus
+  // specs — sobre todo relevante en Captura masiva, donde esto corre fila
+  // tras fila sin supervisión.
+  const tx = await client.transaction("write");
+  try {
+    const result = await tx.execute({
+      sql: `INSERT INTO products (codigo, nombre, categoria, material, descripcion, imagen, imagen_mime, actualizado_en)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))`,
+      args: [
+        product.codigo,
+        product.nombre,
+        product.categoria,
+        product.material,
+        product.descripcion,
+        product.imagen?.data ?? null,
+        product.imagen?.mime ?? null,
+      ],
+    });
+    const productId = Number(result.lastInsertRowid);
+    await insertSpecs(tx, productId, specs);
+    await insertDescriptions(tx, productId, descriptions);
+    await tx.commit();
+    return productId;
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
 }
 
 export async function updateProduct(
@@ -187,35 +201,45 @@ export async function updateProduct(
   specs: ProductSpec[],
   descriptions: ProductDescription[] = [],
 ): Promise<void> {
-  await client.execute({
-    sql: `UPDATE products
-          SET codigo = ?1, nombre = ?2, categoria = ?3, material = ?4, descripcion = ?5, imagen = ?6, imagen_mime = ?7,
-              actualizado_en = datetime('now')
-          WHERE id = ?8`,
-    args: [
-      product.codigo,
-      product.nombre,
-      product.categoria,
-      product.material,
-      product.descripcion,
-      product.imagen?.data ?? null,
-      product.imagen?.mime ?? null,
-      id,
-    ],
-  });
-  await client.execute({
-    sql: "DELETE FROM product_specs WHERE product_id = ?1",
-    args: [id],
-  });
-  await insertSpecs(id, specs);
-  await client.execute({
-    sql: "DELETE FROM product_descriptions WHERE product_id = ?1",
-    args: [id],
-  });
-  await insertDescriptions(id, descriptions);
+  const tx = await client.transaction("write");
+  try {
+    await tx.execute({
+      sql: `UPDATE products
+            SET codigo = ?1, nombre = ?2, categoria = ?3, material = ?4, descripcion = ?5, imagen = ?6, imagen_mime = ?7,
+                actualizado_en = datetime('now')
+            WHERE id = ?8`,
+      args: [
+        product.codigo,
+        product.nombre,
+        product.categoria,
+        product.material,
+        product.descripcion,
+        product.imagen?.data ?? null,
+        product.imagen?.mime ?? null,
+        id,
+      ],
+    });
+    await tx.execute({
+      sql: "DELETE FROM product_specs WHERE product_id = ?1",
+      args: [id],
+    });
+    await insertSpecs(tx, id, specs);
+    await tx.execute({
+      sql: "DELETE FROM product_descriptions WHERE product_id = ?1",
+      args: [id],
+    });
+    await insertDescriptions(tx, id, descriptions);
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
 }
 
 async function insertSpecs(
+  tx: Transaction,
   productId: number,
   specs: ProductSpec[],
 ): Promise<void> {
@@ -224,7 +248,7 @@ async function insertSpecs(
     const etiqueta = spec.etiqueta.trim();
     const valor = spec.valor.trim();
     if (!etiqueta || !valor) continue;
-    await client.execute({
+    await tx.execute({
       sql: `INSERT INTO product_specs (product_id, etiqueta, valor, orden, permite_requisicion) VALUES (?1, ?2, ?3, ?4, ?5)`,
       args: [productId, etiqueta, valor, orden, spec.permite_requisicion ? 1 : 0],
     });
@@ -251,6 +275,7 @@ export async function getProductDescriptions(
 }
 
 async function insertDescriptions(
+  tx: Transaction,
   productId: number,
   descriptions: ProductDescription[],
 ): Promise<void> {
@@ -259,7 +284,7 @@ async function insertDescriptions(
     const etiqueta = description.etiqueta.trim();
     const texto = description.texto.trim();
     if (!etiqueta || !texto) continue;
-    await client.execute({
+    await tx.execute({
       sql: `INSERT INTO product_descriptions (product_id, etiqueta, texto, orden) VALUES (?1, ?2, ?3, ?4)`,
       args: [productId, etiqueta, texto, orden],
     });
@@ -366,6 +391,73 @@ export async function getImageSrc(
   return URL.createObjectURL(new Blob([imagen.data], { type: imagen.mime }));
 }
 
+// --- Validación de archivos importados (no confiar solo en la extensión) ---
+
+export const MAX_IMAGE_FILE_BYTES = 20 * 1024 * 1024;
+export const MAX_EXCEL_IMPORT_FILE_BYTES = 25 * 1024 * 1024;
+
+function formatMB(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Firma real de los bytes (magic numbers), no la extensión del nombre de
+// archivo — un .jpg renombrado desde cualquier otra cosa no debe colarse.
+function detectImageMime(bytes: Uint8Array): string | null {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
+    bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    bytes.length >= 6 &&
+    bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38 &&
+    (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61
+  ) {
+    return "image/gif";
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  return null;
+}
+
+function validateImageBlob(data: Uint8Array): ImageBlob {
+  if (data.length === 0) throw new Error("El archivo de imagen está vacío.");
+  if (data.length > MAX_IMAGE_FILE_BYTES) {
+    throw new Error(
+      `La imagen pesa ${formatMB(data.length)}, mayor al límite permitido (${formatMB(MAX_IMAGE_FILE_BYTES)}).`,
+    );
+  }
+  const mime = detectImageMime(data);
+  if (!mime) {
+    throw new Error(
+      "El archivo no es una imagen válida (png/jpg/webp/gif) — el contenido no coincide con ningún formato soportado.",
+    );
+  }
+  return { data, mime };
+}
+
+// xlsx es un contenedor ZIP — firma "PK" con cualquiera de los subtipos
+// válidos de cabecera local ZIP (03 04 normal, 05 06 archivo vacío, 07 08
+// spanned). Un .csv/.xls/etc. renombrado a .xlsx no pasa esta firma.
+function looksLikeXlsx(bytes: Uint8Array): boolean {
+  if (bytes.length < 4) return false;
+  return (
+    bytes[0] === 0x50 && bytes[1] === 0x4b &&
+    (bytes[2] === 0x03 || bytes[2] === 0x05 || bytes[2] === 0x07) &&
+    (bytes[3] === 0x04 || bytes[3] === 0x06 || bytes[3] === 0x08)
+  );
+}
+
 export async function pickImage(): Promise<ImageBlob | null> {
   const selected = await open({
     multiple: false,
@@ -374,10 +466,12 @@ export async function pickImage(): Promise<ImageBlob | null> {
     ],
   });
   if (!selected || Array.isArray(selected)) return null;
-  const data = await readFile(selected);
   const ext = selected.split(".").pop()?.toLowerCase() ?? "";
-  const mime = MIME_BY_EXT[ext] ?? "application/octet-stream";
-  return { data, mime };
+  if (!Object.prototype.hasOwnProperty.call(MIME_BY_EXT, ext)) {
+    throw new Error(`Extensión de archivo no soportada (.${ext || "?"}).`);
+  }
+  const data = await readFile(selected);
+  return validateImageBlob(data);
 }
 
 export async function pickExcelFile(): Promise<Uint8Array | null> {
@@ -386,7 +480,24 @@ export async function pickExcelFile(): Promise<Uint8Array | null> {
     filters: [{ name: "Excel", extensions: ["xlsx"] }],
   });
   if (!selected || Array.isArray(selected)) return null;
-  return readFile(selected);
+  if (!selected.toLowerCase().endsWith(".xlsx")) {
+    throw new Error("El archivo debe tener extensión .xlsx.");
+  }
+  const data = await readFile(selected);
+  if (data.length === 0) {
+    throw new Error("El archivo está vacío.");
+  }
+  if (data.length > MAX_EXCEL_IMPORT_FILE_BYTES) {
+    throw new Error(
+      `El archivo pesa ${formatMB(data.length)}, mayor al límite permitido (${formatMB(MAX_EXCEL_IMPORT_FILE_BYTES)}).`,
+    );
+  }
+  if (!looksLikeXlsx(data)) {
+    throw new Error(
+      "El archivo no es un Excel (.xlsx) válido — el contenido no coincide con el formato esperado.",
+    );
+  }
+  return data;
 }
 
 export interface ImageFolderEntry {
@@ -413,10 +524,12 @@ export async function listImageFolderFiles(
 }
 
 export async function readImageFileBlob(path: string): Promise<ImageBlob> {
-  const data = await readFile(path);
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  const mime = MIME_BY_EXT[ext] ?? "application/octet-stream";
-  return { data, mime };
+  if (!Object.prototype.hasOwnProperty.call(MIME_BY_EXT, ext)) {
+    throw new Error(`Extensión de archivo no soportada (.${ext || "?"}).`);
+  }
+  const data = await readFile(path);
+  return validateImageBlob(data);
 }
 
 export async function updateProductImage(
@@ -460,6 +573,13 @@ async function rowToUser(row: UserRow): Promise<User> {
 
 const MAX_FAILED_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCKOUT_MINUTES = 15;
+// Sesión deslizante: cada login o validateSession() exitoso extiende el
+// vencimiento este tanto hacia adelante — una sesión en uso activo (la app
+// revalida periódicamente, ver auth.tsx) nunca expira a medias, pero un
+// token abandonado (localStorage de una máquina apagada, o robado sin más
+// actividad) deja de servir pasadas estas horas sin necesitar cambio de
+// contraseña ni logout explícito.
+const SESSION_TTL_HOURS = 12;
 
 interface LoginRow extends UserRow {
   failed_attempts: number;
@@ -513,20 +633,71 @@ export async function verifyLogin(
 
   const token = generateSessionToken();
   await client.execute({
-    sql: "UPDATE users SET failed_attempts = 0, locked_until = NULL, session_token = ?1 WHERE id = ?2",
-    args: [token, row.id],
+    sql: `UPDATE users
+          SET failed_attempts = 0, locked_until = NULL, session_token = ?1,
+              session_expires_at = datetime('now', ?2)
+          WHERE id = ?3`,
+    args: [token, `+${SESSION_TTL_HOURS} hours`, row.id],
   });
   return { status: "ok", user: await rowToUser(row), token };
 }
 
 export async function validateSession(id: number, token: string): Promise<User | null> {
   const result = await client.execute({
-    sql: "SELECT * FROM users WHERE id = ?1 AND session_token = ?2",
+    sql: `SELECT * FROM users
+          WHERE id = ?1 AND session_token = ?2
+            AND session_expires_at IS NOT NULL AND session_expires_at > datetime('now')`,
     args: [id, token],
   });
   const row = result.rows[0] as unknown as UserRow | undefined;
   if (!row || !row.activo) return null;
+  await client.execute({
+    sql: "UPDATE users SET session_expires_at = datetime('now', ?1) WHERE id = ?2",
+    args: [`+${SESSION_TTL_HOURS} hours`, id],
+  });
   return rowToUser(row);
+}
+
+export interface Actor {
+  id: number;
+  token: string;
+}
+
+// Defensa en profundidad para operaciones sensibles (restaurar/eliminar
+// backups, cambiar su programación, administrar usuarios y permisos): la app
+// no tiene backend propio (ver docs/ARCHITECTURE.md — el token de Turso vive
+// en el bundle por diseño, es un constraint aceptado, no un descuido), así
+// que esto NO es una barrera real contra alguien con ese token embebido y
+// acceso a devtools/consola. Lo que sí evita es que un botón mal gateado, un
+// bug de UI, o un uso "creativo" de las funciones exportadas de este archivo
+// ejecute la operación sin pasar por una sesión real, vigente y con el rol o
+// permiso correcto verificados contra la BD — no solo un booleano que el
+// propio llamador podría fabricar.
+async function assertActorAuthorized(
+  actor: Actor,
+  requiredPermiso?: Permiso,
+): Promise<void> {
+  const result = await client.execute({
+    sql: `SELECT rol, activo FROM users
+          WHERE id = ?1 AND session_token = ?2
+            AND session_expires_at IS NOT NULL AND session_expires_at > datetime('now')`,
+    args: [actor.id, actor.token],
+  });
+  const row = result.rows[0] as unknown as { rol: string; activo: number } | undefined;
+  if (!row || !row.activo) {
+    throw new Error("No autorizado: la sesión no es válida o venció.");
+  }
+  if (row.rol === "admin") return;
+  if (!requiredPermiso) {
+    throw new Error("No autorizado: esta acción requiere una cuenta administradora.");
+  }
+  const permResult = await client.execute({
+    sql: "SELECT 1 FROM user_permissions WHERE user_id = ?1 AND permiso = ?2",
+    args: [actor.id, requiredPermiso],
+  });
+  if (permResult.rows.length === 0) {
+    throw new Error("No autorizado: falta el permiso requerido para esta acción.");
+  }
 }
 
 export async function listUsers(): Promise<User[]> {
@@ -547,7 +718,8 @@ export async function usernameEnUso(
   );
 }
 
-export async function createUser(input: UserInput): Promise<number> {
+export async function createUser(actor: Actor, input: UserInput): Promise<number> {
+  await assertActorAuthorized(actor);
   if (!input.password) throw new Error("La contraseña es obligatoria.");
   const hash = await invoke<string>("hash_password", { password: input.password });
   const result = await client.execute({
@@ -559,11 +731,12 @@ export async function createUser(input: UserInput): Promise<number> {
   return userId;
 }
 
-export async function updateUser(id: number, input: UserInput): Promise<void> {
+export async function updateUser(actor: Actor, id: number, input: UserInput): Promise<void> {
+  await assertActorAuthorized(actor);
   if (input.password) {
     const hash = await invoke<string>("hash_password", { password: input.password });
     await client.execute({
-      sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, password_hash = ?4, session_token = NULL WHERE id = ?5`,
+      sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, password_hash = ?4, session_token = NULL, session_expires_at = NULL WHERE id = ?5`,
       args: [input.username.trim(), input.activo ? 1 : 0, input.rol, hash, id],
     });
   } else {
@@ -610,7 +783,7 @@ export async function clearSession(userId: number): Promise<void> {
     args: [userId],
   });
   await client.execute({
-    sql: "UPDATE users SET session_token = NULL WHERE id = ?1",
+    sql: "UPDATE users SET session_token = NULL, session_expires_at = NULL WHERE id = ?1",
     args: [userId],
   });
 }
@@ -1296,12 +1469,22 @@ interface FolioRow {
   creado_en: string;
 }
 
-export async function createFolio(tipo: TipoFolio, sku: string): Promise<Folio> {
+// Compartida por createFolio() (fuera de transacción, usada por los flujos
+// Compra/Producción/Requisición que necesitan el folio ya "quemado" antes de
+// un diálogo de guardado de PDF que puede tardar o cancelarse) y por las
+// variantes *ConFolio de abajo, que la corren dentro de un client.transaction
+// junto con el INSERT del documento — así folio y documento se confirman o
+// se revierten juntos, sin dejar un folio huérfano si el segundo INSERT falla.
+async function insertFolioRow(
+  execer: Client | Transaction,
+  tipo: TipoFolio,
+  sku: string,
+): Promise<Folio> {
   // consecutivo se calcula dentro del mismo INSERT (subconsulta), no en un
   // SELECT previo por separado — mismo patrón que requisiciones.numero_dia,
   // mismo motivo (SQLite/libSQL serializa las escrituras). Acá el scope es
   // `seccion`, no `fecha`: el consecutivo de folios nunca se reinicia.
-  const insertResult = await client.execute({
+  const insertResult = await execer.execute({
     sql: `INSERT INTO folios (seccion, consecutivo, sku)
           VALUES (?1, (SELECT COALESCE(MAX(consecutivo), 0) + 1 FROM folios WHERE seccion = ?1), ?2)
           RETURNING *`,
@@ -1312,11 +1495,15 @@ export async function createFolio(tipo: TipoFolio, sku: string): Promise<Folio> 
   // código del producto cambia después, el folio histórico no se actualiza;
   // es intencional, es un documento inmutable.
   const folio = buildFolioString(FOLIO_PREFIJOS[tipo], sku, formatFechaFolioLocal(), row.consecutivo);
-  await client.execute({
+  await execer.execute({
     sql: "UPDATE folios SET folio = ?1 WHERE id = ?2",
     args: [folio, row.id],
   });
   return { id: row.id, seccion: tipo, consecutivo: row.consecutivo, folio, sku, creado_en: row.creado_en };
+}
+
+export async function createFolio(tipo: TipoFolio, sku: string): Promise<Folio> {
+  return insertFolioRow(client, tipo, sku);
 }
 
 // --- Requisiciones de bodega ---
@@ -1395,6 +1582,59 @@ export async function createRequisicion(
   return rowToRequisicion({ ...row, mensaje });
 }
 
+// Igual que createRequisicion(), pero genera el folio dentro de la misma
+// transacción en vez de recibirlo ya creado — usar esta variante quita la
+// ventana entre "folio consumido" y "requisición guardada" para los llamadores
+// que no necesitan el folio antes (no arman un PDF con él antes del insert).
+export async function createRequisicionConFolio(
+  sku: string,
+  input: Omit<RequisicionInput, "folio">,
+): Promise<Requisicion> {
+  const fecha = fechaLocalDeHoy();
+  const tx = await client.transaction("write");
+  try {
+    const folio = await insertFolioRow(tx, "requisicion", sku);
+    const insertResult = await tx.execute({
+      sql: `INSERT INTO requisiciones
+              (product_id, fecha, numero_dia, usuario, etiqueta, descripcion, cantidad, estado, mensaje, folio)
+            VALUES (
+              ?1, ?2,
+              (SELECT COALESCE(MAX(numero_dia), 0) + 1 FROM requisiciones WHERE fecha = ?2),
+              ?3, ?4, ?5, ?6, 'pendiente', '', ?7
+            )
+            RETURNING *`,
+      args: [
+        input.productId,
+        fecha,
+        input.usuario,
+        input.etiqueta,
+        input.descripcion,
+        input.cantidad,
+        folio.folio,
+      ],
+    });
+    const row = insertResult.rows[0] as unknown as RequisicionRow;
+    const mensaje = buildRequisicionMessage(
+      row.numero_dia,
+      row.cantidad,
+      row.etiqueta,
+      input.productNombre,
+      input.productCodigo,
+    );
+    await tx.execute({
+      sql: "UPDATE requisiciones SET mensaje = ?1 WHERE id = ?2",
+      args: [mensaje, row.id],
+    });
+    await tx.commit();
+    return rowToRequisicion({ ...row, mensaje });
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
+}
+
 // --- Backups ---
 
 /**
@@ -1432,7 +1672,8 @@ export async function createBackupSql(): Promise<{ sql: string; manifest: import
  * implícito del driver y no tenía efecto, rompiendo la restauración en
  * cualquier tabla cuyo orden alfabético no respetara sus foreign keys.
  */
-export async function executeRestoreSql(sql: string): Promise<void> {
+export async function executeRestoreSql(actor: Actor, sql: string): Promise<void> {
+  await assertActorAuthorized(actor, "backups_restaurar");
   const statements = extractRestoreStatements(sql);
   await client.migrate(statements);
 }
@@ -1603,7 +1844,8 @@ export async function listBackupHistory(limit = 100): Promise<BackupRecord[]> {
   return (result.rows as unknown as BackupRecordRow[]).map(rowToBackupRecord);
 }
 
-export async function deleteBackupRecord(id: number): Promise<void> {
+export async function deleteBackupRecord(actor: Actor, id: number): Promise<void> {
+  await assertActorAuthorized(actor, "backups_eliminar");
   const result = await client.execute({
     sql: "SELECT * FROM backup_history WHERE id = ?1",
     args: [id],
@@ -1708,6 +1950,7 @@ export async function saveBackupFileAs(defaultFileName: string, bytes: Uint8Arra
 }
 
 export async function updateBackupSettings(
+  actor: Actor,
   settings: Pick<
     BackupSettings,
     | "automatico_activado"
@@ -1721,6 +1964,7 @@ export async function updateBackupSettings(
   >,
   usuario: string | null,
 ): Promise<void> {
+  await assertActorAuthorized(actor, "backups_configurar");
   await client.execute({
     sql: `UPDATE backup_settings
           SET automatico_activado = ?1, frecuencia = ?2, hora_ejecucion = ?3, intervalo_horas = ?4,
@@ -1875,28 +2119,30 @@ function rowToRemision(row: RemisionRow): Remision {
   };
 }
 
-export async function createRemision(
-  input: RemisionInput,
+// Folio + header + renglones en una sola transacción interactiva. Antes,
+// RemisionForm llamaba a createFolio() por separado (confirmaba el folio de
+// inmediato) y luego a createRemision(), que sí escribía header+renglones
+// atómicamente vía client.batch() — pero si ese batch fallaba (ej. la
+// conexión cae justo después), el folio ya consumido quedaba huérfano: un
+// "documento fantasma" con folio quemado y ninguna remisión real. Ahora todo
+// se confirma o se revierte junto, así que un fallo nunca deja un folio sin
+// su remisión ni una remisión sin (todos) sus renglones.
+export async function createRemisionConFolio(
+  sku: string,
+  input: Omit<RemisionInput, "folio">,
   renglones: RemisionRenglonInput[],
 ): Promise<RemisionConRenglones> {
-  // Header + renglones se escriben en un solo client.batch() (transacción
-  // atómica de libSQL) en vez de INSERTs secuenciales sueltos: si el folio ya
-  // fue consumido por createFolio() pero la escritura fallara a medias, se
-  // habría quedado un documento fantasma con folio quemado y renglones
-  // incompletos — ver createFolio() más arriba, mismo problema que resuelve
-  // su subconsulta atómica, pero aplicado a un insert de header+líneas.
-  // Cada renglón ubica su remision_id por folio (único por generación) en vez
-  // de depender del id devuelto por el INSERT del header, porque batch() arma
-  // todos los statements de antemano y no puede encadenar el resultado de uno
-  // como argumento del siguiente.
-  const statements = [
-    {
+  const tx = await client.transaction("write");
+  try {
+    const folio = await insertFolioRow(tx, "remision", sku);
+
+    const headerResult = await tx.execute({
       sql: `INSERT INTO remisiones
               (folio, fecha, tipo, pedido_bodegas, subtotal, descuento_pct, descuento, iva, total, precio_texto, usuario)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             RETURNING *`,
       args: [
-        input.folio,
+        folio.folio,
         input.fecha,
         input.tipo,
         input.pedido_bodegas,
@@ -1908,21 +2154,29 @@ export async function createRemision(
         input.precio_texto,
         input.usuario,
       ],
-    },
-    ...renglones.map((r, i) => ({
-      sql: `INSERT INTO remision_renglones
-              (remision_id, numero_renglon, sku, producto_nombre, cantidad, precio_unitario, importe)
-            VALUES ((SELECT id FROM remisiones WHERE folio = ?1), ?2, ?3, ?4, ?5, ?6, ?7)
-            RETURNING *`,
-      args: [input.folio, i + 1, r.sku, r.producto_nombre, r.cantidad, r.precio_unitario, r.importe],
-    })),
-  ];
+    });
+    const headerRow = headerResult.rows[0] as unknown as RemisionRow;
 
-  const results = await client.batch(statements, "write");
-  const headerRow = results[0].rows[0] as unknown as RemisionRow;
-  const savedRenglones = results.slice(1).map((r) => r.rows[0] as unknown as RemisionRenglon);
+    const savedRenglones: RemisionRenglon[] = [];
+    for (const [i, r] of renglones.entries()) {
+      const rowResult = await tx.execute({
+        sql: `INSERT INTO remision_renglones
+                (remision_id, numero_renglon, sku, producto_nombre, cantidad, precio_unitario, importe)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+              RETURNING *`,
+        args: [headerRow.id, i + 1, r.sku, r.producto_nombre, r.cantidad, r.precio_unitario, r.importe],
+      });
+      savedRenglones.push(rowResult.rows[0] as unknown as RemisionRenglon);
+    }
 
-  return { ...rowToRemision(headerRow), renglones: savedRenglones };
+    await tx.commit();
+    return { ...rowToRemision(headerRow), renglones: savedRenglones };
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
 }
 
 export async function listRemisiones(limit = 30): Promise<Remision[]> {
@@ -1931,6 +2185,14 @@ export async function listRemisiones(limit = 30): Promise<Remision[]> {
     args: [limit],
   });
   return (result.rows as unknown as RemisionRow[]).map(rowToRemision);
+}
+
+export async function getRemisionRenglones(remisionId: number): Promise<RemisionRenglon[]> {
+  const result = await client.execute({
+    sql: "SELECT * FROM remision_renglones WHERE remision_id = ?1 ORDER BY numero_renglon",
+    args: [remisionId],
+  });
+  return result.rows as unknown as RemisionRenglon[];
 }
 
 export async function cancelRemision(id: number, usuario: string | null): Promise<void> {

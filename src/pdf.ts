@@ -1,6 +1,6 @@
 import { jsPDF } from "jspdf";
 import type { PrintItem, PrintItemOrder, Product, Remision, RemisionRenglon } from "./types";
-import clioLogoUrl from "../Assets/clio.png";
+import corporateLogoUrl from "../Assets/perspectiva.jpeg";
 import remisionTemplateUrl from "../Assets/remision-template.png";
 import { formatMoney } from "./excelExport";
 
@@ -17,7 +17,7 @@ function getLogo(): Promise<Logo | null> {
     logoPromise = (async () => {
       try {
         const img = new Image();
-        img.src = clioLogoUrl;
+        img.src = corporateLogoUrl;
         await img.decode();
         return { img, w: img.naturalWidth, h: img.naturalHeight };
       } catch (err) {
@@ -38,7 +38,7 @@ async function drawLogo(doc: jsPDF, marginX: number, pageWidth: number): Promise
   const scale = Math.min(LOGO_MAX_WIDTH / logo.w, LOGO_MAX_HEIGHT / logo.h, 1);
   const drawW = logo.w * scale;
   const drawH = logo.h * scale;
-  doc.addImage(logo.img, "PNG", pageWidth - marginX - drawW, 28, drawW, drawH);
+  doc.addImage(logo.img, "JPEG", pageWidth - marginX - drawW, 28, drawW, drawH);
 }
 
 export interface OrderEntry {

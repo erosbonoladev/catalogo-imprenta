@@ -12,6 +12,11 @@ import type { Permiso, User } from "./types";
 
 const STORAGE_KEY = "catalogo-imprenta:session";
 const HEARTBEAT_INTERVAL_MS = 20_000;
+// Revalida la sesión contra la BD (no solo el heartbeat de presencia) cada
+// pocos minutos mientras la app sigue abierta — así una cuenta desactivada,
+// una sesión invalidada por un admin, o un vencimiento por inactividad se
+// reflejan sin esperar a que el usuario cierre y vuelva a abrir la app.
+const SESSION_REVALIDATE_INTERVAL_MS = 5 * 60_000;
 
 export type CurrentUser = User;
 
@@ -27,6 +32,7 @@ export function isAdmin(user: CurrentUser | null): boolean {
 
 interface AuthContextValue {
   user: CurrentUser | null;
+  token: string | null;
   loading: boolean;
   login: (username: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
@@ -36,6 +42,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -48,8 +55,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const stored = JSON.parse(raw) as { id: number; token?: string };
         const fresh = stored.token ? await validateSession(stored.id, stored.token) : null;
-        if (fresh) {
+        if (fresh && stored.token) {
           setUser(fresh);
+          setToken(stored.token);
         } else {
           localStorage.removeItem(STORAGE_KEY);
         }
@@ -68,6 +76,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const interval = setInterval(() => heartbeat(user.id).catch(() => {}), HEARTBEAT_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!user || !token) return;
+    const interval = setInterval(async () => {
+      const fresh = await validateSession(user.id, token).catch(() => undefined);
+      // undefined = fallo de red al revalidar, no cerrar sesión por eso; null
+      // = la BD dice explícitamente que ya no es válida (vencida, invalidada
+      // por un admin, o la cuenta se desactivó) — ahí sí forzar logout.
+      if (fresh === null) {
+        localStorage.removeItem(STORAGE_KEY);
+        setUser(null);
+        setToken(null);
+      }
+    }, SESSION_REVALIDATE_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [user, token]);
 
   const login = useCallback(async (username: string, password: string) => {
     const trimmed = username.trim();
@@ -93,6 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         JSON.stringify({ id: result.user.id, token: result.token }),
       );
       setUser(result.user);
+      setToken(result.token);
       await logEvent("INFO", `Inicio de sesión: ${result.user.username}`, result.user.username);
       return { ok: true };
     } catch (err) {
@@ -107,6 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     localStorage.removeItem(STORAGE_KEY);
     setUser(null);
+    setToken(null);
   }, [user]);
 
   useEffect(() => {
@@ -132,7 +158,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user, logout]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, token, loading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
