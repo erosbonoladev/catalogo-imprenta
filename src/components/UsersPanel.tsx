@@ -16,6 +16,7 @@ interface FormState {
   activo: boolean;
   rol: Rol;
   permisos: Permiso[];
+  backup_local_diario: boolean;
 }
 
 const emptyForm: FormState = {
@@ -25,6 +26,7 @@ const emptyForm: FormState = {
   activo: true,
   rol: "usuario",
   permisos: [],
+  backup_local_diario: false,
 };
 
 export default function UsersPanel() {
@@ -81,6 +83,7 @@ export default function UsersPanel() {
       activo: u.activo,
       rol: u.rol,
       permisos: u.permisos,
+      backup_local_diario: u.backup_local_diario,
     });
     setError(null);
   }
@@ -151,9 +154,18 @@ export default function UsersPanel() {
           activo: form.activo,
           rol: form.rol,
           permisos: form.permisos,
+          backup_local_diario: form.backup_local_diario,
         });
         await refresh();
-        selectUser({ id, username, activo: form.activo, rol: form.rol, permisos: form.permisos, creado_en: "" });
+        selectUser({
+          id,
+          username,
+          activo: form.activo,
+          rol: form.rol,
+          permisos: form.permisos,
+          backup_local_diario: form.backup_local_diario,
+          creado_en: "",
+        });
       } else {
         await updateUser(actor, selectedId, {
           username,
@@ -161,6 +173,7 @@ export default function UsersPanel() {
           activo: form.activo,
           rol: form.rol,
           permisos: form.permisos,
+          backup_local_diario: form.backup_local_diario,
         });
         await refresh();
       }
@@ -247,6 +260,19 @@ export default function UsersPanel() {
           />
           Usuario activo
         </label>
+
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={form.backup_local_diario}
+            onChange={(e) => setForm((p) => ({ ...p, backup_local_diario: e.target.checked }))}
+          />
+          Backup local diario al entrar a la app
+        </label>
+        <p className="hint" style={{ marginTop: 0 }}>
+          Al entrar a Clio, se genera como máximo un backup por día en la computadora donde esta persona use la app —
+          se le pedirá elegir dónde guardarlo (carpeta, USB, etc.).
+        </p>
 
         <div>
           <span className="hint" style={{ margin: 0 }}>Permisos</span>

@@ -4,6 +4,8 @@ import SearchScreen from "./components/SearchScreen";
 import ProductDetail from "./components/ProductDetail";
 import ProductForm from "./components/ProductForm";
 import PlasticosSection from "./components/PlasticosSection";
+import PiezasGeneralSection from "./components/PiezasGeneralSection";
+import PiezaDetalleScreen from "./components/PiezaDetalleScreen";
 import ImprentaSection from "./components/ImprentaSection";
 import Configuraciones from "./components/Configuraciones";
 import LoginScreen from "./components/LoginScreen";
@@ -16,6 +18,8 @@ type View =
   | { name: "detail"; productId: number }
   | { name: "form"; productId?: number }
   | { name: "plasticos"; productId: number }
+  | { name: "piezasGeneral" }
+  | { name: "piezaDetalle"; plasticProductId: number }
   | { name: "imprenta"; productId: number }
   | { name: "configuraciones" }
   | { name: "remisiones" };
@@ -52,6 +56,7 @@ function App() {
         onToggle={() => setSidebarOpen((o) => !o)}
         onConfiguraciones={() => setView({ name: "configuraciones" })}
         onRemisiones={() => setView({ name: "remisiones" })}
+        onPiezasGeneral={() => setView({ name: "piezasGeneral" })}
       />
 
       <main className="app app-content">
@@ -91,6 +96,21 @@ function App() {
           <PlasticosSection
             productId={view.productId}
             onBack={() => setView({ name: "detail", productId: view.productId })}
+          />
+        )}
+
+        {view.name === "piezasGeneral" && (
+          <PiezasGeneralSection
+            onBack={() => setView({ name: "search" })}
+            onVerPieza={(id) => setView({ name: "piezaDetalle", plasticProductId: id })}
+          />
+        )}
+
+        {view.name === "piezaDetalle" && (
+          <PiezaDetalleScreen
+            plasticProductId={view.plasticProductId}
+            onBack={() => setView({ name: "piezasGeneral" })}
+            onOpenProduct={(productId) => setView({ name: "detail", productId })}
           />
         )}
 

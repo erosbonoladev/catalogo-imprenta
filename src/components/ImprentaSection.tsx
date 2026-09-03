@@ -849,8 +849,15 @@ export default function ImprentaSection({ productId, onBack }: Props) {
           <button className="btn btn-primary" onClick={handleSave} disabled={saving || !dirty}>
             {saving ? "Guardando…" : "Guardar"}
           </button>
-          <button className="btn btn-secondary" onClick={handleCancel} disabled={saving}>
-            Cancelar
+          <button
+            type="button"
+            className="icon-btn icon-btn-remove"
+            onClick={handleCancel}
+            disabled={saving}
+            title="Cancelar"
+            aria-label="Cancelar"
+          >
+            <img src={basuraIcon} alt="" aria-hidden="true" />
           </button>
         </div>
       )}

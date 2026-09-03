@@ -7,10 +7,20 @@ import {
   type ReactNode,
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { clearSession, heartbeat, logEvent, validateSession, verifyLogin } from "./db";
+import {
+  clearSession,
+  heartbeat,
+  logEvent,
+  readLocalBackupFile,
+  runBackupNow,
+  saveBackupFileAs,
+  validateSession,
+  verifyLogin,
+} from "./db";
 import type { Permiso, User } from "./types";
 
 const STORAGE_KEY = "catalogo-imprenta:session";
+const LAST_LOCAL_BACKUP_KEY_PREFIX = "catalogo-imprenta:last-local-backup:";
 const HEARTBEAT_INTERVAL_MS = 20_000;
 // Revalida la sesión contra la BD (no solo el heartbeat de presencia) cada
 // pocos minutos mientras la app sigue abierta — así una cuenta desactivada,
@@ -75,6 +85,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     heartbeat(user.id).catch(() => {});
     const interval = setInterval(() => heartbeat(user.id).catch(() => {}), HEARTBEAT_INTERVAL_MS);
     return () => clearInterval(interval);
+  }, [user?.id]);
+
+  // Backup local diario opcional (activado por un admin en UsersPanel): al
+  // entrar a la app (login o sesión restaurada), como máximo uno por día en
+  // esta máquina — la fecha se guarda en localStorage, no en backup_history
+  // (que es compartida en Turso), porque el mismo usuario puede entrar desde
+  // más de una computadora el mismo día y cada una necesita su propia copia.
+  // El backup ya queda guardado y registrado internamente vía runBackupNow;
+  // el diálogo "Guardar como" que sigue es para que la persona elija además
+  // dónde quiere su copia en esta máquina (USB, carpeta compartida, etc.) —
+  // mismo patrón que "Crear backup ahora" + permiso backups_descargar en
+  // BackupsPanel. Cancelar ese diálogo no afecta al backup ya creado.
+  useEffect(() => {
+    if (!user || !user.backup_local_diario) return;
+    const storageKey = `${LAST_LOCAL_BACKUP_KEY_PREFIX}${user.id}`;
+    const today = new Date().toISOString().slice(0, 10);
+    if (localStorage.getItem(storageKey) === today) return;
+    runBackupNow("BACKUP_LOCAL_DIARIO", "Entrada a la app", user.username)
+      .then(async (result) => {
+        if (!result.ok) return;
+        localStorage.setItem(storageKey, today);
+        try {
+          const bytes = await readLocalBackupFile(result.record.ubicacion);
+          await saveBackupFileAs(result.record.archivo, bytes);
+        } catch {
+          // La copia elegida por el usuario es best-effort; el backup interno
+          // ya quedó guardado y registrado en backup_history de todas formas.
+        }
+      })
+      .catch(() => {});
   }, [user?.id]);
 
   useEffect(() => {

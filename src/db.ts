@@ -550,6 +550,7 @@ interface UserRow {
   password_hash: string;
   activo: number;
   rol: string;
+  backup_local_diario: number;
   creado_en: string;
 }
 
@@ -567,6 +568,7 @@ async function rowToUser(row: UserRow): Promise<User> {
     activo: Boolean(row.activo),
     rol: row.rol as Rol,
     permisos,
+    backup_local_diario: Boolean(row.backup_local_diario),
     creado_en: row.creado_en,
   };
 }
@@ -723,8 +725,8 @@ export async function createUser(actor: Actor, input: UserInput): Promise<number
   if (!input.password) throw new Error("La contraseña es obligatoria.");
   const hash = await invoke<string>("hash_password", { password: input.password });
   const result = await client.execute({
-    sql: `INSERT INTO users (username, password_hash, activo, rol) VALUES (?1, ?2, ?3, ?4)`,
-    args: [input.username.trim(), hash, input.activo ? 1 : 0, input.rol],
+    sql: `INSERT INTO users (username, password_hash, activo, rol, backup_local_diario) VALUES (?1, ?2, ?3, ?4, ?5)`,
+    args: [input.username.trim(), hash, input.activo ? 1 : 0, input.rol, input.backup_local_diario ? 1 : 0],
   });
   const userId = Number(result.lastInsertRowid);
   await savePermissions(userId, input.permisos);
@@ -736,13 +738,13 @@ export async function updateUser(actor: Actor, id: number, input: UserInput): Pr
   if (input.password) {
     const hash = await invoke<string>("hash_password", { password: input.password });
     await client.execute({
-      sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, password_hash = ?4, session_token = NULL, session_expires_at = NULL WHERE id = ?5`,
-      args: [input.username.trim(), input.activo ? 1 : 0, input.rol, hash, id],
+      sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, backup_local_diario = ?4, password_hash = ?5, session_token = NULL, session_expires_at = NULL WHERE id = ?6`,
+      args: [input.username.trim(), input.activo ? 1 : 0, input.rol, input.backup_local_diario ? 1 : 0, hash, id],
     });
   } else {
     await client.execute({
-      sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3 WHERE id = ?4`,
-      args: [input.username.trim(), input.activo ? 1 : 0, input.rol, id],
+      sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, backup_local_diario = ?4 WHERE id = ?5`,
+      args: [input.username.trim(), input.activo ? 1 : 0, input.rol, input.backup_local_diario ? 1 : 0, id],
     });
   }
   await savePermissions(id, input.permisos);
@@ -913,7 +915,7 @@ function rowToPlasticProduct(row: PlasticProductRow): PlasticProduct {
     color: row.color,
     origen: row.origen,
     descripcion: row.descripcion,
-    armado: row.armado,
+    material: row.armado,
     dimension: row.dimension,
     peso: row.peso,
     tipo_empaque: row.tipo_empaque,
@@ -930,7 +932,7 @@ function plasticProductToData(product: PlasticProduct): PlasticProductInput {
     color: product.color,
     origen: product.origen,
     descripcion: product.descripcion,
-    armado: product.armado,
+    material: product.material,
     dimension: product.dimension,
     peso: product.peso,
     tipo_empaque: product.tipo_empaque,
@@ -954,6 +956,52 @@ export async function searchPlasticProducts(
   return (result.rows as unknown as PlasticProductRow[]).map(rowToPlasticProduct);
 }
 
+export async function getPlasticProduct(id: number): Promise<PlasticProduct | null> {
+  const result = await client.execute({
+    sql: "SELECT * FROM plastic_products WHERE id = ?1",
+    args: [id],
+  });
+  const row = result.rows[0] as unknown as PlasticProductRow | undefined;
+  return row ? rowToPlasticProduct(row) : null;
+}
+
+// Fichas técnicas que tienen esta pieza vinculada (join inverso de
+// product_plastic_items) — usado en la pantalla de detalle de Piezas General
+// para mostrar dónde se usa antes de editarla/borrarla.
+export interface ProductUsingPlasticRow {
+  id: number;
+  codigo: string;
+  nombre: string;
+}
+
+export async function getProductsUsingPlasticProduct(
+  plasticProductId: number,
+): Promise<ProductUsingPlasticRow[]> {
+  const result = await client.execute({
+    sql: `SELECT p.id AS id, p.codigo AS codigo, p.nombre AS nombre
+          FROM product_plastic_items ppi
+          JOIN products p ON p.id = ppi.product_id
+          WHERE ppi.plastic_product_id = ?1
+          ORDER BY p.nombre`,
+    args: [plasticProductId],
+  });
+  return result.rows as unknown as ProductUsingPlasticRow[];
+}
+
+// Borra la pieza del catálogo maestro y la desvincula de cualquier ficha que
+// la tuviera (mismo criterio que deleteProduct: borrado real, sin flag, sin
+// transacción explícita — precedente ya establecido para esta cascada).
+export async function deletePlasticProduct(id: number): Promise<void> {
+  await client.execute({
+    sql: "DELETE FROM product_plastic_items WHERE plastic_product_id = ?1",
+    args: [id],
+  });
+  await client.execute({
+    sql: "DELETE FROM plastic_products WHERE id = ?1",
+    args: [id],
+  });
+}
+
 export async function createPlasticProduct(
   input: PlasticProductInput,
 ): Promise<number> {
@@ -967,7 +1015,7 @@ export async function createPlasticProduct(
       input.color.trim(),
       input.origen.trim(),
       input.descripcion.trim(),
-      input.armado.trim(),
+      input.material.trim(),
       input.dimension.trim(),
       input.peso.trim(),
       input.tipo_empaque.trim(),
@@ -996,7 +1044,7 @@ export async function updatePlasticProduct(
       input.color.trim(),
       input.origen.trim(),
       input.descripcion.trim(),
-      input.armado.trim(),
+      input.material.trim(),
       input.dimension.trim(),
       input.peso.trim(),
       input.tipo_empaque.trim(),
@@ -2046,6 +2094,49 @@ export async function upsertPrecio(
       input.usuario,
       input.tipo ?? null,
     ],
+  });
+  const row = result.rows[0] as unknown as PrecioRow;
+
+  await client.execute({
+    sql: "INSERT INTO precios_historial (sku, precio_anterior, precio_nuevo, usuario) VALUES (?1, ?2, ?3, ?4)",
+    args: [input.sku, precioAnterior, input.precio, input.usuario],
+  });
+
+  return rowToPrecio(row);
+}
+
+// Edita un precio existente permitiendo cambiar el SKU (identidad natural de
+// la fila) — a diferencia de upsertPrecio, que solo puede crear/actualizar
+// por SKU exacto y no puede "renombrarlo". Se identifica la fila por `id`
+// (estable) en vez de por el SKU viejo, que es justo lo que está cambiando.
+export async function updatePrecio(
+  id: number,
+  input: PrecioInput,
+): Promise<Precio> {
+  const skuPrincipal = computeSkuPrincipal(input.sku);
+
+  const conflict = await client.execute({
+    sql: "SELECT sku FROM precios WHERE sku = ?1 AND id != ?2",
+    args: [input.sku, id],
+  });
+  if (conflict.rows.length > 0) {
+    throw new Error(`El SKU ${input.sku} ya está en uso por otro producto.`);
+  }
+
+  const existing = await client.execute({
+    sql: "SELECT precio FROM precios WHERE id = ?1",
+    args: [id],
+  });
+  const precioAnterior =
+    (existing.rows[0] as unknown as { precio: number } | undefined)?.precio ?? null;
+
+  const result = await client.execute({
+    sql: `UPDATE precios
+          SET sku = ?1, sku_principal = ?2, nombre = ?3, precio = ?4,
+              actualizado_en = datetime('now'), actualizado_por = ?5
+          WHERE id = ?6
+          RETURNING *`,
+    args: [input.sku, skuPrincipal, input.nombre, input.precio, input.usuario, id],
   });
   const row = result.rows[0] as unknown as PrecioRow;
 

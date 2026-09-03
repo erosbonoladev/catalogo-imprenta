@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { getPrecio, getPreciosBySkuPrincipal, upsertPrecio } from "../db";
+import { getPrecio, getPreciosBySkuPrincipal, updatePrecio, upsertPrecio } from "../db";
 import { computeSkuPrincipal } from "../precios";
 import { formatMoney } from "../excelExport";
 import type { Precio, Product } from "../types";
 import { hasPermission, useAuth } from "../auth";
 import Toast from "./Toast";
+import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   product: Product;
@@ -24,7 +25,7 @@ export default function PreciosModal({ product, onClose }: Props) {
   const canModificar = hasPermission(user, "precios_modificar");
 
   const [precios, setPrecios] = useState<Precio[] | null>(null);
-  const [editValues, setEditValues] = useState<Map<string, string>>(new Map());
+  const [drafts, setDrafts] = useState<Map<number, { sku?: string; precio?: string }>>(new Map());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -72,62 +73,73 @@ export default function PreciosModal({ product, onClose }: Props) {
     );
   }
 
-  function setDraft(sku: string, value: string) {
-    setEditValues((prev) => {
+  function setDraftField(id: number, field: "sku" | "precio", value: string) {
+    setDrafts((prev) => {
       const next = new Map(prev);
-      next.set(sku, value);
+      next.set(id, { ...next.get(id), [field]: value });
       return next;
     });
   }
 
-  const dirtySkus = [...editValues.keys()].filter((sku) => {
-    const precio = precios?.find((p) => p.sku === sku);
-    if (!precio) return false;
+  const dirtyIds = [...drafts.keys()].filter((id) => {
+    const precio = precios?.find((p) => p.id === id);
+    const draft = drafts.get(id);
+    if (!precio || !draft) return false;
+    const skuChanged = draft.sku !== undefined && draft.sku.trim() !== precio.sku;
+    if (skuChanged) return true;
+    if (draft.precio === undefined) return false;
     // Comparar como número, no como texto: retipear "10.50" sobre un precio
     // guardado como 10.5 no debe contar como cambio real (evita un renglón
     // de precios_historial con precio_anterior === precio_nuevo).
-    const draft = Number(editValues.get(sku));
-    return !Number.isFinite(draft) || draft !== precio.precio;
+    const draftPrecio = Number(draft.precio);
+    return !Number.isFinite(draftPrecio) || draftPrecio !== precio.precio;
   });
 
   async function handleGuardar() {
-    if (!precios || dirtySkus.length === 0) return;
+    if (!precios || dirtyIds.length === 0) return;
     setSaving(true);
     setError(null);
 
-    // Validar todo antes de escribir nada — si una fila tiene un precio
+    // Validar todo antes de escribir nada — si una fila tiene un dato
     // inválido no queremos haber guardado ya la mitad de las otras filas.
-    const toSave: { sku: string; nombre: string; precio: number }[] = [];
-    for (const sku of dirtySkus) {
-      const draft = editValues.get(sku) ?? "";
-      const nuevoPrecio = Number(draft);
+    const toSave: { id: number; sku: string; nombre: string; precio: number }[] = [];
+    for (const id of dirtyIds) {
+      const existing = precios.find((p) => p.id === id);
+      if (!existing) continue;
+      const draft = drafts.get(id) ?? {};
+
+      const sku = (draft.sku ?? existing.sku).trim();
+      if (!sku) {
+        setError(`El SKU de "${existing.nombre}" no puede quedar vacío.`);
+        setSaving(false);
+        return;
+      }
+
+      const nuevoPrecio = draft.precio !== undefined ? Number(draft.precio) : existing.precio;
       if (!Number.isFinite(nuevoPrecio) || nuevoPrecio <= 0) {
         setError(`El precio de ${sku} debe ser un número mayor que 0.`);
         setSaving(false);
         return;
       }
-      const existing = precios.find((p) => p.sku === sku);
-      if (!existing) continue;
-      toSave.push({ sku, nombre: existing.nombre, precio: nuevoPrecio });
+      toSave.push({ id, sku, nombre: existing.nombre, precio: nuevoPrecio });
     }
 
     try {
-      // Renglones independientes — se guardan en paralelo en vez de uno por
-      // uno esperando cada viaje de red.
-      await Promise.all(
-        toSave.map((item) =>
-          upsertPrecio({
-            sku: item.sku,
-            nombre: item.nombre,
-            precio: item.precio,
-            usuario: user?.username ?? null,
-          }),
-        ),
-      );
+      // Secuencial, no en paralelo: un cambio de SKU se valida contra el
+      // estado actual de la tabla, así que dos renglones no deben escribirse
+      // a la vez (evita colisiones si uno pide el SKU que otro está dejando).
+      for (const item of toSave) {
+        await updatePrecio(item.id, {
+          sku: item.sku,
+          nombre: item.nombre,
+          precio: item.precio,
+          usuario: user?.username ?? null,
+        });
+      }
       const skuPrincipal = computeSkuPrincipal(product.codigo);
       const refreshed = await getPreciosBySkuPrincipal(skuPrincipal);
       setPrecios(refreshed);
-      setEditValues(new Map());
+      setDrafts(new Map());
       setToastMessage("Precios actualizados.");
     } catch (err) {
       setError(`No se pudieron guardar los cambios: ${String(err)}`);
@@ -227,16 +239,28 @@ export default function PreciosModal({ product, onClose }: Props) {
               </thead>
               <tbody>
                 {precios.map((p) => (
-                  <tr key={p.sku}>
-                    <td>{p.sku}</td>
+                  <tr key={p.id}>
+                    <td>
+                      {canModificar ? (
+                        <input
+                          type="text"
+                          value={drafts.get(p.id)?.sku ?? p.sku}
+                          onChange={(e) => setDraftField(p.id, "sku", e.target.value)}
+                          disabled={saving}
+                          style={{ width: "6rem" }}
+                        />
+                      ) : (
+                        p.sku
+                      )}
+                    </td>
                     <td>{p.nombre}</td>
                     <td>
                       {canModificar ? (
                         <input
                           type="text"
                           inputMode="decimal"
-                          value={editValues.get(p.sku) ?? String(p.precio)}
-                          onChange={(e) => setDraft(p.sku, e.target.value)}
+                          value={drafts.get(p.id)?.precio ?? String(p.precio)}
+                          onChange={(e) => setDraftField(p.id, "precio", e.target.value)}
                           disabled={saving}
                           style={{ width: "6rem" }}
                         />
@@ -326,8 +350,15 @@ export default function PreciosModal({ product, onClose }: Props) {
                       >
                         {addSaving ? "Guardando…" : "Guardar producto"}
                       </button>
-                      <button type="button" className="btn-link" onClick={resetNewForm} disabled={addSaving}>
-                        Cancelar
+                      <button
+                        type="button"
+                        className="icon-btn icon-btn-remove"
+                        onClick={resetNewForm}
+                        disabled={addSaving}
+                        title="Cancelar"
+                        aria-label="Cancelar"
+                      >
+                        <img src={basuraIcon} alt="" aria-hidden="true" />
                       </button>
                     </div>
                   </>
@@ -342,7 +373,7 @@ export default function PreciosModal({ product, onClose }: Props) {
             <button
               type="button"
               className="btn btn-primary"
-              disabled={saving || dirtySkus.length === 0}
+              disabled={saving || dirtyIds.length === 0}
               onClick={handleGuardar}
             >
               {saving ? "Guardando…" : "Guardar cambios"}

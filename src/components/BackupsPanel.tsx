@@ -23,9 +23,11 @@ import { gunzipToText, isGzip, sha256Hex, validateBackupSql, type BackupValidati
 import { buildPreciosListWorkbook, buildRemisionesHistorialWorkbook } from "../excelExport";
 import type { BackupFrecuencia, BackupRecord, BackupSettings, BackupTipo } from "../types";
 import Toast from "./Toast";
+import basuraIcon from "../../Assets/basura.svg";
 
 const TIPO_LABELS: Record<BackupTipo, string> = {
   BACKUP_AUTOMATICO: "Automático",
+  BACKUP_LOCAL_DIARIO: "Automático diario (local)",
   BACKUP_MANUAL: "Manual",
   BACKUP_PRE_IMPORTACION: "Pre-importación",
   BACKUP_PRE_RESTAURACION: "Pre-restauración",
@@ -687,10 +689,12 @@ export default function BackupsPanel() {
                         ) : (
                           <button
                             type="button"
-                            className="btn-link"
+                            className="icon-btn icon-btn-remove"
                             onClick={() => setConfirmDeleteId(record.id)}
+                            title="Eliminar backup"
+                            aria-label="Eliminar backup"
                           >
-                            Eliminar
+                            <img src={basuraIcon} alt="" aria-hidden="true" />
                           </button>
                         )}
                       </>
@@ -762,8 +766,14 @@ export default function BackupsPanel() {
                   >
                     Continuar
                   </button>
-                  <button type="button" className="btn btn-secondary" onClick={cancelRestoreFlow}>
-                    Cancelar
+                  <button
+                    type="button"
+                    className="icon-btn icon-btn-remove"
+                    onClick={cancelRestoreFlow}
+                    title="Cancelar"
+                    aria-label="Cancelar"
+                  >
+                    <img src={basuraIcon} alt="" aria-hidden="true" />
                   </button>
                 </div>
               </>

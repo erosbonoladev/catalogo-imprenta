@@ -58,7 +58,10 @@ export interface PlasticProduct {
   color: string;
   origen: string;
   descripcion: string;
-  armado: string;
+  // La columna real en `plastic_products` sigue llamándose `armado` — se
+  // expone como `material` en la app sin migrar la columna (ver mapeo en
+  // db.ts, mismo patrón que el resto de columnas heredadas de DATABASE.md).
+  material: string;
   dimension: string;
   peso: string;
   tipo_empaque: string;
@@ -73,7 +76,7 @@ export interface PlasticProductInput {
   color: string;
   origen: string;
   descripcion: string;
-  armado: string;
+  material: string;
   dimension: string;
   peso: string;
   tipo_empaque: string;
@@ -224,6 +227,7 @@ export const PERMISOS_BACKUPS: Permiso[] = [
 
 export const BACKUP_TIPOS = [
   "BACKUP_AUTOMATICO",
+  "BACKUP_LOCAL_DIARIO",
   "BACKUP_MANUAL",
   "BACKUP_PRE_IMPORTACION",
   "BACKUP_PRE_RESTAURACION",
@@ -279,6 +283,7 @@ export interface User {
   activo: boolean;
   rol: Rol;
   permisos: Permiso[];
+  backup_local_diario: boolean;
   creado_en: string;
 }
 
@@ -288,6 +293,7 @@ export interface UserInput {
   activo: boolean;
   rol: Rol;
   permisos: Permiso[];
+  backup_local_diario: boolean;
 }
 
 export type LogLevel = "INFO" | "WARNING" | "ERROR";

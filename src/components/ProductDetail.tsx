@@ -11,6 +11,7 @@ import { buildDescriptionSlots } from "../descriptions";
 import { hasPermission, useAuth } from "../auth";
 import RequisicionModal from "./RequisicionModal";
 import PreciosModal from "./PreciosModal";
+import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   productId: number;
@@ -207,10 +208,13 @@ export default function ProductDetail({
               </span>
             ) : (
               <button
-                className="btn btn-secondary"
+                type="button"
+                className="icon-btn icon-btn-remove"
                 onClick={() => setConfirmingDelete(true)}
+                title="Eliminar producto"
+                aria-label="Eliminar producto"
               >
-                Eliminar
+                <img src={basuraIcon} alt="" aria-hidden="true" />
               </button>
             )}
           </div>

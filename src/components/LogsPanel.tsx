@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { clearLogs, getRecentLogs, logEvent } from "../db";
 import type { AppLog } from "../types";
 import { useAuth } from "../auth";
+import basuraIcon from "../../Assets/basura.svg";
 
 const POLL_INTERVAL_MS = 12_000;
 
@@ -67,10 +68,12 @@ export default function LogsPanel() {
         ) : (
           <button
             type="button"
-            className="btn btn-success"
+            className="icon-btn icon-btn-remove"
             onClick={() => setConfirmingClear(true)}
+            title="Limpiar registro"
+            aria-label="Limpiar registro"
           >
-            Limpiar
+            <img src={basuraIcon} alt="" aria-hidden="true" />
           </button>
         )}
       </div>

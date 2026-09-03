@@ -9,6 +9,7 @@ import {
   setPresentacionOriginal,
   updateProduct,
 } from "../db";
+import basuraIcon from "../../Assets/basura.svg";
 import {
   buildSpecsForRow,
   classifyRows,
@@ -402,8 +403,14 @@ export default function FichaImportPanel() {
             <button type="button" className="btn btn-primary" onClick={handleConfirm}>
               Confirmar importación
             </button>
-            <button type="button" className="btn btn-secondary" onClick={reset}>
-              Cancelar importación
+            <button
+              type="button"
+              className="icon-btn icon-btn-remove"
+              onClick={reset}
+              title="Cancelar importación"
+              aria-label="Cancelar importación"
+            >
+              <img src={basuraIcon} alt="" aria-hidden="true" />
             </button>
           </div>
         </div>

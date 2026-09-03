@@ -48,6 +48,16 @@ Configuraciones → Backups → "Crear backup ahora" (permiso `backups_crear`). 
 
 `FichaImportPanel.tsx` e `ImageImportPanel.tsx` llaman `runBackupNow("BACKUP_PRE_IMPORTACION", ...)` como primer paso de "Confirmar importación", **antes** de escribir cualquier fila. Si el backup falla, la fase vuelve a "reviewing" con un mensaje de error y la importación nunca arranca — no hay forma de saltarse esto desde la UI.
 
+## Backup local diario por usuario
+
+Un admin puede marcar a un usuario (`UsersPanel`, checkbox "Backup local diario al entrar a la app" → columna `users.backup_local_diario`) para que, cada vez que esa persona entre a Clio (login o reapertura con sesión restaurada), se dispare `runBackupNow("BACKUP_LOCAL_DIARIO", ...)` automáticamente — máximo uno por día. La lógica vive en `src/auth.tsx` (`AuthProvider`), no en `App.tsx`, porque ahí es donde `user` pasa a tener valor en ambos casos de entrada.
+
+El "una vez por día" se trackea en `localStorage` de esa máquina (namespaced por `user.id`), no en `backup_history`: esa tabla es compartida en Turso, así que si el mismo usuario entra desde dos computadoras el mismo día, cada una necesita generar su propio backup — justo lo que este feature busca (red de seguridad en la máquina de esa persona, no solo la primera que abrió la app ese día). Si el backup falla, no se guarda la fecha, así que se reintenta en la siguiente apertura del mismo día.
+
+El backup ya queda guardado internamente (`appDataDir()/backups`) y registrado en `backup_history` con `estado: EXITOSO` apenas `runBackupNow` termina — eso es lo que cuenta como "hecho por hoy". Justo después se abre el diálogo nativo "Guardar como" (`saveBackupFileAs`, mismo mecanismo que "Crear backup ahora" + permiso `backups_descargar` en `BackupsPanel`) para que la persona elija dónde quiere su copia en esa computadora (carpeta, USB, unidad compartida, etc.) — a diferencia del flujo manual, acá no depende de ningún permiso `backups_*`, corre siempre que `backup_local_diario` esté activo. Cancelar ese diálogo no afecta al backup, que ya quedó guardado y registrado igual.
+
+Es un complemento al automático programado (vía `clio-backups`), no un reemplazo — sigue viviendo solo en la máquina donde se disparó, con las mismas limitaciones que cualquier backup local (ver "Limitaciones conocidas" abajo).
+
 ## Restauración
 
 Dos entradas, un solo mecanismo interno (`BackupsPanel.tsx`):

@@ -16,6 +16,7 @@ import { computeSkuPrincipal } from "../precios";
 import { hasPermission, useAuth } from "../auth";
 import type { Precio, Remision, RemisionRenglon, RemisionRenglonInput } from "../types";
 import Toast from "./Toast";
+import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   remision: Remision;
@@ -444,15 +445,17 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
                   </button>
                   <button
                     type="button"
-                    className="btn-link"
+                    className="icon-btn icon-btn-remove"
                     onClick={() => {
                       setManualEntryOpen(false);
                       setManualSku("");
                       setManualNombre("");
                     }}
                     disabled={saving}
+                    title="Cancelar"
+                    aria-label="Cancelar"
                   >
-                    Cancelar
+                    <img src={basuraIcon} alt="" aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -501,11 +504,13 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
                           <td>
                             <button
                               type="button"
-                              className="btn-link"
+                              className="icon-btn icon-btn-remove"
                               onClick={() => removeRow(r.key)}
                               disabled={saving}
+                              title="Eliminar renglón"
+                              aria-label="Eliminar renglón"
                             >
-                              Eliminar
+                              <img src={basuraIcon} alt="" aria-hidden="true" />
                             </button>
                           </td>
                         </tr>
@@ -552,8 +557,15 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
               <button type="button" className="btn btn-primary" onClick={handleGuardarEdicion} disabled={saving}>
                 {saving ? "Guardando…" : "Guardar cambios"}
               </button>
-              <button type="button" className="btn btn-secondary" onClick={handleCancelEdit} disabled={saving}>
-                Cancelar edición
+              <button
+                type="button"
+                className="icon-btn icon-btn-remove"
+                onClick={handleCancelEdit}
+                disabled={saving}
+                title="Cancelar edición"
+                aria-label="Cancelar edición"
+              >
+                <img src={basuraIcon} alt="" aria-hidden="true" />
               </button>
             </div>
           </>

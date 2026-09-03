@@ -8,21 +8,30 @@ import estrellasIcon from "../../Assets/estrellas.svg";
 import cierreSesionIcon from "../../Assets/cierre-de-sesion-de-usuario.svg";
 import configuracionIcon from "../../Assets/configuracion.svg";
 import remisionesIcon from "../../Assets/remisiones.svg";
+import piezasIcon from "../../Assets/piezas.svg";
 
 interface Props {
   open: boolean;
   onToggle: () => void;
   onConfiguraciones: () => void;
   onRemisiones: () => void;
+  onPiezasGeneral: () => void;
 }
 
-export default function Sidebar({ open, onToggle, onConfiguraciones, onRemisiones }: Props) {
+export default function Sidebar({
+  open,
+  onToggle,
+  onConfiguraciones,
+  onRemisiones,
+  onPiezasGeneral,
+}: Props) {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === "dark";
   const showConfiguraciones =
     hasPermission(user, "configuraciones") || PERMISOS_BACKUPS.some((p) => hasPermission(user, p));
   const showRemisiones = hasPermission(user, "remisiones_acceso");
+  const showPiezasGeneral = hasPermission(user, "plasticos");
 
   return (
     <>
@@ -56,14 +65,20 @@ export default function Sidebar({ open, onToggle, onConfiguraciones, onRemisione
             <span>{isDark ? "Modo oscuro" : "Modo claro"}</span>
           </button>
 
+          {(showRemisiones || showPiezasGeneral) && <div className="sidebar-divider" />}
+
           {showRemisiones && (
-            <>
-              <div className="sidebar-divider" />
-              <button type="button" className="sidebar-item" onClick={onRemisiones}>
-                <img src={remisionesIcon} alt="" aria-hidden="true" className="sidebar-item-icon" />
-                <span>Remisiones</span>
-              </button>
-            </>
+            <button type="button" className="sidebar-item" onClick={onRemisiones}>
+              <img src={remisionesIcon} alt="" aria-hidden="true" className="sidebar-item-icon" />
+              <span>Remisiones</span>
+            </button>
+          )}
+
+          {showPiezasGeneral && (
+            <button type="button" className="sidebar-item" onClick={onPiezasGeneral}>
+              <img src={piezasIcon} alt="" aria-hidden="true" className="sidebar-item-icon" />
+              <span>Piezas General</span>
+            </button>
           )}
 
           {/* Espacio reservado para futuras funcionalidades por usuario. */}

@@ -320,8 +320,14 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
                 <button type="button" className="btn btn-primary" onClick={handleAddDescription}>
                   Guardar
                 </button>
-                <button type="button" className="btn btn-secondary" onClick={handleCancelAddDescription}>
-                  Cancelar
+                <button
+                  type="button"
+                  className="icon-btn icon-btn-remove"
+                  onClick={handleCancelAddDescription}
+                  title="Cancelar"
+                  aria-label="Cancelar"
+                >
+                  <img src={basuraIcon} alt="" aria-hidden="true" />
                 </button>
               </div>
             </div>
@@ -379,8 +385,14 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
           <button type="submit" className="btn btn-primary" disabled={saving || !dirty}>
             {saving ? "Guardando…" : "Guardar"}
           </button>
-          <button type="button" className="btn btn-secondary" onClick={onCancel}>
-            Cancelar
+          <button
+            type="button"
+            className="icon-btn icon-btn-remove"
+            onClick={onCancel}
+            title="Cancelar"
+            aria-label="Cancelar"
+          >
+            <img src={basuraIcon} alt="" aria-hidden="true" />
           </button>
         </div>
       </form>

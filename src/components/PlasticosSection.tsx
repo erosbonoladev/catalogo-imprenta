@@ -11,6 +11,7 @@ import { hasPermission, useAuth } from "../auth";
 import AutoGrowInput from "./AutoGrowInput";
 import Toast from "./Toast";
 import PlasticProductPicker from "./PlasticProductPicker";
+import PlasticProductFields, { EMPTY_PLASTIC_DATA } from "./PlasticProductFields";
 import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
@@ -18,27 +19,11 @@ interface Props {
   onBack: () => void;
 }
 
-const ORIGENES = ["BOD", "GIL", "IMPR", "EXTR"] as const;
-
-const EMPTY_DATA: PlasticProductInput = {
-  nombre: "",
-  sku: "",
-  color: "",
-  origen: "",
-  descripcion: "",
-  armado: "",
-  dimension: "",
-  peso: "",
-  tipo_empaque: "",
-  imagen: null,
-  imagen_codigo_barras: null,
-};
-
 const CAMPOS_VISTA: { label: string; key: keyof PlasticProductInput }[] = [
   { label: "SKU", key: "sku" },
   { label: "Color", key: "color" },
   { label: "Origen", key: "origen" },
-  { label: "Armado", key: "armado" },
+  { label: "Material", key: "material" },
   { label: "Dimensión", key: "dimension" },
   { label: "Peso", key: "peso" },
   { label: "Tipo de empaque", key: "tipo_empaque" },
@@ -86,7 +71,7 @@ export default function PlasticosSection({ productId, onBack }: Props) {
     setDirty(true);
     setItems((prev) => [
       ...prev,
-      { plastic_product_id: null, orden: prev.length + 1, data: { ...EMPTY_DATA } },
+      { plastic_product_id: null, orden: prev.length + 1, data: { ...EMPTY_PLASTIC_DATA } },
     ]);
   }
 
@@ -103,7 +88,7 @@ export default function PlasticosSection({ productId, onBack }: Props) {
           color: producto.color,
           origen: producto.origen,
           descripcion: producto.descripcion,
-          armado: producto.armado,
+          material: producto.material,
           dimension: producto.dimension,
           peso: producto.peso,
           tipo_empaque: producto.tipo_empaque,
@@ -240,8 +225,15 @@ export default function PlasticosSection({ productId, onBack }: Props) {
           <button className="btn btn-primary" onClick={handleSave} disabled={saving || !dirty}>
             {saving ? "Guardando…" : "Guardar"}
           </button>
-          <button className="btn btn-secondary" onClick={handleCancel} disabled={saving}>
-            Cancelar
+          <button
+            type="button"
+            className="icon-btn icon-btn-remove"
+            onClick={handleCancel}
+            disabled={saving}
+            title="Cancelar"
+            aria-label="Cancelar"
+          >
+            <img src={basuraIcon} alt="" aria-hidden="true" />
           </button>
         </div>
       )}
@@ -326,89 +318,46 @@ function PlasticItemCard({
       </div>
 
       <div className="plastic-item-layout">
-        <div className="plastic-item-media-col">
-          <div className="plastic-item-image-box">
-            {imageSrc ? (
-              <img src={imageSrc} alt={item.data.nombre || "Producto"} />
-            ) : (
-              <span className="product-card-placeholder">Sin imagen</span>
-            )}
-            {editMode && (
-              <button type="button" className="btn btn-secondary" onClick={onPickImage}>
-                {imageSrc ? "Cambiar imagen" : "Agregar imagen"}
-              </button>
-            )}
-          </div>
-          <div className="plastic-item-barcode-box">
-            {barcodeSrc ? (
-              <img src={barcodeSrc} alt="Código de barras" />
-            ) : (
-              <span className="product-card-placeholder">Sin código de barras</span>
-            )}
-            {editMode && (
-              <button type="button" className="btn btn-secondary" onClick={onPickBarcode}>
-                {barcodeSrc ? "Cambiar código de barras" : "Agregar código de barras"}
-              </button>
-            )}
-          </div>
-        </div>
-
         {editMode ? (
-          <div className="plastic-item-fields">
-            <PlasticField label="SKU" value={item.data.sku} onChange={(v) => onChange({ sku: v })} />
-            <PlasticField label="Color" value={item.data.color} onChange={(v) => onChange({ color: v })} />
-            <label className="plastic-item-field">
-              <span>Origen</span>
-              <select value={item.data.origen} onChange={(e) => onChange({ origen: e.target.value })}>
-                <option value="">Sin definir</option>
-                {ORIGENES.map((origen) => (
-                  <option key={origen} value={origen}>
-                    {origen}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <PlasticField label="Armado" value={item.data.armado} onChange={(v) => onChange({ armado: v })} />
-            <PlasticField
-              label="Dimensión"
-              value={item.data.dimension}
-              onChange={(v) => onChange({ dimension: v })}
-            />
-            <PlasticField label="Peso" value={item.data.peso} onChange={(v) => onChange({ peso: v })} />
-            <PlasticField
-              label="Tipo de empaque"
-              value={item.data.tipo_empaque}
-              onChange={(v) => onChange({ tipo_empaque: v })}
-            />
-          </div>
+          <PlasticProductFields
+            data={item.data}
+            imageSrc={imageSrc}
+            barcodeSrc={barcodeSrc}
+            onChange={onChange}
+            onPickImage={onPickImage}
+            onPickBarcode={onPickBarcode}
+          />
         ) : (
-          <div className="plastic-item-view-fields">
-            {CAMPOS_VISTA.map((campo) => (
-              <div className="plastic-item-view-field" key={campo.key}>
-                <span className="plastic-item-view-field-label">{campo.label}</span>
-                <span className="plastic-item-view-field-value">
-                  {(item.data[campo.key] as string) || "—"}
-                </span>
+          <>
+            <div className="plastic-item-media-col">
+              <div className="plastic-item-image-box">
+                {imageSrc ? (
+                  <img src={imageSrc} alt={item.data.nombre || "Producto"} />
+                ) : (
+                  <span className="product-card-placeholder">Sin imagen</span>
+                )}
               </div>
-            ))}
-          </div>
+              <div className="plastic-item-barcode-box">
+                {barcodeSrc ? (
+                  <img src={barcodeSrc} alt="Código de barras" />
+                ) : (
+                  <span className="product-card-placeholder">Sin código de barras</span>
+                )}
+              </div>
+            </div>
+            <div className="plastic-item-view-fields">
+              {CAMPOS_VISTA.map((campo) => (
+                <div className="plastic-item-view-field" key={campo.key}>
+                  <span className="plastic-item-view-field-label">{campo.label}</span>
+                  <span className="plastic-item-view-field-value">
+                    {(item.data[campo.key] as string) || "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
     </div>
-  );
-}
-
-interface PlasticFieldProps {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}
-
-function PlasticField({ label, value, onChange }: PlasticFieldProps) {
-  return (
-    <label className="plastic-item-field">
-      <span>{label}</span>
-      <AutoGrowInput value={value} onChange={onChange} />
-    </label>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getImageSrc, searchPlasticProducts } from "../db";
 import type { PlasticProduct } from "../types";
+import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   excludeIds: number[];
@@ -66,8 +67,14 @@ export default function PlasticProductPicker({ excludeIds, onSelect, onClose }: 
         )}
 
         <div className="form-actions">
-          <button type="button" className="btn btn-secondary" onClick={onClose}>
-            Cancelar
+          <button
+            type="button"
+            className="icon-btn icon-btn-remove"
+            onClick={onClose}
+            title="Cancelar"
+            aria-label="Cancelar"
+          >
+            <img src={basuraIcon} alt="" aria-hidden="true" />
           </button>
         </div>
       </div>

@@ -16,7 +16,7 @@ PERMISOS = [
 
 | Valor interno | Etiqueta UI | Gatea |
 |---|---|---|
-| `plasticos` | **Piezas** | `PlasticosSection` |
+| `plasticos` | **Piezas** | `PlasticosSection` y `PiezasGeneralSection` (mismo permiso para ambas, no hay uno separado para el catálogo general) |
 | `imprenta` | Imprenta | `ImprentaSection` (incluye historial de órdenes) |
 | `configuraciones` | Configuraciones | `Configuraciones` (tabs Usuarios/Conectados/Registro/Captura masiva) |
 | `requisiciones` | Requisiciones | Botón "Requisición" por spec en `ProductDetail` |

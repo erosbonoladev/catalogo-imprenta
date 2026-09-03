@@ -16,6 +16,7 @@ import { computeSkuPrincipal } from "../precios";
 import { fechaLocalDeHoy } from "../folios";
 import { useAuth } from "../auth";
 import type { Precio, RemisionConRenglones, RemisionInput, RemisionRenglonInput, TipoPrecio } from "../types";
+import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   onCreated: () => void;
@@ -412,15 +413,17 @@ export default function RemisionForm({ onCreated }: Props) {
             </button>
             <button
               type="button"
-              className="btn-link"
+              className="icon-btn icon-btn-remove"
               onClick={() => {
                 setManualEntryOpen(false);
                 setManualSku("");
                 setManualNombre("");
               }}
               disabled={generating}
+              title="Cancelar"
+              aria-label="Cancelar"
             >
-              Cancelar
+              <img src={basuraIcon} alt="" aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -487,11 +490,13 @@ export default function RemisionForm({ onCreated }: Props) {
                       ))}
                     <button
                       type="button"
-                      className="btn-link"
+                      className="icon-btn icon-btn-remove"
                       onClick={() => removeRow(r.key)}
                       disabled={generating}
+                      title="Eliminar renglón"
+                      aria-label="Eliminar renglón"
                     >
-                      Eliminar
+                      <img src={basuraIcon} alt="" aria-hidden="true" />
                     </button>
                   </td>
                 </tr>

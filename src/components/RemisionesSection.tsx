@@ -6,6 +6,7 @@ import type { Remision } from "../types";
 import RemisionDetalleModal from "./RemisionDetalleModal";
 import RemisionForm from "./RemisionForm";
 import Toast from "./Toast";
+import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   onBack: () => void;
@@ -137,10 +138,12 @@ export default function RemisionesSection({ onBack }: Props) {
                           ) : (
                             <button
                               type="button"
-                              className="btn-link"
+                              className="icon-btn icon-btn-remove"
                               onClick={() => setConfirmDeleteId(r.id)}
+                              title="Borrar remisión"
+                              aria-label="Borrar remisión"
                             >
-                              Borrar
+                              <img src={basuraIcon} alt="" aria-hidden="true" />
                             </button>
                           ))}
                       </td>
