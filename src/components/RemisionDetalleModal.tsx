@@ -445,17 +445,15 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
                   </button>
                   <button
                     type="button"
-                    className="icon-btn icon-btn-remove"
+                    className="btn btn-secondary"
                     onClick={() => {
                       setManualEntryOpen(false);
                       setManualSku("");
                       setManualNombre("");
                     }}
                     disabled={saving}
-                    title="Cancelar"
-                    aria-label="Cancelar"
                   >
-                    <img src={basuraIcon} alt="" aria-hidden="true" />
+                    Cancelar
                   </button>
                 </div>
               </div>
@@ -557,15 +555,8 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
               <button type="button" className="btn btn-primary" onClick={handleGuardarEdicion} disabled={saving}>
                 {saving ? "Guardando…" : "Guardar cambios"}
               </button>
-              <button
-                type="button"
-                className="icon-btn icon-btn-remove"
-                onClick={handleCancelEdit}
-                disabled={saving}
-                title="Cancelar edición"
-                aria-label="Cancelar edición"
-              >
-                <img src={basuraIcon} alt="" aria-hidden="true" />
+              <button type="button" className="btn btn-secondary" onClick={handleCancelEdit} disabled={saving}>
+                Cancelar edición
               </button>
             </div>
           </>

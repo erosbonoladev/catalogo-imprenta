@@ -212,13 +212,13 @@ export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalPro
           dimension: existing.dimension,
           peso: existing.peso,
           tipo_empaque: existing.tipo_empaque,
+          maquila: existing.maquila,
+          coste: existing.coste,
           imagen: existing.imagen,
-          imagen_codigo_barras: existing.imagen_codigo_barras,
         }
       : { ...EMPTY_PLASTIC_DATA },
   );
   const [imageSrc, setImageSrc] = useState<string | null>(null);
-  const [barcodeSrc, setBarcodeSrc] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -232,16 +232,6 @@ export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalPro
     };
   }, [data.imagen]);
 
-  useEffect(() => {
-    let cancelled = false;
-    getImageSrc(data.imagen_codigo_barras).then((src) => {
-      if (!cancelled) setBarcodeSrc(src);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [data.imagen_codigo_barras]);
-
   function update(patch: Partial<PlasticProductInput>) {
     setData((prev) => ({ ...prev, ...patch }));
   }
@@ -249,11 +239,6 @@ export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalPro
   async function pickProductImage() {
     const image = await pickImage();
     if (image) update({ imagen: image });
-  }
-
-  async function pickBarcodeImage() {
-    const image = await pickImage();
-    if (image) update({ imagen_codigo_barras: image });
   }
 
   async function handleSave() {
@@ -296,10 +281,8 @@ export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalPro
           <PlasticProductFields
             data={data}
             imageSrc={imageSrc}
-            barcodeSrc={barcodeSrc}
             onChange={update}
             onPickImage={pickProductImage}
-            onPickBarcode={pickBarcodeImage}
           />
         </div>
 
@@ -309,15 +292,8 @@ export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalPro
           <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
             {saving ? "Guardando…" : existing ? "Guardar cambios" : "Guardar pieza"}
           </button>
-          <button
-            type="button"
-            className="icon-btn icon-btn-remove"
-            onClick={onClose}
-            disabled={saving}
-            title="Cancelar"
-            aria-label="Cancelar"
-          >
-            <img src={basuraIcon} alt="" aria-hidden="true" />
+          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>
+            Cancelar
           </button>
         </div>
       </div>

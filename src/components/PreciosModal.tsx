@@ -5,7 +5,6 @@ import { formatMoney } from "../excelExport";
 import type { Precio, Product } from "../types";
 import { hasPermission, useAuth } from "../auth";
 import Toast from "./Toast";
-import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   product: Product;
@@ -350,15 +349,8 @@ export default function PreciosModal({ product, onClose }: Props) {
                       >
                         {addSaving ? "Guardando…" : "Guardar producto"}
                       </button>
-                      <button
-                        type="button"
-                        className="icon-btn icon-btn-remove"
-                        onClick={resetNewForm}
-                        disabled={addSaving}
-                        title="Cancelar"
-                        aria-label="Cancelar"
-                      >
-                        <img src={basuraIcon} alt="" aria-hidden="true" />
+                      <button type="button" className="btn btn-secondary" onClick={resetNewForm} disabled={addSaving}>
+                        Cancelar
                       </button>
                     </div>
                   </>

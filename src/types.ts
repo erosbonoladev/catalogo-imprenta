@@ -11,6 +11,7 @@ export interface Product {
   material: string;
   descripcion: string;
   imagen: ImageBlob | null;
+  imagen_codigo_barras: ImageBlob | null;
   presentacion_original: string;
   creado_en: string;
   actualizado_en: string;
@@ -40,6 +41,7 @@ export interface ProductInput {
   material: string;
   descripcion: string;
   imagen: ImageBlob | null;
+  imagen_codigo_barras: ImageBlob | null;
 }
 
 export interface PlasticPiece {
@@ -65,8 +67,9 @@ export interface PlasticProduct {
   dimension: string;
   peso: string;
   tipo_empaque: string;
+  maquila: string;
+  coste: string;
   imagen: ImageBlob | null;
-  imagen_codigo_barras: ImageBlob | null;
   creado_en: string;
 }
 
@@ -80,8 +83,9 @@ export interface PlasticProductInput {
   dimension: string;
   peso: string;
   tipo_empaque: string;
+  maquila: string;
+  coste: string;
   imagen: ImageBlob | null;
-  imagen_codigo_barras: ImageBlob | null;
 }
 
 export interface PlasticItem {

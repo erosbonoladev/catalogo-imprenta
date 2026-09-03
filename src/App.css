@@ -649,9 +649,15 @@ h3 {
   flex-wrap: wrap;
 }
 
-.product-detail-image {
+.product-detail-media {
   flex: 1 1 320px;
   max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.product-detail-image {
   aspect-ratio: 4 / 3;
   background-color: var(--media-bg);
   border: 1px solid var(--border);
@@ -1605,7 +1611,7 @@ body,
 }
 
 .plastic-item-image-box,
-.plastic-item-barcode-box {
+.barcode-box {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1618,13 +1624,20 @@ body,
   padding: 0.7rem;
 }
 
+/* En ProductForm, .barcode-box no vive dentro de una columna angosta como
+   .plastic-item-media-col o .product-detail-media — se acota su ancho para
+   que no se estire a lo ancho de todo el formulario. */
+.image-picker + .barcode-box {
+  max-width: 320px;
+}
+
 .plastic-item-image-box img {
   width: 100%;
   aspect-ratio: 4 / 3;
   object-fit: contain;
 }
 
-.plastic-item-barcode-box img {
+.barcode-box img {
   width: 100%;
   aspect-ratio: 3 / 1;
   object-fit: contain;
@@ -1632,7 +1645,7 @@ body,
 }
 
 .plastic-item-image-box .product-card-placeholder,
-.plastic-item-barcode-box .product-card-placeholder {
+.barcode-box .product-card-placeholder {
   width: 100%;
   aspect-ratio: 4 / 3;
   display: flex;
@@ -1640,7 +1653,7 @@ body,
   justify-content: center;
 }
 
-.plastic-item-barcode-box .product-card-placeholder {
+.barcode-box .product-card-placeholder {
   aspect-ratio: 3 / 1;
 }
 

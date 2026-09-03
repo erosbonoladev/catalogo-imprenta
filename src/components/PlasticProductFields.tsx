@@ -13,27 +13,19 @@ export const EMPTY_PLASTIC_DATA: PlasticProductInput = {
   dimension: "",
   peso: "",
   tipo_empaque: "",
+  maquila: "",
+  coste: "",
   imagen: null,
-  imagen_codigo_barras: null,
 };
 
 interface Props {
   data: PlasticProductInput;
   imageSrc: string | null;
-  barcodeSrc: string | null;
   onChange: (patch: Partial<PlasticProductInput>) => void;
   onPickImage: () => void;
-  onPickBarcode: () => void;
 }
 
-export default function PlasticProductFields({
-  data,
-  imageSrc,
-  barcodeSrc,
-  onChange,
-  onPickImage,
-  onPickBarcode,
-}: Props) {
+export default function PlasticProductFields({ data, imageSrc, onChange, onPickImage }: Props) {
   return (
     <>
       <div className="plastic-item-media-col">
@@ -45,16 +37,6 @@ export default function PlasticProductFields({
           )}
           <button type="button" className="btn btn-secondary" onClick={onPickImage}>
             {imageSrc ? "Cambiar imagen" : "Agregar imagen"}
-          </button>
-        </div>
-        <div className="plastic-item-barcode-box">
-          {barcodeSrc ? (
-            <img src={barcodeSrc} alt="Código de barras" />
-          ) : (
-            <span className="product-card-placeholder">Sin código de barras</span>
-          )}
-          <button type="button" className="btn btn-secondary" onClick={onPickBarcode}>
-            {barcodeSrc ? "Cambiar código de barras" : "Agregar código de barras"}
           </button>
         </div>
       </div>
@@ -85,6 +67,8 @@ export default function PlasticProductFields({
           value={data.tipo_empaque}
           onChange={(v) => onChange({ tipo_empaque: v })}
         />
+        <PlasticField label="Maquila" value={data.maquila} onChange={(v) => onChange({ maquila: v })} />
+        <PlasticField label="Coste" value={data.coste} onChange={(v) => onChange({ coste: v })} />
       </div>
     </>
   );

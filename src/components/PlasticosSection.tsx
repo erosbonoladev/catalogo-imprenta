@@ -27,6 +27,8 @@ const CAMPOS_VISTA: { label: string; key: keyof PlasticProductInput }[] = [
   { label: "Dimensión", key: "dimension" },
   { label: "Peso", key: "peso" },
   { label: "Tipo de empaque", key: "tipo_empaque" },
+  { label: "Maquila", key: "maquila" },
+  { label: "Coste", key: "coste" },
 ];
 
 export default function PlasticosSection({ productId, onBack }: Props) {
@@ -92,8 +94,9 @@ export default function PlasticosSection({ productId, onBack }: Props) {
           dimension: producto.dimension,
           peso: producto.peso,
           tipo_empaque: producto.tipo_empaque,
+          maquila: producto.maquila,
+          coste: producto.coste,
           imagen: producto.imagen,
-          imagen_codigo_barras: producto.imagen_codigo_barras,
         },
       },
     ]);
@@ -109,12 +112,6 @@ export default function PlasticosSection({ productId, onBack }: Props) {
     const image = await pickImage();
     if (!image) return;
     updateItemData(index, { imagen: image });
-  }
-
-  async function pickBarcodeImage(index: number) {
-    const image = await pickImage();
-    if (!image) return;
-    updateItemData(index, { imagen_codigo_barras: image });
   }
 
   async function handleSave() {
@@ -201,7 +198,6 @@ export default function PlasticosSection({ productId, onBack }: Props) {
             editMode={editMode}
             onChange={(patch) => updateItemData(index, patch)}
             onPickImage={() => pickProductImage(index)}
-            onPickBarcode={() => pickBarcodeImage(index)}
             onRemove={() => removeItem(index)}
           />
         ))}
@@ -225,15 +221,8 @@ export default function PlasticosSection({ productId, onBack }: Props) {
           <button className="btn btn-primary" onClick={handleSave} disabled={saving || !dirty}>
             {saving ? "Guardando…" : "Guardar"}
           </button>
-          <button
-            type="button"
-            className="icon-btn icon-btn-remove"
-            onClick={handleCancel}
-            disabled={saving}
-            title="Cancelar"
-            aria-label="Cancelar"
-          >
-            <img src={basuraIcon} alt="" aria-hidden="true" />
+          <button type="button" className="btn btn-secondary" onClick={handleCancel} disabled={saving}>
+            Cancelar
           </button>
         </div>
       )}
@@ -256,20 +245,11 @@ interface PlasticItemCardProps {
   editMode: boolean;
   onChange: (patch: Partial<PlasticProductInput>) => void;
   onPickImage: () => void;
-  onPickBarcode: () => void;
   onRemove: () => void;
 }
 
-function PlasticItemCard({
-  item,
-  editMode,
-  onChange,
-  onPickImage,
-  onPickBarcode,
-  onRemove,
-}: PlasticItemCardProps) {
+function PlasticItemCard({ item, editMode, onChange, onPickImage, onRemove }: PlasticItemCardProps) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
-  const [barcodeSrc, setBarcodeSrc] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -280,16 +260,6 @@ function PlasticItemCard({
       cancelled = true;
     };
   }, [item.data.imagen]);
-
-  useEffect(() => {
-    let cancelled = false;
-    getImageSrc(item.data.imagen_codigo_barras).then((src) => {
-      if (!cancelled) setBarcodeSrc(src);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [item.data.imagen_codigo_barras]);
 
   return (
     <div className="plastic-item-card">
@@ -322,10 +292,8 @@ function PlasticItemCard({
           <PlasticProductFields
             data={item.data}
             imageSrc={imageSrc}
-            barcodeSrc={barcodeSrc}
             onChange={onChange}
             onPickImage={onPickImage}
-            onPickBarcode={onPickBarcode}
           />
         ) : (
           <>
@@ -335,13 +303,6 @@ function PlasticItemCard({
                   <img src={imageSrc} alt={item.data.nombre || "Producto"} />
                 ) : (
                   <span className="product-card-placeholder">Sin imagen</span>
-                )}
-              </div>
-              <div className="plastic-item-barcode-box">
-                {barcodeSrc ? (
-                  <img src={barcodeSrc} alt="Código de barras" />
-                ) : (
-                  <span className="product-card-placeholder">Sin código de barras</span>
                 )}
               </div>
             </div>

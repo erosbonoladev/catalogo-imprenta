@@ -29,6 +29,7 @@ const emptyProduct: ProductInput = {
   material: "",
   descripcion: "",
   imagen: null,
+  imagen_codigo_barras: null,
 };
 
 export default function ProductForm({ productId, onDone, onCancel }: Props) {
@@ -44,6 +45,7 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
   const [newDescTexto, setNewDescTexto] = useState("");
   const [descError, setDescError] = useState<string | null>(null);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [barcodeSrc, setBarcodeSrc] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,10 +66,12 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
         material: existing.material,
         descripcion: existing.descripcion,
         imagen: existing.imagen,
+        imagen_codigo_barras: existing.imagen_codigo_barras,
       });
       setSpecs(existingSpecs);
       setDescriptions(ensureFixedDescriptions(existingDescriptions));
       setImageSrc(await getImageSrc(existing.imagen));
+      setBarcodeSrc(await getImageSrc(existing.imagen_codigo_barras));
     })();
   }, [productId]);
 
@@ -153,6 +157,13 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
     if (!image) return;
     updateField("imagen", image);
     setImageSrc(await getImageSrc(image));
+  }
+
+  async function handlePickBarcode() {
+    const image = await pickImage();
+    if (!image) return;
+    updateField("imagen_codigo_barras", image);
+    setBarcodeSrc(await getImageSrc(image));
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -320,14 +331,8 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
                 <button type="button" className="btn btn-primary" onClick={handleAddDescription}>
                   Guardar
                 </button>
-                <button
-                  type="button"
-                  className="icon-btn icon-btn-remove"
-                  onClick={handleCancelAddDescription}
-                  title="Cancelar"
-                  aria-label="Cancelar"
-                >
-                  <img src={basuraIcon} alt="" aria-hidden="true" />
+                <button type="button" className="btn btn-secondary" onClick={handleCancelAddDescription}>
+                  Cancelar
                 </button>
               </div>
             </div>
@@ -338,6 +343,17 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
           {imageSrc && <img src={imageSrc} alt="Vista previa" />}
           <button type="button" className="btn btn-secondary" onClick={handlePickImage}>
             {imageSrc ? "Cambiar imagen" : "Seleccionar imagen de referencia"}
+          </button>
+        </div>
+
+        <div className="barcode-box">
+          {barcodeSrc ? (
+            <img src={barcodeSrc} alt="Código de barras" />
+          ) : (
+            <span className="product-card-placeholder">Sin código de barras</span>
+          )}
+          <button type="button" className="btn btn-secondary" onClick={handlePickBarcode}>
+            {barcodeSrc ? "Cambiar código de barras" : "Agregar código de barras"}
           </button>
         </div>
 
@@ -385,14 +401,8 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
           <button type="submit" className="btn btn-primary" disabled={saving || !dirty}>
             {saving ? "Guardando…" : "Guardar"}
           </button>
-          <button
-            type="button"
-            className="icon-btn icon-btn-remove"
-            onClick={onCancel}
-            title="Cancelar"
-            aria-label="Cancelar"
-          >
-            <img src={basuraIcon} alt="" aria-hidden="true" />
+          <button type="button" className="btn btn-secondary" onClick={onCancel}>
+            Cancelar
           </button>
         </div>
       </form>

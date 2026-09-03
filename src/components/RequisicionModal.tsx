@@ -7,7 +7,6 @@ import { buildRequisicionPdf } from "../pdf";
 import { buildWhatsAppUrl, WHATSAPP_BODEGA_NUMBER } from "../requisiciones";
 import type { Product, Requisicion } from "../types";
 import { useAuth } from "../auth";
-import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   product: Product;
@@ -169,15 +168,8 @@ export default function RequisicionModal({
             </label>
             {error && <p className="form-error">{error}</p>}
             <div className="form-actions">
-              <button
-                type="button"
-                className="icon-btn icon-btn-remove"
-                onClick={onClose}
-                disabled={saving}
-                title="Cancelar"
-                aria-label="Cancelar"
-              >
-                <img src={basuraIcon} alt="" aria-hidden="true" />
+              <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>
+                Cancelar
               </button>
               <button
                 type="button"

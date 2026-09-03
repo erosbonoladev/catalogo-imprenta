@@ -42,6 +42,7 @@ export default function ProductDetail({
   const [descriptions, setDescriptions] = useState<ProductDescription[]>([]);
   const [descIndex, setDescIndex] = useState(0);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [barcodeSrc, setBarcodeSrc] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [requisicionSpec, setRequisicionSpec] = useState<ProductSpec | null>(null);
   const [showPrecios, setShowPrecios] = useState(false);
@@ -60,6 +61,7 @@ export default function ProductDetail({
       setDescriptions(descriptionList);
       setDescIndex(0);
       setImageSrc(await getImageSrc(prod?.imagen ?? null));
+      setBarcodeSrc(await getImageSrc(prod?.imagen_codigo_barras ?? null));
     })();
     return () => {
       cancelled = true;
@@ -95,12 +97,21 @@ export default function ProductDetail({
       </button>
 
       <div className="product-detail-layout">
-        <div className="product-detail-image">
-          {imageSrc ? (
-            <img src={imageSrc} alt={product.nombre} />
-          ) : (
-            <span className="product-card-placeholder">Sin imagen</span>
-          )}
+        <div className="product-detail-media">
+          <div className="product-detail-image">
+            {imageSrc ? (
+              <img src={imageSrc} alt={product.nombre} />
+            ) : (
+              <span className="product-card-placeholder">Sin imagen</span>
+            )}
+          </div>
+          <div className="barcode-box">
+            {barcodeSrc ? (
+              <img src={barcodeSrc} alt="Código de barras" />
+            ) : (
+              <span className="product-card-placeholder">Sin código de barras</span>
+            )}
+          </div>
         </div>
 
         <div className="product-detail-info">

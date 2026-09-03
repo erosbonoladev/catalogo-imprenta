@@ -82,6 +82,8 @@ interface ProductRow {
   descripcion: string;
   imagen: ArrayBuffer | null;
   imagen_mime: string | null;
+  imagen_codigo_barras: ArrayBuffer | null;
+  imagen_codigo_barras_mime: string | null;
   presentacion_original: string | null;
   creado_en: string;
   actualizado_en: string | null;
@@ -96,6 +98,7 @@ function rowToProduct(row: ProductRow): Product {
     material: row.material,
     descripcion: row.descripcion,
     imagen: toImageBlob(row.imagen, row.imagen_mime),
+    imagen_codigo_barras: toImageBlob(row.imagen_codigo_barras, row.imagen_codigo_barras_mime),
     presentacion_original: row.presentacion_original ?? "",
     creado_en: row.creado_en,
     actualizado_en: row.actualizado_en ?? row.creado_en,
@@ -170,8 +173,8 @@ export async function createProduct(
   const tx = await client.transaction("write");
   try {
     const result = await tx.execute({
-      sql: `INSERT INTO products (codigo, nombre, categoria, material, descripcion, imagen, imagen_mime, actualizado_en)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))`,
+      sql: `INSERT INTO products (codigo, nombre, categoria, material, descripcion, imagen, imagen_mime, imagen_codigo_barras, imagen_codigo_barras_mime, actualizado_en)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))`,
       args: [
         product.codigo,
         product.nombre,
@@ -180,6 +183,8 @@ export async function createProduct(
         product.descripcion,
         product.imagen?.data ?? null,
         product.imagen?.mime ?? null,
+        product.imagen_codigo_barras?.data ?? null,
+        product.imagen_codigo_barras?.mime ?? null,
       ],
     });
     const productId = Number(result.lastInsertRowid);
@@ -206,8 +211,9 @@ export async function updateProduct(
     await tx.execute({
       sql: `UPDATE products
             SET codigo = ?1, nombre = ?2, categoria = ?3, material = ?4, descripcion = ?5, imagen = ?6, imagen_mime = ?7,
+                imagen_codigo_barras = ?8, imagen_codigo_barras_mime = ?9,
                 actualizado_en = datetime('now')
-            WHERE id = ?8`,
+            WHERE id = ?10`,
       args: [
         product.codigo,
         product.nombre,
@@ -216,6 +222,8 @@ export async function updateProduct(
         product.descripcion,
         product.imagen?.data ?? null,
         product.imagen?.mime ?? null,
+        product.imagen_codigo_barras?.data ?? null,
+        product.imagen_codigo_barras?.mime ?? null,
         id,
       ],
     });
@@ -900,10 +908,10 @@ interface PlasticProductRow {
   dimension: string;
   peso: string;
   tipo_empaque: string;
+  maquila: string;
+  coste: string;
   imagen: ArrayBuffer | null;
   imagen_mime: string | null;
-  imagen_codigo_barras: ArrayBuffer | null;
-  imagen_codigo_barras_mime: string | null;
   creado_en: string;
 }
 
@@ -919,8 +927,9 @@ function rowToPlasticProduct(row: PlasticProductRow): PlasticProduct {
     dimension: row.dimension,
     peso: row.peso,
     tipo_empaque: row.tipo_empaque,
+    maquila: row.maquila,
+    coste: row.coste,
     imagen: toImageBlob(row.imagen, row.imagen_mime),
-    imagen_codigo_barras: toImageBlob(row.imagen_codigo_barras, row.imagen_codigo_barras_mime),
     creado_en: row.creado_en,
   };
 }
@@ -936,8 +945,9 @@ function plasticProductToData(product: PlasticProduct): PlasticProductInput {
     dimension: product.dimension,
     peso: product.peso,
     tipo_empaque: product.tipo_empaque,
+    maquila: product.maquila,
+    coste: product.coste,
     imagen: product.imagen,
-    imagen_codigo_barras: product.imagen_codigo_barras,
   };
 }
 
@@ -1007,7 +1017,7 @@ export async function createPlasticProduct(
 ): Promise<number> {
   const result = await client.execute({
     sql: `INSERT INTO plastic_products
-          (nombre, sku, color, origen, descripcion, armado, dimension, peso, tipo_empaque, imagen, imagen_mime, imagen_codigo_barras, imagen_codigo_barras_mime)
+          (nombre, sku, color, origen, descripcion, armado, dimension, peso, tipo_empaque, maquila, coste, imagen, imagen_mime)
           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`,
     args: [
       input.nombre.trim(),
@@ -1019,10 +1029,10 @@ export async function createPlasticProduct(
       input.dimension.trim(),
       input.peso.trim(),
       input.tipo_empaque.trim(),
+      input.maquila.trim(),
+      input.coste.trim(),
       input.imagen?.data ?? null,
       input.imagen?.mime ?? null,
-      input.imagen_codigo_barras?.data ?? null,
-      input.imagen_codigo_barras?.mime ?? null,
     ],
   });
   return Number(result.lastInsertRowid);
@@ -1035,8 +1045,8 @@ export async function updatePlasticProduct(
   await client.execute({
     sql: `UPDATE plastic_products
           SET nombre = ?1, sku = ?2, color = ?3, origen = ?4, descripcion = ?5, armado = ?6,
-              dimension = ?7, peso = ?8, tipo_empaque = ?9, imagen = ?10, imagen_mime = ?11,
-              imagen_codigo_barras = ?12, imagen_codigo_barras_mime = ?13
+              dimension = ?7, peso = ?8, tipo_empaque = ?9, maquila = ?10, coste = ?11,
+              imagen = ?12, imagen_mime = ?13
           WHERE id = ?14`,
     args: [
       input.nombre.trim(),
@@ -1048,10 +1058,10 @@ export async function updatePlasticProduct(
       input.dimension.trim(),
       input.peso.trim(),
       input.tipo_empaque.trim(),
+      input.maquila.trim(),
+      input.coste.trim(),
       input.imagen?.data ?? null,
       input.imagen?.mime ?? null,
-      input.imagen_codigo_barras?.data ?? null,
-      input.imagen_codigo_barras?.mime ?? null,
       id,
     ],
   });

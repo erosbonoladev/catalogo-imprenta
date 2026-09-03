@@ -27,6 +27,8 @@ const CAMPOS: { label: string; key: keyof PlasticProduct }[] = [
   { label: "Dimensión", key: "dimension" },
   { label: "Peso", key: "peso" },
   { label: "Tipo de empaque", key: "tipo_empaque" },
+  { label: "Maquila", key: "maquila" },
+  { label: "Coste", key: "coste" },
 ];
 
 export default function PiezaDetalleScreen({ plasticProductId, onBack, onOpenProduct }: Props) {
@@ -36,7 +38,6 @@ export default function PiezaDetalleScreen({ plasticProductId, onBack, onOpenPro
   const [usedIn, setUsedIn] = useState<ProductUsingPlasticRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
-  const [barcodeSrc, setBarcodeSrc] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -77,16 +78,6 @@ export default function PiezaDetalleScreen({ plasticProductId, onBack, onOpenPro
       cancelled = true;
     };
   }, [pieza?.imagen]);
-
-  useEffect(() => {
-    let cancelled = false;
-    getImageSrc(pieza?.imagen_codigo_barras ?? null).then((src) => {
-      if (!cancelled) setBarcodeSrc(src);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [pieza?.imagen_codigo_barras]);
 
   if (!allowed) {
     return (
@@ -135,13 +126,6 @@ export default function PiezaDetalleScreen({ plasticProductId, onBack, onOpenPro
                   <img src={imageSrc} alt={pieza.nombre || "Pieza"} />
                 ) : (
                   <span className="product-card-placeholder">Sin imagen</span>
-                )}
-              </div>
-              <div className="plastic-item-barcode-box">
-                {barcodeSrc ? (
-                  <img src={barcodeSrc} alt="Código de barras" />
-                ) : (
-                  <span className="product-card-placeholder">Sin código de barras</span>
                 )}
               </div>
             </div>

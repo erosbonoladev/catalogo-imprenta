@@ -766,14 +766,8 @@ export default function BackupsPanel() {
                   >
                     Continuar
                   </button>
-                  <button
-                    type="button"
-                    className="icon-btn icon-btn-remove"
-                    onClick={cancelRestoreFlow}
-                    title="Cancelar"
-                    aria-label="Cancelar"
-                  >
-                    <img src={basuraIcon} alt="" aria-hidden="true" />
+                  <button type="button" className="btn btn-secondary" onClick={cancelRestoreFlow}>
+                    Cancelar
                   </button>
                 </div>
               </>

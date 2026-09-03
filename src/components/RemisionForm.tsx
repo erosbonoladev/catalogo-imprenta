@@ -413,17 +413,15 @@ export default function RemisionForm({ onCreated }: Props) {
             </button>
             <button
               type="button"
-              className="icon-btn icon-btn-remove"
+              className="btn btn-secondary"
               onClick={() => {
                 setManualEntryOpen(false);
                 setManualSku("");
                 setManualNombre("");
               }}
               disabled={generating}
-              title="Cancelar"
-              aria-label="Cancelar"
             >
-              <img src={basuraIcon} alt="" aria-hidden="true" />
+              Cancelar
             </button>
           </div>
         </div>
