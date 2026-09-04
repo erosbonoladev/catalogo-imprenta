@@ -1,13 +1,14 @@
 {
   "name": "imprenta-app",
   "private": true,
-  "version": "0.10.1",
+  "version": "0.10.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "vitest run"
   },
   "dependencies": {
     "@libsql/client": "^0.17.4",
@@ -29,9 +30,12 @@
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^5.0.0"
   },
   "allowScripts": {
-    "esbuild@0.28.2": true
+    "esbuild@0.28.2": true,
+    "core-js@3.50.0": true,
+    "fsevents@2.3.3": true
   }
 }

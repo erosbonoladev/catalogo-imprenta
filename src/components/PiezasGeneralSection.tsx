@@ -21,7 +21,7 @@ interface Props {
 }
 
 export default function PiezasGeneralSection({ onBack, onVerPieza }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const allowed = hasPermission(user, "plasticos");
   const [piezas, setPiezas] = useState<PlasticProduct[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,9 +64,10 @@ export default function PiezasGeneralSection({ onBack, onVerPieza }: Props) {
   }
 
   async function handleBorrar(id: number) {
+    if (!user || !token) return;
     setDeleting(true);
     try {
-      await deletePlasticProduct(id);
+      await deletePlasticProduct({ id: user.id, token }, id);
       setConfirmDeleteId(null);
       await refresh();
       setToastMessage("Pieza eliminada.");
@@ -200,6 +201,7 @@ export interface PiezaFormModalProps {
 }
 
 export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalProps) {
+  const { user, token } = useAuth();
   const [data, setData] = useState<PlasticProductInput>(() =>
     existing
       ? {
@@ -242,6 +244,8 @@ export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalPro
   }
 
   async function handleSave() {
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     const nombre = data.nombre.trim();
     if (!nombre) {
       setError("El nombre de la pieza es obligatorio.");
@@ -251,9 +255,9 @@ export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalPro
     setError(null);
     try {
       if (existing) {
-        await updatePlasticProduct(existing.id, { ...data, nombre });
+        await updatePlasticProduct(actor, existing.id, { ...data, nombre });
       } else {
-        await createPlasticProduct({ ...data, nombre });
+        await createPlasticProduct(actor, { ...data, nombre });
       }
       onSaved();
     } catch (err) {

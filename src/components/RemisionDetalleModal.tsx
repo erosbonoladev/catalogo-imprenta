@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import {
+  allowFsPath,
   getPrecio,
   getPreciosBySkuPrincipal,
   getRemisionRenglones,
@@ -41,7 +42,7 @@ function formatFechaCorta(fechaIso: string): string {
 }
 
 export default function RemisionDetalleModal({ remision, onClose, onUpdated }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const canEditar = hasPermission(user, "remisiones_crear");
 
   const [header, setHeader] = useState<Remision>(remision);
@@ -190,6 +191,8 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
 
   async function handleGuardarEdicion() {
     setError(null);
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     if (!pedidoBodegas.trim()) {
       setError("El campo Bodega es obligatorio.");
       return;
@@ -227,6 +230,7 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
         importe: r.cantidadNum * r.precioNum,
       }));
       const updated = await updateRemisionConRenglones(
+        actor,
         remision.id,
         {
           pedido_bodegas: pedidoBodegas.trim(),
@@ -266,6 +270,7 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
         filters: [{ name: "PDF", extensions: ["pdf"] }],
       });
       if (path) {
+        await allowFsPath(path);
         await writeFile(path, pdfBytes);
         setToastMessage("PDF guardado.");
       }

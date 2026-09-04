@@ -95,7 +95,7 @@ function emptyItem(orden: number): PrintItem {
 }
 
 export default function ImprentaSection({ productId, onBack }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const allowed = hasPermission(user, "imprenta");
   const [product, setProduct] = useState<Product | null>(null);
   const [items, setItems] = useState<PrintItem[]>([]);
@@ -250,10 +250,11 @@ export default function ImprentaSection({ productId, onBack }: Props) {
   }
 
   async function handleSave() {
+    if (!user || !token) return;
     setSaving(true);
     setError(null);
     try {
-      await savePrintItems(productId, items);
+      await savePrintItems({ id: user.id, token }, productId, items);
       const refreshed = await getPrintItems(productId);
       setItems(refreshed);
       setSavedItems(refreshed);
@@ -287,7 +288,8 @@ export default function ImprentaSection({ productId, onBack }: Props) {
   }
 
   async function handleDeleteOrder(itemId: number, order: PrintItemOrder) {
-    await deletePrintItemOrder(order.id);
+    if (!user || !token) return;
+    await deletePrintItemOrder({ id: user.id, token }, order.id);
     setOrdersByItem((prev) => ({
       ...prev,
       [itemId]: (prev[itemId] ?? []).filter((o) => o.id !== order.id),
@@ -305,7 +307,8 @@ export default function ImprentaSection({ productId, onBack }: Props) {
   }
 
   async function handleDeletePurchase(order: PrintItemOrder, purchase: PrintItemPurchase) {
-    await deletePrintItemPurchase(purchase.id);
+    if (!user || !token) return;
+    await deletePrintItemPurchase({ id: user.id, token }, purchase.id);
     setPurchasesByOrder((prev) => ({
       ...prev,
       [order.id]: (prev[order.id] ?? []).filter((p) => p.id !== purchase.id),

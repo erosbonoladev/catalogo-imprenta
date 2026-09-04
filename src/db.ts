@@ -60,6 +60,7 @@ import {
   gzipText,
   sha256Hex,
   validateBackupSql,
+  validateRestoreStatements,
 } from "./backup";
 
 const client = createClient({
@@ -161,10 +162,12 @@ export async function getProductSpecs(
 }
 
 export async function createProduct(
+  actor: Actor,
   product: ProductInput,
   specs: ProductSpec[],
   descriptions: ProductDescription[] = [],
 ): Promise<number> {
+  await assertActorSession(actor);
   // Header + specs + descriptions en una sola transacción interactiva: antes
   // eran client.execute() sueltos, así que una falla a medias (ej. conexión
   // caída justo después del INSERT del producto) dejaba una ficha sin sus
@@ -190,6 +193,12 @@ export async function createProduct(
     const productId = Number(result.lastInsertRowid);
     await insertSpecs(tx, productId, specs);
     await insertDescriptions(tx, productId, descriptions);
+    // Si la captura masiva de imágenes guardó antes una imagen para este
+    // código (porque en ese momento no existía la ficha), se aplica sola
+    // aquí, dentro de la misma transacción — solo cuando la ficha se crea
+    // sin imagen propia, para no pisar una que el usuario ya haya elegido
+    // en este mismo alta.
+    await applyPendingProductImage(tx, productId, product.codigo);
     await tx.commit();
     return productId;
   } catch (err) {
@@ -201,11 +210,13 @@ export async function createProduct(
 }
 
 export async function updateProduct(
+  actor: Actor,
   id: number,
   product: ProductInput,
   specs: ProductSpec[],
   descriptions: ProductDescription[] = [],
 ): Promise<void> {
+  await assertActorSession(actor);
   const tx = await client.transaction("write");
   try {
     await tx.execute({
@@ -300,51 +311,69 @@ async function insertDescriptions(
   }
 }
 
-export async function deleteProduct(id: number): Promise<void> {
-  await client.execute({
-    sql: "DELETE FROM product_specs WHERE product_id = ?1",
-    args: [id],
-  });
-  await client.execute({
-    sql: "DELETE FROM product_descriptions WHERE product_id = ?1",
-    args: [id],
-  });
-  await client.execute({
-    sql: "DELETE FROM product_plastic_pieces WHERE product_id = ?1",
-    args: [id],
-  });
-  const items = await client.execute({
-    sql: "SELECT id FROM product_print_items WHERE product_id = ?1",
-    args: [id],
-  });
-  for (const row of items.rows as unknown as { id: number }[]) {
-    await client.execute({
-      sql: "DELETE FROM product_print_item_checks WHERE print_item_id = ?1",
-      args: [row.id],
+export async function deleteProduct(actor: Actor, id: number): Promise<void> {
+  await assertActorSession(actor);
+  const tx = await client.transaction("write");
+  try {
+    await tx.execute({
+      sql: "DELETE FROM product_specs WHERE product_id = ?1",
+      args: [id],
     });
-    await client.execute({
-      sql: "DELETE FROM product_print_item_extras WHERE print_item_id = ?1",
-      args: [row.id],
+    await tx.execute({
+      sql: "DELETE FROM product_descriptions WHERE product_id = ?1",
+      args: [id],
     });
-    await client.execute({
-      sql: "DELETE FROM product_print_item_images WHERE print_item_id = ?1",
-      args: [row.id],
+    await tx.execute({
+      sql: "DELETE FROM product_plastic_pieces WHERE product_id = ?1",
+      args: [id],
     });
-    await client.execute({
-      sql: `DELETE FROM product_print_item_purchases WHERE print_item_order_id IN
-            (SELECT id FROM product_print_item_orders WHERE print_item_id = ?1)`,
-      args: [row.id],
+    // Vínculos con el catálogo maestro de Piezas — faltaba, dejaba filas
+    // huérfanas en product_plastic_items apuntando a un product_id borrado
+    // (detectado por la prueba de integridad de eliminaciones). No borra
+    // las piezas en sí (plastic_products), solo el vínculo de esta ficha.
+    await tx.execute({
+      sql: "DELETE FROM product_plastic_items WHERE product_id = ?1",
+      args: [id],
     });
-    await client.execute({
-      sql: "DELETE FROM product_print_item_orders WHERE print_item_id = ?1",
-      args: [row.id],
+    const items = await tx.execute({
+      sql: "SELECT id FROM product_print_items WHERE product_id = ?1",
+      args: [id],
     });
+    for (const row of items.rows as unknown as { id: number }[]) {
+      await tx.execute({
+        sql: "DELETE FROM product_print_item_checks WHERE print_item_id = ?1",
+        args: [row.id],
+      });
+      await tx.execute({
+        sql: "DELETE FROM product_print_item_extras WHERE print_item_id = ?1",
+        args: [row.id],
+      });
+      await tx.execute({
+        sql: "DELETE FROM product_print_item_images WHERE print_item_id = ?1",
+        args: [row.id],
+      });
+      await tx.execute({
+        sql: `DELETE FROM product_print_item_purchases WHERE print_item_order_id IN
+              (SELECT id FROM product_print_item_orders WHERE print_item_id = ?1)`,
+        args: [row.id],
+      });
+      await tx.execute({
+        sql: "DELETE FROM product_print_item_orders WHERE print_item_id = ?1",
+        args: [row.id],
+      });
+    }
+    await tx.execute({
+      sql: "DELETE FROM product_print_items WHERE product_id = ?1",
+      args: [id],
+    });
+    await tx.execute({ sql: "DELETE FROM products WHERE id = ?1", args: [id] });
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
   }
-  await client.execute({
-    sql: "DELETE FROM product_print_items WHERE product_id = ?1",
-    args: [id],
-  });
-  await client.execute({ sql: "DELETE FROM products WHERE id = ?1", args: [id] });
 }
 
 export async function findProductByCodigo(codigo: string): Promise<Product | null> {
@@ -466,6 +495,16 @@ function looksLikeXlsx(bytes: Uint8Array): boolean {
   );
 }
 
+// El scope de fs de la app es angosto a propósito (solo appData — ver
+// capabilities/default.json): un path elegido por el usuario en un diálogo
+// nativo (open/save) no entra automáticamente al scope de Tauri, así que
+// justo después de cada diálogo hay que extenderlo en runtime para ese path
+// puntual antes de leer/escribir ahí. El comando Rust valida además que sea
+// absoluto y sin segmentos "..".
+export async function allowFsPath(path: string, isDir = false): Promise<void> {
+  await invoke("allow_fs_path", { path, isDir });
+}
+
 export async function pickImage(): Promise<ImageBlob | null> {
   const selected = await open({
     multiple: false,
@@ -478,6 +517,7 @@ export async function pickImage(): Promise<ImageBlob | null> {
   if (!Object.prototype.hasOwnProperty.call(MIME_BY_EXT, ext)) {
     throw new Error(`Extensión de archivo no soportada (.${ext || "?"}).`);
   }
+  await allowFsPath(selected);
   const data = await readFile(selected);
   return validateImageBlob(data);
 }
@@ -491,6 +531,7 @@ export async function pickExcelFile(): Promise<Uint8Array | null> {
   if (!selected.toLowerCase().endsWith(".xlsx")) {
     throw new Error("El archivo debe tener extensión .xlsx.");
   }
+  await allowFsPath(selected);
   const data = await readFile(selected);
   if (data.length === 0) {
     throw new Error("El archivo está vacío.");
@@ -516,7 +557,18 @@ export interface ImageFolderEntry {
 export async function pickImageFolder(): Promise<string | null> {
   const selected = await open({ directory: true, multiple: false });
   if (!selected || Array.isArray(selected)) return null;
+  // No recursivo: listImageFolderFiles solo lee el nivel superior.
+  await allowFsPath(selected, true);
   return selected;
+}
+
+// macOS crea un archivo "._nombre.ext" (AppleDouble, guarda metadata
+// extendida/resource fork) por cada archivo real al copiar a una unidad no
+// HFS+ (USB, red, exFAT/FAT32) — no es una imagen, aunque comparta
+// extensión con una real. ".DS_Store" es el mismo tipo de basura de Finder,
+// una por carpeta. Ninguno de los dos debe llegar a classifyImageEntries.
+function isMacOsMetadataFile(name: string): boolean {
+  return name.startsWith("._") || name === ".DS_Store";
 }
 
 export async function listImageFolderFiles(
@@ -526,6 +578,7 @@ export async function listImageFolderFiles(
   const files: ImageFolderEntry[] = [];
   for (const entry of entries) {
     if (!entry.isFile) continue;
+    if (isMacOsMetadataFile(entry.name)) continue;
     files.push({ name: entry.name, path: await join(folderPath, entry.name) });
   }
   return files;
@@ -547,6 +600,55 @@ export async function updateProductImage(
   await client.execute({
     sql: "UPDATE products SET imagen = ?1, imagen_mime = ?2 WHERE id = ?3",
     args: [imagen.data, imagen.mime, id],
+  });
+}
+
+// --- Imágenes pendientes (captura masiva de imágenes sobre un código que
+// todavía no tiene ficha técnica) ---
+
+// Se llama dentro de la transacción de createProduct — si existe una imagen
+// guardada para este código, se aplica y se borra de "pendientes". No pisa
+// una imagen que la propia alta ya haya traído (createProduct manual con
+// imagen elegida a mano, o una futura importación de fichas con imagen
+// inline).
+async function applyPendingProductImage(
+  execer: Client | Transaction,
+  productId: number,
+  codigo: string,
+): Promise<void> {
+  const result = await execer.execute({
+    sql: "SELECT id, imagen, imagen_mime FROM pending_product_images WHERE codigo = ?1",
+    args: [codigo],
+  });
+  const row = result.rows[0] as unknown as
+    | { id: number; imagen: ArrayBuffer; imagen_mime: string }
+    | undefined;
+  if (!row) return;
+  await execer.execute({
+    sql: "UPDATE products SET imagen = ?1, imagen_mime = ?2 WHERE id = ?3 AND imagen IS NULL",
+    args: [row.imagen, row.imagen_mime, productId],
+  });
+  await execer.execute({ sql: "DELETE FROM pending_product_images WHERE id = ?1", args: [row.id] });
+}
+
+// Usada por la captura masiva de imágenes (isAdmin) cuando el código del
+// archivo no corresponde a ninguna ficha técnica todavía — la imagen queda
+// guardada aquí en vez de descartarse, lista para aplicarse sola si más
+// adelante se crea un producto con ese código (ver applyPendingProductImage
+// arriba). ON CONFLICT(codigo) por si el mismo código se reimporta sin
+// ficha dos veces — la imagen más reciente reemplaza a la anterior, no se
+// acumulan filas por el mismo código.
+export async function upsertPendingProductImage(
+  actor: Actor,
+  input: { codigo: string; imagen: ImageBlob; archivoOriginal: string; usuario: string | null },
+): Promise<void> {
+  await assertActorAuthorized(actor);
+  await client.execute({
+    sql: `INSERT INTO pending_product_images (codigo, imagen, imagen_mime, archivo_original, creado_por)
+          VALUES (?1, ?2, ?3, ?4, ?5)
+          ON CONFLICT(codigo) DO UPDATE SET
+            imagen = ?2, imagen_mime = ?3, archivo_original = ?4, creado_por = ?5, creado_en = datetime('now')`,
+    args: [input.codigo, input.imagen.data, input.imagen.mime, input.archivoOriginal, input.usuario],
   });
 }
 
@@ -673,27 +775,45 @@ export interface Actor {
   token: string;
 }
 
-// Defensa en profundidad para operaciones sensibles (restaurar/eliminar
-// backups, cambiar su programación, administrar usuarios y permisos): la app
-// no tiene backend propio (ver docs/ARCHITECTURE.md — el token de Turso vive
-// en el bundle por diseño, es un constraint aceptado, no un descuido), así
-// que esto NO es una barrera real contra alguien con ese token embebido y
-// acceso a devtools/consola. Lo que sí evita es que un botón mal gateado, un
-// bug de UI, o un uso "creativo" de las funciones exportadas de este archivo
+// Defensa en profundidad para operaciones sensibles (catálogo, precios,
+// remisiones, producción, restaurar/eliminar backups, cambiar su
+// programación, administrar usuarios y permisos): la app no tiene backend
+// propio (ver docs/ARCHITECTURE.md — el token de Turso vive en el bundle por
+// diseño, es un constraint aceptado, no un descuido), así que esto NO es una
+// barrera real contra alguien con ese token embebido y acceso a
+// devtools/consola. Lo que sí evita es que un botón mal gateado, un bug de
+// UI, o un uso "creativo" de las funciones exportadas de este archivo
 // ejecute la operación sin pasar por una sesión real, vigente y con el rol o
 // permiso correcto verificados contra la BD — no solo un booleano que el
 // propio llamador podría fabricar.
-async function assertActorAuthorized(
+async function loadActorSession(
   actor: Actor,
-  requiredPermiso?: Permiso,
-): Promise<void> {
+): Promise<{ rol: string; activo: number } | undefined> {
   const result = await client.execute({
     sql: `SELECT rol, activo FROM users
           WHERE id = ?1 AND session_token = ?2
             AND session_expires_at IS NOT NULL AND session_expires_at > datetime('now')`,
     args: [actor.id, actor.token],
   });
-  const row = result.rows[0] as unknown as { rol: string; activo: number } | undefined;
+  return result.rows[0] as unknown as { rol: string; activo: number } | undefined;
+}
+
+// Para acciones que no tienen un permiso otorgable propio (ej. catálogo
+// base, intencionalmente abierto a cualquier usuario autenticado — ver
+// docs/PERMISSIONS.md): solo exige una sesión vigente y activa, sin rol ni
+// permiso específico.
+async function assertActorSession(actor: Actor): Promise<void> {
+  const row = await loadActorSession(actor);
+  if (!row || !row.activo) {
+    throw new Error("No autorizado: la sesión no es válida o venció.");
+  }
+}
+
+async function assertActorAuthorized(
+  actor: Actor,
+  requiredPermiso?: Permiso | Permiso[],
+): Promise<void> {
+  const row = await loadActorSession(actor);
   if (!row || !row.activo) {
     throw new Error("No autorizado: la sesión no es válida o venció.");
   }
@@ -701,9 +821,11 @@ async function assertActorAuthorized(
   if (!requiredPermiso) {
     throw new Error("No autorizado: esta acción requiere una cuenta administradora.");
   }
+  const permisos = Array.isArray(requiredPermiso) ? requiredPermiso : [requiredPermiso];
+  const placeholders = permisos.map((_, i) => `?${i + 2}`).join(", ");
   const permResult = await client.execute({
-    sql: "SELECT 1 FROM user_permissions WHERE user_id = ?1 AND permiso = ?2",
-    args: [actor.id, requiredPermiso],
+    sql: `SELECT 1 FROM user_permissions WHERE user_id = ?1 AND permiso IN (${placeholders})`,
+    args: [actor.id, ...permisos],
   });
   if (permResult.rows.length === 0) {
     throw new Error("No autorizado: falta el permiso requerido para esta acción.");
@@ -999,22 +1121,34 @@ export async function getProductsUsingPlasticProduct(
 }
 
 // Borra la pieza del catálogo maestro y la desvincula de cualquier ficha que
-// la tuviera (mismo criterio que deleteProduct: borrado real, sin flag, sin
-// transacción explícita — precedente ya establecido para esta cascada).
-export async function deletePlasticProduct(id: number): Promise<void> {
-  await client.execute({
-    sql: "DELETE FROM product_plastic_items WHERE plastic_product_id = ?1",
-    args: [id],
-  });
-  await client.execute({
-    sql: "DELETE FROM plastic_products WHERE id = ?1",
-    args: [id],
-  });
+// la tuviera (mismo criterio que deleteProduct: borrado real, sin flag,
+// atómico vía transacción).
+export async function deletePlasticProduct(actor: Actor, id: number): Promise<void> {
+  await assertActorAuthorized(actor, "plasticos");
+  const tx = await client.transaction("write");
+  try {
+    await tx.execute({
+      sql: "DELETE FROM product_plastic_items WHERE plastic_product_id = ?1",
+      args: [id],
+    });
+    await tx.execute({
+      sql: "DELETE FROM plastic_products WHERE id = ?1",
+      args: [id],
+    });
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
 }
 
 export async function createPlasticProduct(
+  actor: Actor,
   input: PlasticProductInput,
 ): Promise<number> {
+  await assertActorAuthorized(actor, "plasticos");
   const result = await client.execute({
     sql: `INSERT INTO plastic_products
           (nombre, sku, color, origen, descripcion, armado, dimension, peso, tipo_empaque, maquila, coste, imagen, imagen_mime)
@@ -1039,9 +1173,11 @@ export async function createPlasticProduct(
 }
 
 export async function updatePlasticProduct(
+  actor: Actor,
   id: number,
   input: PlasticProductInput,
 ): Promise<void> {
+  await assertActorAuthorized(actor, "plasticos");
   await client.execute({
     sql: `UPDATE plastic_products
           SET nombre = ?1, sku = ?2, color = ?3, origen = ?4, descripcion = ?5, armado = ?6,
@@ -1091,9 +1227,11 @@ export async function getPlasticItems(productId: number): Promise<PlasticItem[]>
 }
 
 export async function savePlasticItems(
+  actor: Actor,
   productId: number,
   items: PlasticItem[],
 ): Promise<void> {
+  await assertActorAuthorized(actor, "plasticos");
   const resolved: { plasticProductId: number; orden: number }[] = [];
   let orden = 1;
   for (const item of items) {
@@ -1101,9 +1239,9 @@ export async function savePlasticItems(
     let plasticProductId: number;
     if (item.plastic_product_id) {
       plasticProductId = item.plastic_product_id;
-      await updatePlasticProduct(plasticProductId, item.data);
+      await updatePlasticProduct(actor, plasticProductId, item.data);
     } else {
-      plasticProductId = await createPlasticProduct(item.data);
+      plasticProductId = await createPlasticProduct(actor, item.data);
     }
     resolved.push({ plasticProductId, orden });
     orden += 1;
@@ -1225,9 +1363,11 @@ export async function getPrintItems(productId: number): Promise<PrintItem[]> {
 }
 
 export async function savePrintItems(
+  actor: Actor,
   productId: number,
   items: PrintItem[],
 ): Promise<void> {
+  await assertActorAuthorized(actor, "imprenta");
   const existing = await client.execute({
     sql: "SELECT id FROM product_print_items WHERE product_id = ?1",
     args: [productId],
@@ -1379,6 +1519,7 @@ interface PrintItemOrderRow {
 }
 
 export async function createPrintItemOrder(
+  actor: Actor,
   printItemId: number,
   input: {
     merma: number;
@@ -1391,6 +1532,7 @@ export async function createPrintItemOrder(
   },
   usuario?: string | null,
 ): Promise<PrintItemOrder> {
+  await assertActorAuthorized(actor, "imprenta");
   const result = await client.execute({
     sql: `INSERT INTO product_print_item_orders
           (print_item_id, merma, cantidad_arte, numero_tiros, formacion_usada, numero_pliegos_usado, total_pliegos, usuario, folio)
@@ -1445,6 +1587,7 @@ interface PrintItemPurchaseRow {
 }
 
 export async function createPrintItemPurchase(
+  actor: Actor,
   printItemOrderId: number,
   input: {
     papel: string;
@@ -1457,6 +1600,7 @@ export async function createPrintItemPurchase(
   },
   usuario?: string | null,
 ): Promise<PrintItemPurchase> {
+  await assertActorAuthorized(actor, "imprenta");
   const result = await client.execute({
     sql: `INSERT INTO product_print_item_purchases
           (print_item_order_id, papel, pliego, maquina, cortes, cantidad, total_tamanos, usuario, folio)
@@ -1498,18 +1642,29 @@ export async function getPrintItemPurchases(
   return result.rows as unknown as PrintItemPurchaseRow[] as PrintItemPurchase[];
 }
 
-export async function deletePrintItemOrder(orderId: number): Promise<void> {
-  await client.execute({
-    sql: "DELETE FROM product_print_item_purchases WHERE print_item_order_id = ?1",
-    args: [orderId],
-  });
-  await client.execute({
-    sql: "DELETE FROM product_print_item_orders WHERE id = ?1",
-    args: [orderId],
-  });
+export async function deletePrintItemOrder(actor: Actor, orderId: number): Promise<void> {
+  await assertActorAuthorized(actor, "imprenta");
+  const tx = await client.transaction("write");
+  try {
+    await tx.execute({
+      sql: "DELETE FROM product_print_item_purchases WHERE print_item_order_id = ?1",
+      args: [orderId],
+    });
+    await tx.execute({
+      sql: "DELETE FROM product_print_item_orders WHERE id = ?1",
+      args: [orderId],
+    });
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
 }
 
-export async function deletePrintItemPurchase(purchaseId: number): Promise<void> {
+export async function deletePrintItemPurchase(actor: Actor, purchaseId: number): Promise<void> {
+  await assertActorAuthorized(actor, "imprenta");
   await client.execute({
     sql: "DELETE FROM product_print_item_purchases WHERE id = ?1",
     args: [purchaseId],
@@ -1733,6 +1888,21 @@ export async function createBackupSql(): Promise<{ sql: string; manifest: import
 export async function executeRestoreSql(actor: Actor, sql: string): Promise<void> {
   await assertActorAuthorized(actor, "backups_restaurar");
   const statements = extractRestoreStatements(sql);
+
+  // Subconjunto seguro: solo DROP TABLE IF EXISTS / CREATE TABLE / INSERT
+  // INTO sobre una tabla que ya existe en la BD en vivo — un archivo
+  // "backup" manipulado (statement arbitrario, tabla desconocida) se
+  // rechaza aquí, antes de ejecutar nada. Ver validateRestoreStatements en
+  // backup.ts.
+  const tablesResult = await client.execute(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+  );
+  const knownTables = (tablesResult.rows as unknown as { name: string }[]).map((r) => r.name);
+  const validation = validateRestoreStatements(statements, knownTables);
+  if (!validation.ok) {
+    throw new Error(`Archivo de restauración rechazado: ${validation.errors.join(" | ")}`);
+  }
+
   await client.migrate(statements);
 }
 
@@ -1766,6 +1936,7 @@ export async function pickBackupFile(): Promise<PickedFile | null> {
     filters: [{ name: "Backup de Clio", extensions: ["gz", "sql"] }],
   });
   if (!selected || Array.isArray(selected)) return null;
+  await allowFsPath(selected);
   const data = await readFile(selected);
   const name = selected.split(/[/\\]/).pop() ?? selected;
   return { name, data };
@@ -1964,8 +2135,8 @@ export async function getBackupSettings(): Promise<BackupSettings> {
 /**
  * Carpeta local de backups disparados desde la propia app (manual,
  * pre-importación, pre-restauración) — bajo el directorio de datos de la
- * app, ya cubierto por las capabilities fs:allow-home-*-recursive
- * existentes, sin pedir un permiso nuevo ni forzar rebuild.
+ * app, cubierto por fs:allow-appdata-*-recursive en capabilities, sin pedir
+ * un permiso nuevo ni forzar rebuild.
  */
 export async function getBackupsDir(): Promise<string> {
   const dir = await join(await appDataDir(), "backups");
@@ -1975,7 +2146,34 @@ export async function getBackupsDir(): Promise<string> {
   return dir;
 }
 
+function hasParentTraversal(path: string): boolean {
+  return path.split(/[/\\]/).includes("..");
+}
+
+// fileName llega de backup_history.archivo — un valor que en teoría solo
+// escribe la propia app, pero una fila manipulada a mano (o corrupta) no
+// debe poder escapar la carpeta de backups vía "../../..." en el nombre.
+function assertBareFileName(fileName: string): void {
+  if (!fileName || /[/\\]/.test(fileName) || hasParentTraversal(fileName)) {
+    throw new Error(`Nombre de archivo de backup inválido: "${fileName}".`);
+  }
+}
+
+// path llega de backup_history.ubicacion (ruta absoluta completa) — mismo
+// motivo: no debe poder resolver fuera de appDataDir()/backups.
+async function assertWithinBackupsDir(path: string): Promise<void> {
+  if (hasParentTraversal(path)) {
+    throw new Error(`Ruta de backup inválida: "${path}".`);
+  }
+  const dir = (await getBackupsDir()).replace(/\\/g, "/").replace(/\/$/, "");
+  const normalized = path.replace(/\\/g, "/");
+  if (normalized !== dir && !normalized.startsWith(`${dir}/`)) {
+    throw new Error(`Ruta fuera del directorio de backups: "${path}".`);
+  }
+}
+
 export async function saveLocalBackupFile(fileName: string, bytes: Uint8Array): Promise<string> {
+  assertBareFileName(fileName);
   const dir = await getBackupsDir();
   const path = await join(dir, fileName);
   await writeFile(path, bytes);
@@ -1983,11 +2181,13 @@ export async function saveLocalBackupFile(fileName: string, bytes: Uint8Array): 
 }
 
 export async function readLocalBackupFile(path: string): Promise<Uint8Array> {
+  await assertWithinBackupsDir(path);
   return readFile(path);
 }
 
 export async function localBackupFileExists(path: string): Promise<boolean> {
   try {
+    await assertWithinBackupsDir(path);
     return await exists(path);
   } catch {
     return false;
@@ -1995,6 +2195,7 @@ export async function localBackupFileExists(path: string): Promise<boolean> {
 }
 
 export async function deleteLocalBackupFile(path: string): Promise<void> {
+  await assertWithinBackupsDir(path);
   if (await localBackupFileExists(path)) {
     await remove(path);
   }
@@ -2003,6 +2204,7 @@ export async function deleteLocalBackupFile(path: string): Promise<void> {
 export async function saveBackupFileAs(defaultFileName: string, bytes: Uint8Array): Promise<boolean> {
   const target = await save({ defaultPath: defaultFileName });
   if (!target) return false;
+  await allowFsPath(target);
   await writeFile(target, bytes);
   return true;
 }
@@ -2072,6 +2274,7 @@ function rowToPrecio(row: PrecioRow): Precio {
 }
 
 export async function upsertPrecio(
+  actor: Actor,
   input: PrecioInput & {
     // Solo la usa la captura masiva — preserva la fecha declarada en el
     // Excel en vez del momento real de importación (ver src/precios.ts). La
@@ -2079,6 +2282,11 @@ export async function upsertPrecio(
     actualizadoEn?: string;
   },
 ): Promise<Precio> {
+  // Se llama tanto desde PreciosModal (precios_modificar) como desde
+  // "Guardar producto" en RemisionForm (solo remisiones_crear) — cualquiera
+  // de los dos habilita la escritura, para no restringir el flujo existente
+  // de Remisiones.
+  await assertActorAuthorized(actor, ["precios_modificar", "remisiones_crear"]);
   const skuPrincipal = computeSkuPrincipal(input.sku);
   const existing = await client.execute({
     sql: "SELECT precio FROM precios WHERE sku = ?1",
@@ -2120,9 +2328,11 @@ export async function upsertPrecio(
 // por SKU exacto y no puede "renombrarlo". Se identifica la fila por `id`
 // (estable) en vez de por el SKU viejo, que es justo lo que está cambiando.
 export async function updatePrecio(
+  actor: Actor,
   id: number,
   input: PrecioInput,
 ): Promise<Precio> {
+  await assertActorAuthorized(actor, "precios_modificar");
   const skuPrincipal = computeSkuPrincipal(input.sku);
 
   const conflict = await client.execute({
@@ -2240,10 +2450,12 @@ function rowToRemision(row: RemisionRow): Remision {
 // se confirma o se revierte junto, así que un fallo nunca deja un folio sin
 // su remisión ni una remisión sin (todos) sus renglones.
 export async function createRemisionConFolio(
+  actor: Actor,
   sku: string,
   input: Omit<RemisionInput, "folio">,
   renglones: RemisionRenglonInput[],
 ): Promise<RemisionConRenglones> {
+  await assertActorAuthorized(actor, "remisiones_crear");
   const tx = await client.transaction("write");
   try {
     const folio = await insertFolioRow(tx, "remision", sku);
@@ -2297,6 +2509,7 @@ export async function createRemisionConFolio(
 // renglones por completo (mismo patrón replace-and-reinsert que
 // specs/descriptions), nunca genera un folio nuevo ni una segunda remisión.
 export async function updateRemisionConRenglones(
+  actor: Actor,
   id: number,
   totales: Pick<
     RemisionInput,
@@ -2304,6 +2517,7 @@ export async function updateRemisionConRenglones(
   >,
   renglones: RemisionRenglonInput[],
 ): Promise<RemisionConRenglones> {
+  await assertActorAuthorized(actor, "remisiones_crear");
   const tx = await client.transaction("write");
   try {
     const headerResult = await tx.execute({
@@ -2368,7 +2582,12 @@ export async function getRemisionRenglones(remisionId: number): Promise<Remision
 
 // Mismo patrón que deletePrintItemOrder/deletePrintItemPurchase (Imprenta):
 // borrado real, no un flag — remision_renglones se borra primero por la FK.
-export async function deleteRemision(id: number, usuario: string | null): Promise<void> {
+export async function deleteRemision(
+  actor: Actor,
+  id: number,
+  usuario: string | null,
+): Promise<void> {
+  await assertActorAuthorized(actor, "remisiones_cancelar");
   const tx = await client.transaction("write");
   try {
     await tx.execute({ sql: "DELETE FROM remision_renglones WHERE remision_id = ?1", args: [id] });

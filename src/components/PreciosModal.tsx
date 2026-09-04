@@ -19,7 +19,7 @@ function formatFechaCorta(fechaSql: string): string {
 }
 
 export default function PreciosModal({ product, onClose }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const canVer = hasPermission(user, "precios_ver");
   const canModificar = hasPermission(user, "precios_modificar");
 
@@ -96,6 +96,8 @@ export default function PreciosModal({ product, onClose }: Props) {
 
   async function handleGuardar() {
     if (!precios || dirtyIds.length === 0) return;
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     setSaving(true);
     setError(null);
 
@@ -128,7 +130,7 @@ export default function PreciosModal({ product, onClose }: Props) {
       // estado actual de la tabla, así que dos renglones no deben escribirse
       // a la vez (evita colisiones si uno pide el SKU que otro está dejando).
       for (const item of toSave) {
-        await updatePrecio(item.id, {
+        await updatePrecio(actor, item.id, {
           sku: item.sku,
           nombre: item.nombre,
           precio: item.precio,
@@ -181,7 +183,8 @@ export default function PreciosModal({ product, onClose }: Props) {
   async function handleSubmitNew() {
     setAddError(null);
     const parsed = validateNewForm();
-    if (!parsed) return;
+    if (!parsed || !user || !token) return;
+    const actor = { id: user.id, token };
     setAddSaving(true);
     try {
       const existing = await getPrecio(parsed.sku);
@@ -189,7 +192,7 @@ export default function PreciosModal({ product, onClose }: Props) {
         setDuplicatePrecio(existing);
         return;
       }
-      await upsertPrecio({ ...parsed, usuario: user?.username ?? null });
+      await upsertPrecio(actor, { ...parsed, usuario: user?.username ?? null });
       await refreshPrecios();
       resetNewForm();
       setToastMessage("Producto agregado.");
@@ -202,10 +205,11 @@ export default function PreciosModal({ product, onClose }: Props) {
 
   async function handleConfirmarActualizarExistente() {
     const parsed = validateNewForm();
-    if (!parsed || !duplicatePrecio) return;
+    if (!parsed || !duplicatePrecio || !user || !token) return;
+    const actor = { id: user.id, token };
     setAddSaving(true);
     try {
-      await upsertPrecio({ ...parsed, usuario: user?.username ?? null });
+      await upsertPrecio(actor, { ...parsed, usuario: user?.username ?? null });
       await refreshPrecios();
       resetNewForm();
       setToastMessage("Producto actualizado.");

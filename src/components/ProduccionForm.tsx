@@ -4,7 +4,7 @@ import { writeFile } from "@tauri-apps/plugin-fs";
 import type { PlacasExistentes, PrintItem, PrintItemOrder, Product } from "../types";
 import { buildOrderPdf } from "../pdf";
 import type { OrderEntry } from "../pdf";
-import { createFolio, createPrintItemOrder, logEvent } from "../db";
+import { allowFsPath, createFolio, createPrintItemOrder, logEvent } from "../db";
 import { useAuth } from "../auth";
 
 const PLACAS_EXISTENTES_LABEL: Record<PlacasExistentes, string> = {
@@ -64,7 +64,7 @@ function computeTotal(
 }
 
 export default function ProduccionForm({ product, items, onOrderCreated, onSwitchToCompra }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [inputs, setInputs] = useState<ItemInputs[]>(() => items.map(emptyInputs));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -143,6 +143,8 @@ export default function ProduccionForm({ product, items, onOrderCreated, onSwitc
       usedValues.push({ formacionNum, pliegosNum });
     }
 
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     setSaving(true);
     try {
       const folio = await createFolio("produccion", product.codigo);
@@ -158,6 +160,7 @@ export default function ProduccionForm({ product, items, onOrderCreated, onSwitc
         setSaving(false);
         return;
       }
+      await allowFsPath(path);
       await writeFile(path, pdfBytes);
 
       for (let i = 0; i < entries.length; i++) {
@@ -165,6 +168,7 @@ export default function ProduccionForm({ product, items, onOrderCreated, onSwitc
         if (!entry.item.id) continue;
         try {
           const order = await createPrintItemOrder(
+            actor,
             entry.item.id,
             {
               merma: entry.merma,

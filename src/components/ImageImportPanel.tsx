@@ -7,9 +7,15 @@ import {
   readImageFileBlob,
   runBackupNow,
   updateProductImage,
+  upsertPendingProductImage,
   type ImageFolderEntry,
 } from "../db";
-import { classifyImageEntries, skuFromFilename, type ClassifiedImageRow } from "../imageImport";
+import {
+  classifyImageEntries,
+  fullStemFromFilename,
+  skuFromFilename,
+  type ClassifiedImageRow,
+} from "../imageImport";
 import { isAdmin, useAuth } from "../auth";
 import type { Product } from "../types";
 
@@ -24,7 +30,7 @@ interface ImageImportSummary {
   asignadas: number;
   sustituidas: number;
   conservadas: number;
-  noEncontrados: number;
+  pendientes: number;
   conErrores: number;
   total: number;
   errorRows: { archivo: string; motivo: string }[];
@@ -35,7 +41,7 @@ const CHUNK_SIZE = 25;
 const STATUS_LABEL: Record<ClassifiedImageRow["status"], string> = {
   nueva: "Nueva imagen",
   sustituir: "Sustituir",
-  "no-encontrado": "No encontrada",
+  "no-encontrado": "Se guardará para más adelante",
   error: "Error",
 };
 
@@ -44,7 +50,16 @@ async function buildImageLookups(
   onProgress: (done: number) => void,
 ): Promise<Map<string, Product | null>> {
   const lookups = new Map<string, Product | null>();
-  const skus = Array.from(new Set(entries.map((e) => skuFromFilename(e.name)).filter(Boolean)));
+  // Se consultan ambos candidatos por archivo: el nombre completo (match de
+  // siempre, cubre códigos que ya traen guion propio) y el SKU recortado al
+  // inicio del nombre (nuevo) — classifyImageEntries decide cuál usar.
+  const candidates = new Set<string>();
+  for (const e of entries) {
+    candidates.add(fullStemFromFilename(e.name));
+    const sku = skuFromFilename(e.name);
+    if (sku) candidates.add(sku);
+  }
+  const skus = Array.from(candidates).filter(Boolean);
   for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
     const chunk = skus.slice(i, i + CHUNK_SIZE);
     await Promise.all(
@@ -58,7 +73,7 @@ async function buildImageLookups(
 }
 
 export default function ImageImportPanel() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [phase, setPhase] = useState<Phase>("picking");
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<ClassifiedImageRow[]>([]);
@@ -141,6 +156,8 @@ export default function ImageImportPanel() {
   }
 
   async function handleConfirm() {
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     setError(null);
     setPhase("backing-up");
     const backup = await runBackupNow(
@@ -162,7 +179,7 @@ export default function ImageImportPanel() {
     let asignadas = 0;
     let sustituidas = 0;
     let conservadas = 0;
-    let noEncontrados = 0;
+    let pendientes = 0;
     let conErrores = 0;
     const errorRows: { archivo: string; motivo: string }[] = [];
 
@@ -175,12 +192,30 @@ export default function ImageImportPanel() {
         errorRows.push({ archivo: row.archivo, motivo: row.reason ?? "Error desconocido." });
         continue;
       }
-      if (row.status === "no-encontrado") {
-        noEncontrados += 1;
-        continue;
-      }
       if (row.status === "sustituir" && !(overwriteChoices.get(row.fila) ?? false)) {
         conservadas += 1;
+        continue;
+      }
+
+      if (row.status === "no-encontrado") {
+        try {
+          const imagen = await readImageFileBlob(row.path);
+          await upsertPendingProductImage(actor, {
+            codigo: row.sku,
+            imagen,
+            archivoOriginal: row.archivo,
+            usuario: user?.username ?? null,
+          });
+          pendientes += 1;
+        } catch (err) {
+          conErrores += 1;
+          errorRows.push({ archivo: row.archivo, motivo: String(err) });
+          logEvent(
+            "ERROR",
+            `Captura masiva de imágenes: no se pudo guardar la imagen pendiente de "${row.archivo}": ${String(err)}`,
+            user?.username ?? null,
+          );
+        }
         continue;
       }
 
@@ -203,10 +238,10 @@ export default function ImageImportPanel() {
     }
 
     setCommitProgress({ done: rows.length, total: rows.length });
-    setSummary({ asignadas, sustituidas, conservadas, noEncontrados, conErrores, total: rows.length, errorRows });
+    setSummary({ asignadas, sustituidas, conservadas, pendientes, conErrores, total: rows.length, errorRows });
     logEvent(
       "INFO",
-      `Captura masiva de imágenes: ${asignadas} asignadas, ${sustituidas} sustituidas, ${conservadas} conservadas, ${noEncontrados} sin ficha, ${conErrores} con errores (total ${rows.length}).`,
+      `Captura masiva de imágenes: ${asignadas} asignadas, ${sustituidas} sustituidas, ${conservadas} conservadas, ${pendientes} guardadas para más adelante, ${conErrores} con errores (total ${rows.length}).`,
       user?.username ?? null,
     );
     setPhase("done");
@@ -221,9 +256,12 @@ export default function ImageImportPanel() {
     <div>
       <h2>Captura masiva de imágenes</h2>
       <p className="hint" style={{ marginTop: "0.4rem" }}>
-        Selecciona una carpeta con imágenes cuyo nombre de archivo sea el código de la ficha
-        técnica (por ejemplo, ABC-123.jpg para el código ABC-123). Solo se actualiza la imagen de
-        cada ficha; el código, nombre, especificaciones y demás datos no se modifican.
+        Selecciona una carpeta con imágenes (png/jpg/webp/gif) cuyo nombre de archivo empiece con
+        el código de la ficha técnica — el resto del nombre (separado por espacio, guion, o pegado
+        directo como "7234Circulos...") se ignora. Solo se actualiza la imagen de cada ficha; el
+        código, nombre, especificaciones y demás datos no se modifican. Si el código no corresponde
+        a ninguna ficha todavía, la imagen se guarda y se asigna sola en cuanto se cree un producto
+        con ese código.
       </p>
 
       {phase === "picking" && (
@@ -256,14 +294,15 @@ export default function ImageImportPanel() {
           <div className="import-review-summary">
             <span className="tag">{nuevaCount} nueva(s)</span>
             <span className="tag">{sustituirCount} para sustituir</span>
-            <span className="tag">{noEncontradoCount} sin ficha</span>
+            <span className="tag">{noEncontradoCount} para guardar (sin ficha todavía)</span>
             <span className="tag">{erroresCount} con error</span>
             <span className="tag">{rows.length} archivo(s) en total</span>
           </div>
 
           <p className="hint" style={{ margin: 0 }}>
             Sustituir reemplaza únicamente la imagen actual de esa ficha técnica; el resto de sus
-            datos no se modifica. Las imágenes sin ficha encontrada o con errores se omiten.
+            datos no se modifica. Las imágenes sin ficha encontrada se guardan para aplicarse solas
+            cuando se cree ese producto; las que tienen error se omiten.
           </p>
 
           {sustituirCount > 0 && (
@@ -327,6 +366,8 @@ export default function ImageImportPanel() {
                         </div>
                       ) : row.status === "nueva" ? (
                         "Se asignará"
+                      ) : row.status === "no-encontrado" ? (
+                        "Se guardará para más adelante"
                       ) : (
                         "Se omitirá"
                       )}
@@ -398,8 +439,8 @@ export default function ImageImportPanel() {
               <span>Conservadas</span>
             </div>
             <div className="import-summary-item">
-              <span>{summary.noEncontrados}</span>
-              <span>Códigos no encontrados</span>
+              <span>{summary.pendientes}</span>
+              <span>Guardadas para más adelante</span>
             </div>
             <div className="import-summary-item">
               <span>{summary.conErrores}</span>

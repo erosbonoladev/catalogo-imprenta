@@ -59,7 +59,7 @@ async function buildProductExistsMap(
 }
 
 export default function PreciosImportPanel() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [phase, setPhase] = useState<Phase>("picking");
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<ClassifiedPrecioRow[]>([]);
@@ -117,6 +117,8 @@ export default function PreciosImportPanel() {
   }
 
   async function handleConfirm() {
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     setError(null);
     setPhase("backing-up");
     const backup = await runBackupNow(
@@ -154,7 +156,7 @@ export default function PreciosImportPanel() {
           }
 
           try {
-            await upsertPrecio({
+            await upsertPrecio(actor, {
               sku: row.sku,
               nombre: row.nombre,
               precio: row.precio ?? 0,

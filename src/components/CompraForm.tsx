@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import type { PrintItem, PrintItemOrder, PrintItemPurchase, Product } from "../types";
-import { createFolio, createPrintItemPurchase, getPrintItemPurchases, logEvent } from "../db";
+import { allowFsPath, createFolio, createPrintItemPurchase, getPrintItemPurchases, logEvent } from "../db";
 import { useAuth } from "../auth";
 import { buildPurchasePdf } from "../pdf";
 
@@ -21,7 +21,7 @@ function isPureNumber(value: string): boolean {
 }
 
 export default function CompraForm({ product, item, orders, multi, refreshKey }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(orders[0]?.id ?? null);
   const [cortesOverride, setCortesOverride] = useState("");
   const [purchases, setPurchases] = useState<PrintItemPurchase[]>([]);
@@ -60,6 +60,8 @@ export default function CompraForm({ product, item, orders, multi, refreshKey }:
 
   async function handleSave() {
     if (!selectedOrder || cantidad === null || totalTamanos === null) return;
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     setError(null);
     setSaving(true);
     try {
@@ -91,9 +93,11 @@ export default function CompraForm({ product, item, orders, multi, refreshKey }:
         setSaving(false);
         return;
       }
+      await allowFsPath(path);
       await writeFile(path, pdfBytes);
 
       const purchase = await createPrintItemPurchase(
+        actor,
         selectedOrder.id,
         {
           papel: item.tipo_papel,

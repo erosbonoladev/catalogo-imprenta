@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import {
+  allowFsPath,
   createRemisionConFolio,
   getPrecio,
   getPreciosBySkuPrincipal,
@@ -40,7 +41,7 @@ const IVA_RATE = 0.16;
 const PEDIDO_BODEGAS_INTERNA = "JALISCO";
 
 export default function RemisionForm({ onCreated }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [pedidoBodegas, setPedidoBodegas] = useState(PEDIDO_BODEGAS_INTERNA);
   const [descuentoPct, setDescuentoPct] = useState("0");
   const [rows, setRows] = useState<RenglonDraft[]>([]);
@@ -132,6 +133,8 @@ export default function RemisionForm({ onCreated }: Props) {
       setGuardarProductoError("Ingresa un precio válido (mayor o igual a 0) antes de guardar el producto.");
       return;
     }
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     setGuardarProductoSaving(true);
     setGuardarProductoError(null);
     try {
@@ -141,7 +144,7 @@ export default function RemisionForm({ onCreated }: Props) {
         setGuardarProductoDuplicado(existing);
         return;
       }
-      await upsertPrecio({
+      await upsertPrecio(actor, {
         sku: row.sku.trim(),
         nombre: row.productoNombre.trim(),
         precio: precioNum,
@@ -158,10 +161,11 @@ export default function RemisionForm({ onCreated }: Props) {
   }
 
   async function handleConfirmarActualizarProducto(row: RenglonDraft, precioNum: number) {
-    if (!guardarProductoTipo) return;
+    if (!guardarProductoTipo || !user || !token) return;
+    const actor = { id: user.id, token };
     setGuardarProductoSaving(true);
     try {
-      await upsertPrecio({
+      await upsertPrecio(actor, {
         sku: row.sku.trim(),
         nombre: row.productoNombre.trim(),
         precio: precioNum,
@@ -220,6 +224,8 @@ export default function RemisionForm({ onCreated }: Props) {
 
   async function handleGenerar() {
     setError(null);
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     if (!pedidoBodegas.trim()) {
       setError("El campo Bodega es obligatorio.");
       return;
@@ -276,7 +282,7 @@ export default function RemisionForm({ onCreated }: Props) {
         precio_texto: precioTexto,
         usuario: user?.username ?? null,
       };
-      created = await createRemisionConFolio(parsedRows[0].sku || "GRAL", remisionInput, renglonesInput);
+      created = await createRemisionConFolio(actor, parsedRows[0].sku || "GRAL", remisionInput, renglonesInput);
     } catch (err) {
       setError(`No se pudo generar la remisión: ${String(err)}`);
       setGenerating(false);
@@ -299,7 +305,10 @@ export default function RemisionForm({ onCreated }: Props) {
         defaultPath: `${created.folio}.pdf`,
         filters: [{ name: "PDF", extensions: ["pdf"] }],
       });
-      if (path) await writeFile(path, pdfBytes);
+      if (path) {
+        await allowFsPath(path);
+        await writeFile(path, pdfBytes);
+      }
     } catch (err) {
       logEvent(
         "ERROR",

@@ -32,7 +32,7 @@ const CAMPOS_VISTA: { label: string; key: keyof PlasticProductInput }[] = [
 ];
 
 export default function PlasticosSection({ productId, onBack }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const allowed = hasPermission(user, "plasticos");
   const [items, setItems] = useState<PlasticItem[]>([]);
   const [savedItems, setSavedItems] = useState<PlasticItem[]>([]);
@@ -115,10 +115,11 @@ export default function PlasticosSection({ productId, onBack }: Props) {
   }
 
   async function handleSave() {
+    if (!user || !token) return;
     setSaving(true);
     setError(null);
     try {
-      await savePlasticItems(productId, items);
+      await savePlasticItems({ id: user.id, token }, productId, items);
       const refreshed = await getPlasticItems(productId);
       setItems(refreshed);
       setSavedItems(refreshed);

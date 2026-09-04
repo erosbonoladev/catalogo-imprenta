@@ -2,7 +2,7 @@ import { useState } from "react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
-import { createRequisicionConFolio, logEvent } from "../db";
+import { allowFsPath, createRequisicionConFolio, logEvent } from "../db";
 import { buildRequisicionPdf } from "../pdf";
 import { buildWhatsAppUrl, WHATSAPP_BODEGA_NUMBER } from "../requisiciones";
 import type { Product, Requisicion } from "../types";
@@ -89,6 +89,7 @@ export default function RequisicionModal({
           filters: [{ name: "PDF", extensions: ["pdf"] }],
         });
         if (path) {
+          await allowFsPath(path);
           await writeFile(path, pdfBytes);
           // WhatsApp no permite adjuntar un archivo vía el enlace wa.me (solo
           // texto precargado) — revelar el PDF ya seleccionado en el

@@ -49,7 +49,15 @@ Admin-only (`isAdmin`), pestaña "Captura masiva de fichas técnicas" en Configu
 
 ## Importación de imágenes
 
-Admin-only, mismo grupo de pestañas. Reemplaza/asigna solo el BLOB `imagen` de fichas existentes emparejando el nombre de archivo (sin extensión) de una carpeta elegida contra `codigo` (`findProductByCodigo`). Mismo wizard de 5 fases que la importación de fichas, con toggle Sustituir/Conservar para productos que ya tienen imagen. No usa hoja de cálculo.
+Admin-only, mismo grupo de pestañas. Reemplaza/asigna solo el BLOB `imagen` de fichas existentes, emparejando el nombre de archivo de una carpeta elegida contra `codigo`. Mismo wizard de 5 fases que la importación de fichas, con toggle Sustituir/Conservar para productos que ya tienen imagen. No usa hoja de cálculo. Formatos soportados: png/jpg/webp/gif (firma real de los bytes, no la extensión — ver `MIME_BY_EXT`/`detectImageMime` en `src/db.ts`).
+
+**Extracción del código desde el nombre de archivo** (`skuFromFilename`/`fullStemFromFilename`/`classifyImageEntries` en `src/imageImport.ts`): se prueba primero el nombre de archivo **completo** (sin extensión) contra `codigo` — así un código que ya trae guion propio (ej. `ABC-123.jpg`) sigue coincidiendo exacto, igual que antes. Solo si eso no coincide con ninguna ficha, se prueba un SKU **recortado** al inicio del nombre, cortando en lo que aparezca primero:
+- Un separador explícito: espacio o guion (`"7145-Tapete-De-Texturas...jpg"` → `7145`; `"7145 - Tapete.jpg"` → `7145`).
+- Un nombre pegado sin separador, detectado como dígito+Mayúscula+minúscula (`"7234Circulos-Del-Conocimiento.png"` → `7234`, sin que el primer guion — que está dentro del nombre, no en el separador — se confunda con el corte).
+
+Si el SKU termina en una sola letra sin nada pegado después (`"8059C.jpg"`, mismo patrón de variante que `computeSkuPrincipal` en precios), no se corta — se necesita una tercera letra en minúscula para confirmar que es el arranque de un nombre y no parte del código. Límite conocido y aceptado: una variante con letra pegada directo a un nombre sin separador (`"8059CProducto.jpg"`) no se separa bien; el archivo completo queda como código, lo que en la práctica solo significa que termina en "sin ficha" (ver abajo) en vez de emparejar mal.
+
+**Código sin ficha técnica todavía**: en vez de omitirse, la imagen se guarda en `pending_product_images` (`upsertPendingProductImage`, admin) bajo ese código. Si más adelante se crea un producto con ese `codigo` (alta manual en `ProductForm` o por Excel en `FichaImportPanel`), `createProduct` la aplica sola dentro de la misma transacción y borra la fila pendiente (`applyPendingProductImage`) — pero solo si esa alta no trae ya su propia imagen, para no pisarla. Reimportar el mismo código sin ficha dos veces reemplaza la imagen pendiente anterior (`ON CONFLICT(codigo)`), no la duplica.
 
 ## PDF
 

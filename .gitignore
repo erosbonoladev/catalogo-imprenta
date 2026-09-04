@@ -15,6 +15,9 @@ dist-ssr
 .env.*
 !.env.example
 
+# BD SQLite local descartable que usan las pruebas (tests/setup.ts) — nunca es la BD real.
+/.tmp/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

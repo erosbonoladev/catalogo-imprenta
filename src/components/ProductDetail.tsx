@@ -36,7 +36,7 @@ export default function ProductDetail({
   onOpenPlasticos,
   onOpenImprenta,
 }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [product, setProduct] = useState<Product | null>(null);
   const [specs, setSpecs] = useState<ProductSpec[]>([]);
   const [descriptions, setDescriptions] = useState<ProductDescription[]>([]);
@@ -80,7 +80,8 @@ export default function ProductDetail({
   }
 
   async function handleDelete() {
-    await deleteProduct(productId);
+    if (!user || !token) return;
+    await deleteProduct({ id: user.id, token }, productId);
     onDeleted();
   }
 

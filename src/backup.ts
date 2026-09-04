@@ -153,6 +153,69 @@ export function extractRestoreStatements(sql: string): string[] {
   });
 }
 
+const TABLE_TOKEN = `(?:"([^"]+)"|\`([^\`]+)\`|\\[([^\\]]+)\\]|(\\w+))`;
+const DROP_TABLE_RE = new RegExp(`^DROP\\s+TABLE\\s+IF\\s+EXISTS\\s+${TABLE_TOKEN}\\s*$`, "i");
+const CREATE_TABLE_RE = new RegExp(
+  `^CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?${TABLE_TOKEN}\\s*\\(`,
+  "i",
+);
+const INSERT_INTO_RE = new RegExp(`^INSERT\\s+INTO\\s+${TABLE_TOKEN}\\s*\\(`, "i");
+// Defensa adicional además del prefijo de verbo — ninguna de las 3 formas
+// permitidas debería poder contener estas palabras, pero se rechazan
+// explícitamente por si acaso (\b evita falsos positivos como "trigger_id").
+const DANGEROUS_KEYWORDS_RE = /\b(ATTACH|DETACH|PRAGMA|TRIGGER|VIEW|VACUUM|REINDEX)\b/i;
+
+function extractTableName(match: RegExpMatchArray): string {
+  return match[1] ?? match[2] ?? match[3] ?? match[4] ?? "";
+}
+
+/**
+ * Restringe un dump de restauración al único subconjunto de SQL que la app
+ * necesita ejecutar: DROP TABLE IF EXISTS / CREATE TABLE / INSERT INTO sobre
+ * una tabla que YA existe en la BD en vivo. Un archivo "backup" manipulado
+ * (SKU falso, statement de UPDATE/DELETE arbitrario, ATTACH a otra BD, una
+ * tabla nueva no reconocida) se rechaza aquí, antes de que executeRestoreSql
+ * llegue a ejecutar nada contra la BD real. knownTables se pasa desde afuera
+ * (consultado en vivo contra sqlite_master) en vez de una lista fija en este
+ * archivo, para no requerir mantenimiento manual cada vez que se agregue una
+ * tabla real — y para seguir aceptando tablas "muertas" que un backup viejo
+ * pueda incluir, mientras sigan existiendo en la BD.
+ */
+export function validateRestoreStatements(
+  statements: string[],
+  knownTables: string[],
+): { ok: boolean; errors: string[] } {
+  const known = new Set(knownTables);
+  const errors: string[] = [];
+
+  for (const [i, stmt] of statements.entries()) {
+    const trimmed = stmt.trim();
+    if (DANGEROUS_KEYWORDS_RE.test(trimmed)) {
+      errors.push(`Statement #${i + 1} contiene una palabra clave no permitida: "${trimmed.slice(0, 80)}…"`);
+      continue;
+    }
+
+    const dropMatch = trimmed.match(DROP_TABLE_RE);
+    const createMatch = trimmed.match(CREATE_TABLE_RE);
+    const insertMatch = trimmed.match(INSERT_INTO_RE);
+    const match = dropMatch ?? createMatch ?? insertMatch;
+
+    if (!match) {
+      errors.push(
+        `Statement #${i + 1} no es un DROP TABLE IF EXISTS / CREATE TABLE / INSERT INTO válido: "${trimmed.slice(0, 80)}…"`,
+      );
+      continue;
+    }
+
+    const table = extractTableName(match);
+    if (!known.has(table)) {
+      errors.push(`Statement #${i + 1} referencia una tabla desconocida: "${table}".`);
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
 export interface BackupValidation {
   ok: boolean;
   manifest: BackupManifest | null;

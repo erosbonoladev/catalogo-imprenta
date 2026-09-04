@@ -8,7 +8,7 @@ Catálogo de escritorio para una imprenta industrial. Login individual → catá
 
 ## Stack
 
-Tauri v2 (Rust + webview) + React 19 + TypeScript. BD: Turso/libSQL vía `@libsql/client/web` (sin plugin de Tauri, sin fallback local). PDF: `jspdf`. Import Excel: `xlsx`. Sin suite de tests.
+Tauri v2 (Rust + webview) + React 19 + TypeScript. BD: Turso/libSQL vía `@libsql/client/web` (sin plugin de Tauri, sin fallback local). PDF: `jspdf`. Import Excel: `xlsx`. Pruebas de integridad (Vitest) para remisiones/precios/backups/eliminaciones — ver `npm test` abajo.
 
 ## Comandos
 
@@ -21,6 +21,7 @@ Requiere `.env` en la raíz (gitignored) con `VITE_TURSO_URL`, `VITE_TURSO_AUTH_
 - `npx tsc --noEmit` — type-check.
 - `npm run build` — type-check + build de producción (`dist/`).
 - `cd src-tauri && cargo check` — chequeo rápido de Rust.
+- `npm test` — pruebas de integridad (Vitest) contra un SQLite/libSQL local descartable (`.env.test`, `tests/`), nunca contra Turso. `src/db.ts` corre sin cambios: `vitest.config.ts` redirige `@libsql/client/web` al cliente Node de `@libsql/client` solo bajo pruebas — ver ese archivo y `tests/setup.ts`.
 
 Si `npm run tauri dev` falla compilando Rust con una ruta de archivo que no coincide con la carpeta real del proyecto: es caché stale de `src-tauri/target`, no un bug de código — ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#rust--capabilities) (`cargo clean` y volver a correr).
 

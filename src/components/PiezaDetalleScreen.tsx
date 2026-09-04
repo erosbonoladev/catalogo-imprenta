@@ -32,7 +32,7 @@ const CAMPOS: { label: string; key: keyof PlasticProduct }[] = [
 ];
 
 export default function PiezaDetalleScreen({ plasticProductId, onBack, onOpenProduct }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const allowed = hasPermission(user, "plasticos");
   const [pieza, setPieza] = useState<PlasticProduct | null>(null);
   const [usedIn, setUsedIn] = useState<ProductUsingPlasticRow[]>([]);
@@ -92,9 +92,10 @@ export default function PiezaDetalleScreen({ plasticProductId, onBack, onOpenPro
   }
 
   async function handleBorrar() {
+    if (!user || !token) return;
     setDeleting(true);
     try {
-      await deletePlasticProduct(plasticProductId);
+      await deletePlasticProduct({ id: user.id, token }, plasticProductId);
       onBack();
     } finally {
       setDeleting(false);

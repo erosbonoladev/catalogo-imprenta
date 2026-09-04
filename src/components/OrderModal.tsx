@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import type { PrintItem, PrintItemOrder, Product } from "../types";
-import { createFolio, createPrintItemPurchase, getPrintItemOrders, logEvent } from "../db";
+import { allowFsPath, createFolio, createPrintItemPurchase, getPrintItemOrders, logEvent } from "../db";
 import { useAuth } from "../auth";
 import { buildPurchasePdf } from "../pdf";
 import type { PurchaseEntry } from "../pdf";
@@ -24,7 +24,7 @@ function isPureNumber(value: string): boolean {
 }
 
 export default function OrderModal({ product, items, onClose }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [mode, setMode] = useState<Mode>("produccion");
   const [ordersByItem, setOrdersByItem] = useState<Record<number, PrintItemOrder[]>>({});
   const [loadingOrders, setLoadingOrders] = useState(true);
@@ -93,6 +93,8 @@ export default function OrderModal({ product, items, onClose }: Props) {
       });
     }
 
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     setGeneralSaving(true);
     try {
       const folio = await createFolio("compra", product.codigo);
@@ -108,11 +110,13 @@ export default function OrderModal({ product, items, onClose }: Props) {
         setGeneralSaving(false);
         return;
       }
+      await allowFsPath(path);
       await writeFile(path, pdfBytes);
 
       for (const entry of entries) {
         try {
           await createPrintItemPurchase(
+            actor,
             entry.baseOrder.id,
             {
               papel: entry.papel,

@@ -33,7 +33,7 @@ const emptyProduct: ProductInput = {
 };
 
 export default function ProductForm({ productId, onDone, onCancel }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [product, setProduct] = useState<ProductInput>(emptyProduct);
   const [specs, setSpecs] = useState<ProductSpec[]>([]);
   const [descriptions, setDescriptions] = useState<ProductDescription[]>(
@@ -169,6 +169,8 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
 
     const codigo = product.codigo.trim();
     const nombre = product.nombre.trim();
@@ -187,10 +189,10 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
       const payload: ProductInput = { ...product, codigo, nombre };
       let id: number;
       if (productId) {
-        await updateProduct(productId, payload, specs, descriptions);
+        await updateProduct(actor, productId, payload, specs, descriptions);
         id = productId;
       } else {
-        id = await createProduct(payload, specs, descriptions);
+        id = await createProduct(actor, payload, specs, descriptions);
       }
       onDone(id);
     } catch (err) {

@@ -70,9 +70,11 @@ En ambos casos, mismo flujo protegido:
 1. Se muestran los metadatos (tablas y filas) del archivo.
 2. Hay que escribir literalmente `RESTAURAR` para habilitar "Continuar".
 3. Se crea un backup `BACKUP_PRE_RESTAURACION` del estado actual — si este falla, la restauración **no** ocurre.
-4. Se ejecuta el restore (`client.batch()` con los `INSERT`/`CREATE TABLE` del dump).
+4. `executeRestoreSql()` valida cada statement del dump contra un subconjunto seguro (`validateRestoreStatements()` en `src/backup.ts`): solo `DROP TABLE IF EXISTS` / `CREATE TABLE` / `INSERT INTO` sobre una tabla que **ya existe** en la BD en vivo en ese momento (consultada contra `sqlite_master`, no una lista fija) — cualquier otro statement (`UPDATE`/`DELETE` sueltos, `ATTACH`, una tabla no reconocida, etc.) hace que la restauración completa se rechace antes de tocar la BD. Recién entonces se ejecuta el restore (`client.migrate()` con los statements ya validados).
 5. Se verifica contra producción: `verifyRestoreCounts()` vuelve a contar filas por tabla y las compara contra el manifiesto del archivo restaurado.
 6. Se registra en `backup_history` como `RESTAURACION` (si el archivo coincide por checksum con un backup conocido) o `RESTAURACION_ARCHIVO_SUBIDO` (si no coincide con ninguno).
+
+**Nota**: como el subconjunto seguro exige que la tabla ya exista en la BD en vivo, "Restaurar" desde Clio no sirve para reconstruir un esquema completo sobre una Turso DB totalmente vacía/nueva (recuperación total, no solo de datos) — para ese caso extremo sigue disponible la vía documentada más abajo (`turso db shell <db> < backup.sql`), fuera del flujo normal de la app.
 
 No se genera ningún archivo temporal fuera de `appDataDir()/backups`: el archivo subido se lee a memoria (`Uint8Array`) y nunca se copia a disco aparte, así que no hay nada que limpiar después.
 

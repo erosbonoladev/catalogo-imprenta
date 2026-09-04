@@ -65,7 +65,7 @@ async function buildLookups(
 }
 
 export default function FichaImportPanel() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [phase, setPhase] = useState<Phase>("picking");
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<ClassifiedRow[]>([]);
@@ -148,6 +148,8 @@ export default function FichaImportPanel() {
   }
 
   async function handleConfirm() {
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     setError(null);
     setPhase("backing-up");
     const backup = await runBackupNow(
@@ -191,6 +193,7 @@ export default function FichaImportPanel() {
       if (row.status === "nueva") {
         try {
           const id = await createProduct(
+            actor,
             {
               codigo: row.clave,
               nombre: row.producto,
@@ -228,6 +231,7 @@ export default function FichaImportPanel() {
         const existing = row.matchedProduct;
         if (!existing) throw new Error("No se encontró el producto original para sobrescribir.");
         await updateProduct(
+          actor,
           existing.id,
           {
             codigo: row.clave || existing.codigo,

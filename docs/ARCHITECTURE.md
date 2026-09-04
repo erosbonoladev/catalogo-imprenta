@@ -16,7 +16,9 @@ El **Sidebar no es un menú de navegación** — es chrome persistente (colapsar
 
 ## Imágenes
 
-BLOB en la DB (`imagen`+`imagen_mime`), no archivos locales — así se ven igual en toda máquina. `pickImage()` lee bytes con `@tauri-apps/plugin-fs` → `{data: Uint8Array, mime}` en memoria hasta guardar → va directo al INSERT/UPDATE como parámetro BLOB. Para mostrar: `getImageSrc()` arma un `Blob` y devuelve `URL.createObjectURL(...)` (no `convertFileSrc`/asset protocol). Leer un archivo fuera del sandbox de la app requiere `fs:allow-home-read-recursive`; guardar un PDF donde sea bajo `$HOME` requiere `fs:allow-home-write-recursive`.
+BLOB en la DB (`imagen`+`imagen_mime`), no archivos locales — así se ven igual en toda máquina. `pickImage()` lee bytes con `@tauri-apps/plugin-fs` → `{data: Uint8Array, mime}` en memoria hasta guardar → va directo al INSERT/UPDATE como parámetro BLOB. Para mostrar: `getImageSrc()` arma un `Blob` y devuelve `URL.createObjectURL(...)` (no `convertFileSrc`/asset protocol).
+
+El scope de `fs` es angosto a propósito: las capabilities solo cubren `$APPDATA` recursivo (`fs:allow-appdata-read-recursive`/`write-recursive`, usado por la carpeta de backups). Leer/escribir un path fuera de ahí (imagen elegida a mano, carpeta de importación masiva, Excel, archivo de restauración, "Guardar como" de un PDF/backup) ya **no** depende de scope estático de todo `$HOME` — cada uno de esos flujos llama a `allowFsPath(path, isDir?)` (`db.ts`) justo después del diálogo nativo (`open`/`save`) y antes de `readFile`/`writeFile`, que invoca el comando Rust `allow_fs_path` (`src-tauri/src/lib.rs`, vía `tauri_plugin_fs::FsExt`) para extender el scope en runtime **solo para ese path puntual** que el usuario acaba de elegir (no recursivo para carpetas, ya que la importación masiva de imágenes solo lee el nivel superior). El comando rechaza paths relativos o con segmentos `..`. No usar `readFile`/`writeFile`/`readDir` con un path que no vino de un diálogo nativo sin pasar antes por `allowFsPath`.
 
 ## Convención de pantallas editables
 
@@ -32,7 +34,7 @@ Comandos (`src-tauri/src/lib.rs`): solo `hash_password`/`verify_password` (bcryp
 
 ## Backups
 
-Los backups disparados desde la propia app (manual, pre-importación, pre-restauración) se guardan localmente bajo `appDataDir()/backups` — ya cubierto por `fs:allow-home-*-recursive`, sin tocar capabilities. El backup automático programado corre en un **repositorio de GitHub separado y privado** (`erosbonoladev/clio-backups`, no este repo), con su propio workflow `schedule:` horario que lee la configuración desde la tabla `backup_settings` en Turso (no un cron fijo) y publica los archivos como GitHub Releases de ese repo. Detalle completo, incluyendo por qué está separado así y las credenciales que usa: [DISASTER_RECOVERY.md](DISASTER_RECOVERY.md).
+Los backups disparados desde la propia app (manual, pre-importación, pre-restauración) se guardan localmente bajo `appDataDir()/backups` — ya cubierto por `fs:allow-appdata-*-recursive`, sin tocar capabilities. El backup automático programado corre en un **repositorio de GitHub separado y privado** (`erosbonoladev/clio-backups`, no este repo), con su propio workflow `schedule:` horario que lee la configuración desde la tabla `backup_settings` en Turso (no un cron fijo) y publica los archivos como GitHub Releases de ese repo. Detalle completo, incluyendo por qué está separado así y las credenciales que usa: [DISASTER_RECOVERY.md](DISASTER_RECOVERY.md).
 
 ## Empaquetado
 

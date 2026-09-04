@@ -21,7 +21,7 @@ function formatFechaCorta(fechaIso: string): string {
 }
 
 export default function RemisionesSection({ onBack }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const allowed = hasPermission(user, "remisiones_acceso");
   const canCrear = hasPermission(user, "remisiones_crear");
   const canBorrar = hasPermission(user, "remisiones_cancelar");
@@ -65,7 +65,8 @@ export default function RemisionesSection({ onBack }: Props) {
   }
 
   async function handleBorrar(id: number) {
-    await deleteRemision(id, user?.username ?? null);
+    if (!user || !token) return;
+    await deleteRemision({ id: user.id, token }, id, user?.username ?? null);
     setConfirmDeleteId(null);
     setToastMessage("Remisión eliminada.");
     await refreshRecientes();

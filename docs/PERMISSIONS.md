@@ -57,7 +57,18 @@ Regla: todo screen gateado debe llamar a `hasPermission`/`isAdmin` **en su propi
 
 CLIO no tiene backend propio — `db.ts` corre en el mismo proceso que la UI y usa el token de Turso embebido en el bundle (constraint aceptado, ver [ARCHITECTURE.md](ARCHITECTURE.md#constraints-aceptados-no-son-descuidos)). Los checks de `hasPermission`/`isAdmin` en el render de cada pantalla, por diseño, son bypasseables por alguien con acceso a devtools/consola y ese token.
 
-Como defensa en profundidad — no como sustituto real de un backend — `createUser`, `updateUser`, `executeRestoreSql`, `deleteBackupRecord` y `updateBackupSettings` reciben un `Actor` (`{id, token}`, expuesto por `useAuth()`) como primer argumento y lo verifican **contra la BD** con `assertActorAuthorized()` en `db.ts` (sesión vigente + rol admin o el permiso específico) antes de ejecutar. Esto no protege contra alguien que ya tiene el token de Turso y sabe qué SQL correr a mano, pero sí evita que un botón mal gateado, un bug de UI, o llamar estas funciones "a mano" desde la consola sin una sesión real de por medio ejecute la operación. `runBackupNow` (crear backup) queda deliberadamente **fuera** de este check: la usan tanto el botón manual (gateado por `backups_crear` en la UI) como los hooks automáticos de pre-importación/pre-restauración, que deben poder correr sin importar si el usuario actual tiene ese permiso puntual — es una red de seguridad, no una acción discrecional.
+Como defensa en profundidad — no como sustituto real de un backend — toda función de `db.ts` que escribe en catálogo, piezas, imprenta, precios o remisiones recibe un `Actor` (`{id, token}`, expuesto por `useAuth()`) como primer argumento y lo verifica **contra la BD** antes de ejecutar:
+
+- `assertActorSession()`: solo sesión vigente + activa, sin permiso específico — usado por `createProduct`/`updateProduct`/`deleteProduct` (catálogo base, intencionalmente abierto a cualquier usuario autenticado, ver arriba).
+- `assertActorAuthorized(actor, requiredPermiso?)`: sesión vigente + (rol admin, o el/los permiso(s) indicados). `requiredPermiso` acepta un solo `Permiso` o un array — con array, basta con tener **cualquiera** de ellos. Usado por:
+  - `createUser`, `updateUser`, `deleteBackupRecord`, `updateBackupSettings` (sin permiso → exige admin).
+  - `executeRestoreSql` (`backups_restaurar`).
+  - `createPlasticProduct`, `updatePlasticProduct`, `deletePlasticProduct`, `savePlasticItems` (`plasticos`).
+  - `savePrintItems`, `createPrintItemOrder`, `createPrintItemPurchase`, `deletePrintItemOrder`, `deletePrintItemPurchase` (`imprenta`).
+  - `updatePrecio` (`precios_modificar`); `upsertPrecio` (`precios_modificar` **o** `remisiones_crear` — se llama tanto desde `PreciosModal` como desde "Guardar producto" en `RemisionForm`, así que exige cualquiera de los dos para no restringir ese segundo flujo).
+  - `createRemisionConFolio`, `updateRemisionConRenglones` (`remisiones_crear`); `deleteRemision` (`remisiones_cancelar`).
+
+Esto no protege contra alguien que ya tiene el token de Turso y sabe qué SQL correr a mano, pero sí evita que un botón mal gateado, un bug de UI, o llamar estas funciones "a mano" desde la consola sin una sesión real de por medio ejecute la operación. `runBackupNow` (crear backup) queda deliberadamente **fuera** de este check: la usan tanto el botón manual (gateado por `backups_crear` en la UI) como los hooks automáticos de pre-importación/pre-restauración, que deben poder correr sin importar si el usuario actual tiene ese permiso puntual — es una red de seguridad, no una acción discrecional.
 
 ## Contraseñas (`UsersPanel`)
 
