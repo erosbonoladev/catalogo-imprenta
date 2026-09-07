@@ -9,6 +9,7 @@ import cierreSesionIcon from "../../Assets/cierre-de-sesion-de-usuario.svg";
 import configuracionIcon from "../../Assets/configuracion.svg";
 import remisionesIcon from "../../Assets/remisiones.svg";
 import piezasIcon from "../../Assets/piezas.svg";
+import skuMasterIcon from "../../Assets/sku-master.svg";
 
 interface Props {
   open: boolean;
@@ -16,6 +17,7 @@ interface Props {
   onConfiguraciones: () => void;
   onRemisiones: () => void;
   onPiezasGeneral: () => void;
+  onSkuMaster: () => void;
 }
 
 export default function Sidebar({
@@ -24,6 +26,7 @@ export default function Sidebar({
   onConfiguraciones,
   onRemisiones,
   onPiezasGeneral,
+  onSkuMaster,
 }: Props) {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -32,6 +35,7 @@ export default function Sidebar({
     hasPermission(user, "configuraciones") || PERMISOS_BACKUPS.some((p) => hasPermission(user, p));
   const showRemisiones = hasPermission(user, "remisiones_acceso");
   const showPiezasGeneral = hasPermission(user, "plasticos");
+  const showSkuMaster = hasPermission(user, "sku_master");
 
   return (
     <>
@@ -65,12 +69,21 @@ export default function Sidebar({
             <span>{isDark ? "Modo oscuro" : "Modo claro"}</span>
           </button>
 
-          {(showRemisiones || showPiezasGeneral) && <div className="sidebar-divider" />}
+          {(showRemisiones || showPiezasGeneral || showSkuMaster) && (
+            <div className="sidebar-divider" />
+          )}
 
           {showRemisiones && (
             <button type="button" className="sidebar-item" onClick={onRemisiones}>
               <img src={remisionesIcon} alt="" aria-hidden="true" className="sidebar-item-icon" />
               <span>Remisiones</span>
+            </button>
+          )}
+
+          {showSkuMaster && (
+            <button type="button" className="sidebar-item" onClick={onSkuMaster}>
+              <img src={skuMasterIcon} alt="" aria-hidden="true" className="sidebar-item-icon" />
+              <span>SKU Master</span>
             </button>
           )}
 

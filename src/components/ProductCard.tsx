@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getImageSrc } from "../db";
+import { getImageSrc, getProductImage } from "../db";
 import type { Product } from "../types";
 
 interface Props {
@@ -12,13 +12,15 @@ export default function ProductCard({ product, onClick }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    getImageSrc(product.imagen).then((src) => {
-      if (!cancelled) setImageSrc(src);
-    });
+    getProductImage(product.id)
+      .then(getImageSrc)
+      .then((src) => {
+        if (!cancelled) setImageSrc(src);
+      });
     return () => {
       cancelled = true;
     };
-  }, [product.imagen]);
+  }, [product.id]);
 
   return (
     <button className="product-card" onClick={onClick}>

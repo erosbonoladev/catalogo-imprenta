@@ -199,6 +199,7 @@ export const PERMISOS = [
   "remisiones_acceso",
   "remisiones_crear",
   "remisiones_cancelar",
+  "sku_master",
 ] as const;
 export type Permiso = (typeof PERMISOS)[number];
 
@@ -218,6 +219,7 @@ export const PERMISO_LABELS: Record<Permiso, string> = {
   remisiones_acceso: "Remisiones: acceso",
   remisiones_crear: "Remisiones: crear",
   remisiones_cancelar: "Remisiones: borrar",
+  sku_master: "SKU Master",
 };
 
 export const PERMISOS_BACKUPS: Permiso[] = [

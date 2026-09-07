@@ -113,6 +113,16 @@ const SEARCH_FILTER_CLAUSES: Record<SearchFilter, string> = {
   material: "material LIKE ?1",
 };
 
+// Sin las columnas de imagen (BLOB) — listar/buscar no las necesita y, con
+// más de 1300 fichas, traerlas todas en cada búsqueda o carga de pantalla
+// vuelve la app perceptiblemente lenta. `rowToProduct` ya maneja columnas de
+// imagen ausentes como `null` (ver `toImageBlob`), así que el resultado sigue
+// siendo un `Product` válido, solo que sin imagen cargada — quien la necesite
+// la pide aparte con `getProductImage` (usado por `ProductCard`); `getProduct`
+// (ficha completa) sigue trayendo todo con `SELECT *`.
+const PRODUCT_LIST_COLUMNS =
+  "id, codigo, nombre, categoria, material, descripcion, presentacion_original, creado_en, actualizado_en";
+
 export async function searchProducts(
   query: string,
   filter: SearchFilter = "todo",
@@ -120,11 +130,11 @@ export async function searchProducts(
   const trimmed = query.trim();
   const result = trimmed
     ? await client.execute({
-        sql: `SELECT * FROM products WHERE ${SEARCH_FILTER_CLAUSES[filter]} ORDER BY nombre, material`,
+        sql: `SELECT ${PRODUCT_LIST_COLUMNS} FROM products WHERE ${SEARCH_FILTER_CLAUSES[filter]} ORDER BY nombre, material`,
         args: [`%${trimmed}%`],
       })
     : await client.execute(
-        "SELECT * FROM products ORDER BY nombre, material",
+        `SELECT ${PRODUCT_LIST_COLUMNS} FROM products ORDER BY nombre, material`,
       );
   return (result.rows as unknown as ProductRow[]).map(rowToProduct);
 }
@@ -136,6 +146,19 @@ export async function getProduct(id: number): Promise<Product | null> {
   });
   const row = result.rows[0] as unknown as ProductRow | undefined;
   return row ? rowToProduct(row) : null;
+}
+
+// Imagen de portada de una ficha por separado de `searchProducts` (que ya no
+// la trae, ver PRODUCT_LIST_COLUMNS) — usada por `ProductCard` para cargar
+// solo la imagen de las fichas realmente visibles en pantalla, no las de
+// todo el catálogo.
+export async function getProductImage(id: number): Promise<ImageBlob | null> {
+  const result = await client.execute({
+    sql: "SELECT imagen, imagen_mime FROM products WHERE id = ?1",
+    args: [id],
+  });
+  const row = result.rows[0] as unknown as { imagen: ArrayBuffer | null; imagen_mime: string | null } | undefined;
+  return row ? toImageBlob(row.imagen, row.imagen_mime) : null;
 }
 
 interface ProductSpecRow {
@@ -1177,7 +1200,10 @@ export async function updatePlasticProduct(
   id: number,
   input: PlasticProductInput,
 ): Promise<void> {
-  await assertActorAuthorized(actor, "plasticos");
+  // También se llama desde SkuMasterSection (permiso sku_master) para asignar
+  // el SKU a piezas que aún no tienen uno — no debería exigir además el
+  // permiso general de Piezas para esa acción puntual.
+  await assertActorAuthorized(actor, ["plasticos", "sku_master"]);
   await client.execute({
     sql: `UPDATE plastic_products
           SET nombre = ?1, sku = ?2, color = ?3, origen = ?4, descripcion = ?5, armado = ?6,

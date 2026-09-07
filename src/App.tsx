@@ -11,6 +11,7 @@ import Configuraciones from "./components/Configuraciones";
 import LoginScreen from "./components/LoginScreen";
 import Sidebar from "./components/Sidebar";
 import RemisionesSection from "./components/RemisionesSection";
+import SkuMasterSection from "./components/SkuMasterSection";
 import { useAuth } from "./auth";
 
 type View =
@@ -22,7 +23,8 @@ type View =
   | { name: "piezaDetalle"; plasticProductId: number }
   | { name: "imprenta"; productId: number }
   | { name: "configuraciones" }
-  | { name: "remisiones" };
+  | { name: "remisiones" }
+  | { name: "skuMaster" };
 
 function App() {
   const { user, loading } = useAuth();
@@ -57,6 +59,7 @@ function App() {
         onConfiguraciones={() => setView({ name: "configuraciones" })}
         onRemisiones={() => setView({ name: "remisiones" })}
         onPiezasGeneral={() => setView({ name: "piezasGeneral" })}
+        onSkuMaster={() => setView({ name: "skuMaster" })}
       />
 
       <main className="app app-content">
@@ -127,6 +130,14 @@ function App() {
 
         {view.name === "remisiones" && (
           <RemisionesSection onBack={() => setView({ name: "search" })} />
+        )}
+
+        {view.name === "skuMaster" && (
+          <SkuMasterSection
+            onBack={() => setView({ name: "search" })}
+            onOpenProduct={(id) => setView({ name: "detail", productId: id })}
+            onOpenPieza={(id) => setView({ name: "piezaDetalle", plasticProductId: id })}
+          />
         )}
       </main>
     </div>

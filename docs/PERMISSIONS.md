@@ -11,6 +11,7 @@ PERMISOS = [
   "backups_configurar", "backups_eliminar",
   "precios_ver", "precios_modificar",
   "remisiones_acceso", "remisiones_crear", "remisiones_cancelar",
+  "sku_master",
 ]
 ```
 
@@ -31,6 +32,7 @@ PERMISOS = [
 | `remisiones_acceso` | Remisiones: acceso | Botón "Remisiones" en `Sidebar` (fila ícono+texto debajo de "Modo oscuro", separada por un divisor) + `RemisionesSection` (re-chequea al entrar) |
 | `remisiones_crear` | Remisiones: crear | Muestra/oculta `RemisionForm` dentro de `RemisionesSection`; también gatea el botón "Editar" dentro de `RemisionDetalleModal` (mismo permiso que crear, no uno nuevo) |
 | `remisiones_cancelar` | Remisiones: borrar | Botón "Borrar" por fila en la lista de remisiones recientes (borrado real vía `deleteRemision`, con confirmación — la etiqueta cambió de "cancelar" a "borrar" cuando se reemplazó ese botón, pero el string interno del permiso no cambió para no invalidar asignaciones existentes) |
+| `sku_master` | SKU Master | Botón "SKU Master" en `Sidebar` (fila ícono+texto debajo de "Remisiones", mismo bloque que "Piezas General") + `SkuMasterSection` (re-chequea al entrar). También habilita, dentro de esa pantalla, guardar el SKU de una pieza sin abrir `PiezasGeneralSection` — ver nota de `updatePlasticProduct` abajo |
 
 El string interno `plasticos` no cambió (ni el nombre de tabla `plastic_products`) aunque la UI diga "Piezas" — no renombrar uno sin el otro.
 
@@ -63,7 +65,7 @@ Como defensa en profundidad — no como sustituto real de un backend — toda fu
 - `assertActorAuthorized(actor, requiredPermiso?)`: sesión vigente + (rol admin, o el/los permiso(s) indicados). `requiredPermiso` acepta un solo `Permiso` o un array — con array, basta con tener **cualquiera** de ellos. Usado por:
   - `createUser`, `updateUser`, `deleteBackupRecord`, `updateBackupSettings` (sin permiso → exige admin).
   - `executeRestoreSql` (`backups_restaurar`).
-  - `createPlasticProduct`, `updatePlasticProduct`, `deletePlasticProduct`, `savePlasticItems` (`plasticos`).
+  - `createPlasticProduct`, `deletePlasticProduct`, `savePlasticItems` (`plasticos`); `updatePlasticProduct` (`plasticos` **o** `sku_master` — también se llama desde `SkuMasterSection` para asignar el SKU a una pieza que no lo tenía, sin exigir el permiso general de Piezas para esa acción puntual).
   - `savePrintItems`, `createPrintItemOrder`, `createPrintItemPurchase`, `deletePrintItemOrder`, `deletePrintItemPurchase` (`imprenta`).
   - `updatePrecio` (`precios_modificar`); `upsertPrecio` (`precios_modificar` **o** `remisiones_crear` — se llama tanto desde `PreciosModal` como desde "Guardar producto" en `RemisionForm`, así que exige cualquiera de los dos para no restringir ese segundo flujo).
   - `createRemisionConFolio`, `updateRemisionConRenglones` (`remisiones_crear`); `deleteRemision` (`remisiones_cancelar`).
