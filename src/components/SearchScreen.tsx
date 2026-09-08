@@ -23,17 +23,24 @@ export default function SearchScreen({ onSelect, onNew }: Props) {
   const [filter, setFilter] = useState<SearchFilter>("todo");
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadError(null);
     const timer = setTimeout(async () => {
-      const products = await searchProducts(query, filter);
-      if (!cancelled) {
-        setResults(products);
-        setLoading(false);
-        setCurrentPage(1);
+      try {
+        const products = await searchProducts(query, filter);
+        if (!cancelled) {
+          setResults(products);
+          setCurrentPage(1);
+        }
+      } catch (err) {
+        if (!cancelled) setLoadError(`No se pudo buscar: ${String(err)}`);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }, 150);
     return () => {
@@ -88,6 +95,8 @@ export default function SearchScreen({ onSelect, onNew }: Props) {
 
       {loading ? (
         <p className="hint">Buscando…</p>
+      ) : loadError ? (
+        <p className="form-error">{loadError}</p>
       ) : results.length === 0 ? (
         <p className="hint">
           {query.trim()

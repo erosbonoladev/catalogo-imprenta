@@ -47,5 +47,5 @@ Build local = solo el instalador del SO anfitrión. Ambas plataformas se compila
 - Escrituras concurrentes: last-write-wins, sin manejo especial.
 - Catálogo base abierto a todo usuario activo — a propósito, no es un permiso faltante.
 - "Usuarios conectados" es aproximado (heartbeat, no presencia real) — ver [WORKFLOWS.md](WORKFLOWS.md#heartbeat-de-usuarios-conectados).
-- `app_logs` crece sin límite automático (sí existe `clearLogs()` manual).
+- `app_logs` crece sin límite automático (sí existe `clearLogs()` manual, exige `Actor` admin — no expuesta desde `LogsPanel`, que es de solo lectura).
 - Sin optimización/resize de imágenes al importar.

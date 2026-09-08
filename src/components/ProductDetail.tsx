@@ -9,6 +9,7 @@ import {
 import type { Product, ProductDescription, ProductSpec } from "../types";
 import { buildDescriptionSlots } from "../descriptions";
 import { hasPermission, useAuth } from "../auth";
+import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
 import RequisicionModal from "./RequisicionModal";
 import PreciosModal from "./PreciosModal";
 import basuraIcon from "../../Assets/basura.svg";
@@ -42,31 +43,54 @@ export default function ProductDetail({
   const [descriptions, setDescriptions] = useState<ProductDescription[]>([]);
   const [descIndex, setDescIndex] = useState(0);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  useRevokeObjectUrl(imageSrc);
   const [barcodeSrc, setBarcodeSrc] = useState<string | null>(null);
+  useRevokeObjectUrl(barcodeSrc);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [requisicionSpec, setRequisicionSpec] = useState<ProductSpec | null>(null);
   const [showPrecios, setShowPrecios] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setLoadError(null);
     (async () => {
-      const [prod, specList, descriptionList] = await Promise.all([
-        getProduct(productId),
-        getProductSpecs(productId),
-        getProductDescriptions(productId),
-      ]);
-      if (cancelled) return;
-      setProduct(prod);
-      setSpecs(specList);
-      setDescriptions(descriptionList);
-      setDescIndex(0);
-      setImageSrc(await getImageSrc(prod?.imagen ?? null));
-      setBarcodeSrc(await getImageSrc(prod?.imagen_codigo_barras ?? null));
+      try {
+        const [prod, specList, descriptionList] = await Promise.all([
+          getProduct(productId),
+          getProductSpecs(productId),
+          getProductDescriptions(productId),
+        ]);
+        if (cancelled) return;
+        setProduct(prod);
+        setSpecs(specList);
+        setDescriptions(descriptionList);
+        setDescIndex(0);
+        setImageSrc(await getImageSrc(prod?.imagen ?? null));
+        setBarcodeSrc(await getImageSrc(prod?.imagen_codigo_barras ?? null));
+      } catch (err) {
+        if (!cancelled) setLoadError(`No se pudo cargar la ficha: ${String(err)}`);
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [productId]);
+  }, [productId, reloadKey]);
+
+  if (loadError) {
+    return (
+      <div className="product-detail">
+        <button className="btn-link" onClick={onBack}>
+          ← Volver a la búsqueda
+        </button>
+        <p className="form-error">{loadError}</p>
+        <button type="button" className="btn btn-secondary" onClick={() => setReloadKey((k) => k + 1)}>
+          Reintentar
+        </button>
+      </div>
+    );
+  }
 
   if (!product) {
     return (

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { hasPermission, useAuth } from "../auth";
-import { deleteRemision, listRemisiones, logEvent } from "../db";
+import { deleteRemision, listRemisiones, logEventAsActor } from "../db";
 import { formatMoney } from "../excelExport";
 import type { Remision } from "../types";
 import RemisionDetalleModal from "./RemisionDetalleModal";
@@ -35,19 +35,18 @@ export default function RemisionesSection({ onBack }: Props) {
 
   useEffect(() => {
     if (!allowed) {
-      logEvent(
-        "WARNING",
-        `Acceso denegado a Remisiones para ${user?.username ?? "desconocido"}`,
-        user?.username ?? null,
-      );
+      if (user && token) {
+        logEventAsActor({ id: user.id, token }, "WARNING", `Acceso denegado a Remisiones para ${user.username}`);
+      }
       return;
     }
     refreshRecientes();
-  }, [allowed]);
+  }, [allowed, user, token]);
 
   async function refreshRecientes() {
+    if (!user || !token) return;
     setLoadingRecientes(true);
-    const list = await listRemisiones(30);
+    const list = await listRemisiones({ id: user.id, token }, 30);
     setRecientes(list);
     setLoadingRecientes(false);
   }
@@ -66,7 +65,7 @@ export default function RemisionesSection({ onBack }: Props) {
 
   async function handleBorrar(id: number) {
     if (!user || !token) return;
-    await deleteRemision({ id: user.id, token }, id, user?.username ?? null);
+    await deleteRemision({ id: user.id, token }, id);
     setConfirmDeleteId(null);
     setToastMessage("Remisión eliminada.");
     await refreshRecientes();

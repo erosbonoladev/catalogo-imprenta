@@ -7,7 +7,7 @@ import {
   getPrintItems,
   savePrintItems,
   getProduct,
-  logEvent,
+  logEventAsActor,
 } from "../db";
 import type {
   ImageBlob,
@@ -111,25 +111,31 @@ export default function ImprentaSection({ productId, onBack }: Props) {
   const [historyLoading, setHistoryLoading] = useState<Record<number, boolean>>({});
   const [ordersByItem, setOrdersByItem] = useState<Record<number, PrintItemOrder[]>>({});
   const [purchasesByOrder, setPurchasesByOrder] = useState<Record<number, PrintItemPurchase[]>>({});
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  function loadItems() {
+    setLoading(true);
+    setLoadError(null);
+    Promise.all([getPrintItems(productId), getProduct(productId)])
+      .then(([i, p]) => {
+        setItems(i);
+        setSavedItems(i);
+        setProduct(p);
+      })
+      .catch((err) => setLoadError(`No se pudo cargar Imprenta: ${String(err)}`))
+      .finally(() => setLoading(false));
+  }
 
   useEffect(() => {
     if (!allowed) return;
-    Promise.all([getPrintItems(productId), getProduct(productId)]).then(([i, p]) => {
-      setItems(i);
-      setSavedItems(i);
-      setProduct(p);
-      setLoading(false);
-    });
+    loadItems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productId, allowed]);
 
   useEffect(() => {
-    if (allowed) return;
-    logEvent(
-      "WARNING",
-      `Acceso denegado a Imprenta para ${user?.username ?? "desconocido"}`,
-      user?.username ?? null,
-    );
-  }, [allowed, user?.username]);
+    if (allowed || !user || !token) return;
+    logEventAsActor({ id: user.id, token }, "WARNING", `Acceso denegado a Imprenta para ${user.username}`);
+  }, [allowed, user, token]);
 
   function updateItem<K extends keyof PrintItem>(index: number, key: K, value: PrintItem[K]) {
     setDirty(true);
@@ -251,10 +257,11 @@ export default function ImprentaSection({ productId, onBack }: Props) {
 
   async function handleSave() {
     if (!user || !token) return;
+    const actor = { id: user.id, token };
     setSaving(true);
     setError(null);
     try {
-      await savePrintItems({ id: user.id, token }, productId, items);
+      await savePrintItems(actor, productId, items);
       const refreshed = await getPrintItems(productId);
       setItems(refreshed);
       setSavedItems(refreshed);
@@ -263,7 +270,7 @@ export default function ImprentaSection({ productId, onBack }: Props) {
       setShowToast(true);
     } catch (err) {
       setError(`No se pudo guardar: ${String(err)}`);
-      logEvent("ERROR", `No se pudo guardar Imprenta del producto ${productId}: ${String(err)}`, user?.username ?? null);
+      logEventAsActor(actor, "ERROR", `No se pudo guardar Imprenta del producto ${productId}: ${String(err)}`);
     } finally {
       setSaving(false);
     }
@@ -289,7 +296,8 @@ export default function ImprentaSection({ productId, onBack }: Props) {
 
   async function handleDeleteOrder(itemId: number, order: PrintItemOrder) {
     if (!user || !token) return;
-    await deletePrintItemOrder({ id: user.id, token }, order.id);
+    const actor = { id: user.id, token };
+    await deletePrintItemOrder(actor, order.id);
     setOrdersByItem((prev) => ({
       ...prev,
       [itemId]: (prev[itemId] ?? []).filter((o) => o.id !== order.id),
@@ -299,25 +307,18 @@ export default function ImprentaSection({ productId, onBack }: Props) {
       delete next[order.id];
       return next;
     });
-    logEvent(
-      "INFO",
-      `Orden de producción #${order.id} eliminada por ${user?.username ?? "desconocido"}`,
-      user?.username ?? null,
-    );
+    logEventAsActor(actor, "INFO", `Orden de producción #${order.id} eliminada por ${user.username}`);
   }
 
   async function handleDeletePurchase(order: PrintItemOrder, purchase: PrintItemPurchase) {
     if (!user || !token) return;
-    await deletePrintItemPurchase({ id: user.id, token }, purchase.id);
+    const actor = { id: user.id, token };
+    await deletePrintItemPurchase(actor, purchase.id);
     setPurchasesByOrder((prev) => ({
       ...prev,
       [order.id]: (prev[order.id] ?? []).filter((p) => p.id !== purchase.id),
     }));
-    logEvent(
-      "INFO",
-      `Compra #${purchase.id} eliminada por ${user?.username ?? "desconocido"}`,
-      user?.username ?? null,
-    );
+    logEventAsActor(actor, "INFO", `Compra #${purchase.id} eliminada por ${user.username}`);
   }
 
   function handleCancel() {
@@ -325,6 +326,11 @@ export default function ImprentaSection({ productId, onBack }: Props) {
     setDirty(false);
     setError(null);
     setEditMode(false);
+  }
+
+  function handleBackClick() {
+    if (dirty && !confirm("Hay cambios sin guardar. ¿Salir de todas formas?")) return;
+    onBack();
   }
 
   if (!allowed) {
@@ -350,9 +356,23 @@ export default function ImprentaSection({ productId, onBack }: Props) {
     );
   }
 
+  if (loadError) {
+    return (
+      <div className="private-section">
+        <button className="btn-link" onClick={onBack}>
+          ← Volver a la ficha técnica
+        </button>
+        <p className="form-error">{loadError}</p>
+        <button type="button" className="btn btn-secondary" onClick={loadItems}>
+          Reintentar
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="private-section">
-      <button className="btn-link" onClick={onBack}>
+      <button className="btn-link" onClick={handleBackClick}>
         ← Volver a la ficha técnica
       </button>
       <h1>Imprenta</h1>

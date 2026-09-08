@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { hasPermission, isAdmin, useAuth } from "../auth";
-import { logEvent } from "../db";
+import { logEventAsActor } from "../db";
 import { PERMISOS_BACKUPS } from "../types";
 import UsersPanel from "./UsersPanel";
 import ConnectedUsersPanel from "./ConnectedUsersPanel";
@@ -25,7 +25,7 @@ const ADMIN_TABS: { value: Tab; label: string }[] = [
 ];
 
 export default function Configuraciones({ onBack }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const allowedGeneral = hasPermission(user, "configuraciones");
   const allowedBackups = PERMISOS_BACKUPS.some((p) => hasPermission(user, p));
   const allowed = allowedGeneral || allowedBackups;
@@ -43,13 +43,9 @@ export default function Configuraciones({ onBack }: Props) {
   const [tab, setTab] = useState<Tab>(allowedGeneral && isAdmin(user) ? "usuarios" : allowedGeneral ? "conectados" : "backups");
 
   useEffect(() => {
-    if (allowed) return;
-    logEvent(
-      "WARNING",
-      `Acceso denegado a Configuraciones para ${user?.username ?? "desconocido"}`,
-      user?.username ?? null,
-    );
-  }, [allowed, user?.username]);
+    if (allowed || !user || !token) return;
+    logEventAsActor({ id: user.id, token }, "WARNING", `Acceso denegado a Configuraciones para ${user.username}`);
+  }, [allowed, user, token]);
 
   if (!allowed) {
     return (

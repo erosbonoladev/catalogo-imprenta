@@ -3,20 +3,22 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import {
   allowFsPath,
+  computeRemisionMontos,
   createRemisionConFolio,
   getPrecio,
   getPreciosBySkuPrincipal,
-  logEvent,
+  logEventAsActor,
   searchPrecios,
   upsertPrecio,
 } from "../db";
 import { buildRemisionPdf } from "../pdf";
 import { formatMoney } from "../excelExport";
 import { numeroATextoMoneda } from "../numeroALetras";
-import { computeSkuPrincipal } from "../precios";
+import { computeSkuPrincipal, parseAmount } from "../precios";
 import { fechaLocalDeHoy } from "../folios";
 import { useAuth } from "../auth";
 import type { Precio, RemisionConRenglones, RemisionInput, RemisionRenglonInput, TipoPrecio } from "../types";
+import type { Actor } from "../db";
 import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
@@ -35,7 +37,6 @@ interface RenglonDraft {
   manual: boolean;
 }
 
-const IVA_RATE = 0.16;
 // Valor por default del campo Bodega — la mayoría de las remisiones internas
 // son para Jalisco, pero el campo es editable (ver pedidoBodegas más abajo).
 const PEDIDO_BODEGAS_INTERNA = "JALISCO";
@@ -67,24 +68,26 @@ export default function RemisionForm({ onCreated }: Props) {
       setResults([]);
       return;
     }
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     let cancelled = false;
     const timer = setTimeout(async () => {
-      const precios = await searchPrecios(query);
+      const precios = await searchPrecios(actor, query);
       if (!cancelled) setResults(precios.slice(0, 8));
     }, 150);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query]);
+  }, [query, user, token]);
 
   // Busca el precio exacto del SKU y, si no hay, cae al SKU principal (ej.
   // "8059" cuando el precio quedó guardado bajo "8059C") — mismo agrupamiento
   // que ya usa PreciosModal, para no dejar en blanco un precio que sí existe.
-  async function lookupPrecioParaSku(sku: string): Promise<string> {
-    const exacto = await getPrecio(sku);
+  async function lookupPrecioParaSku(actor: Actor, sku: string): Promise<string> {
+    const exacto = await getPrecio(actor, sku);
     if (exacto) return String(exacto.precio);
-    const relacionados = await getPreciosBySkuPrincipal(computeSkuPrincipal(sku));
+    const relacionados = await getPreciosBySkuPrincipal(actor, computeSkuPrincipal(sku));
     return relacionados[0] ? String(relacionados[0].precio) : "";
   }
 
@@ -107,8 +110,8 @@ export default function RemisionForm({ onCreated }: Props) {
   async function handleAddManual() {
     const sku = manualSku.trim();
     const productoNombre = manualNombre.trim();
-    if (!sku || !productoNombre) return;
-    const precioUnitario = await lookupPrecioParaSku(sku);
+    if (!sku || !productoNombre || !user || !token) return;
+    const precioUnitario = await lookupPrecioParaSku({ id: user.id, token }, sku);
     setRows((prev) => [
       ...prev,
       { key: nextKey.current++, sku, productoNombre, cantidad: "1", precioUnitario, manual: true },
@@ -138,7 +141,7 @@ export default function RemisionForm({ onCreated }: Props) {
     setGuardarProductoSaving(true);
     setGuardarProductoError(null);
     try {
-      const existing = await getPrecio(row.sku.trim());
+      const existing = await getPrecio(actor, row.sku.trim());
       if (existing) {
         setGuardarProductoTipo(tipo);
         setGuardarProductoDuplicado(existing);
@@ -148,7 +151,6 @@ export default function RemisionForm({ onCreated }: Props) {
         sku: row.sku.trim(),
         nombre: row.productoNombre.trim(),
         precio: precioNum,
-        usuario: user?.username ?? null,
         tipo,
       });
       setProductosGuardados((prev) => new Set(prev).add(row.key));
@@ -169,7 +171,6 @@ export default function RemisionForm({ onCreated }: Props) {
         sku: row.sku.trim(),
         nombre: row.productoNombre.trim(),
         precio: precioNum,
-        usuario: user?.username ?? null,
         tipo: guardarProductoTipo,
       });
       setProductosGuardados((prev) => new Set(prev).add(row.key));
@@ -192,28 +193,26 @@ export default function RemisionForm({ onCreated }: Props) {
   const parsedRows = useMemo(
     () =>
       rows.map((r) => {
-        const cantidadNum = parseFloat(r.cantidad.replace(",", "."));
-        const precioNum = parseFloat(r.precioUnitario.replace(",", "."));
+        const cantidadNum = parseAmount(r.cantidad);
+        const precioNum = parseAmount(r.precioUnitario);
         return {
           ...r,
-          cantidadNum: Number.isFinite(cantidadNum) ? cantidadNum : 0,
-          precioNum: Number.isFinite(precioNum) ? precioNum : 0,
+          // null (vacío o no numérico) se muestra como 0 en la vista previa,
+          // pero handleGenerar() valida sobre cantidadNum/precioNum > 0 más
+          // abajo — un campo vacío o con basura ("12abc") nunca pasa como
+          // válido solo porque acá se ve en 0, a diferencia de antes.
+          cantidadNum: cantidadNum ?? 0,
+          precioNum: precioNum ?? 0,
         };
       }),
     [rows],
   );
 
-  const subtotal = useMemo(
-    () => parsedRows.reduce((sum, r) => sum + r.cantidadNum * r.precioNum, 0),
-    [parsedRows],
+  const descuentoPctNum = useMemo(() => parseAmount(descuentoPct) ?? 0, [descuentoPct]);
+  const { subtotal, descuento, iva, total } = useMemo(
+    () => computeRemisionMontos(parsedRows.map((r) => ({ cantidad: r.cantidadNum, precio_unitario: r.precioNum })), descuentoPctNum),
+    [parsedRows, descuentoPctNum],
   );
-  const descuentoPctNum = useMemo(() => {
-    const n = parseFloat(descuentoPct.replace(",", "."));
-    return Number.isFinite(n) ? n : 0;
-  }, [descuentoPct]);
-  const descuento = subtotal * (descuentoPctNum / 100);
-  const iva = subtotal * IVA_RATE;
-  const total = subtotal - descuento - iva;
   const precioTexto = numeroATextoMoneda(total);
 
   function resetForm() {
@@ -270,17 +269,14 @@ export default function RemisionForm({ onCreated }: Props) {
         precio_unitario: r.precioNum,
         importe: r.cantidadNum * r.precioNum,
       }));
-      const remisionInput: Omit<RemisionInput, "folio"> = {
+      const remisionInput: Omit<
+        RemisionInput,
+        "folio" | "subtotal" | "descuento" | "iva" | "total" | "precio_texto"
+      > = {
         fecha,
         tipo: "interna",
         pedido_bodegas: pedidoBodegas.trim(),
-        subtotal,
         descuento_pct: descuentoPctNum,
-        descuento,
-        iva,
-        total,
-        precio_texto: precioTexto,
-        usuario: user?.username ?? null,
       };
       created = await createRemisionConFolio(actor, parsedRows[0].sku || "GRAL", remisionInput, renglonesInput);
     } catch (err) {
@@ -289,11 +285,7 @@ export default function RemisionForm({ onCreated }: Props) {
       return;
     }
 
-    logEvent(
-      "INFO",
-      `Remisión ${created.folio} generada — total ${formatMoney(created.total)}`,
-      user?.username ?? null,
-    );
+    logEventAsActor(actor, "INFO", `Remisión ${created.folio} generada — total ${formatMoney(created.total)}`);
     setResultado(created);
     resetForm();
     onCreated();
@@ -310,10 +302,10 @@ export default function RemisionForm({ onCreated }: Props) {
         await writeFile(path, pdfBytes);
       }
     } catch (err) {
-      logEvent(
+      logEventAsActor(
+        actor,
         "ERROR",
         `Remisión ${created.folio} guardada, pero no se pudo generar/guardar su PDF: ${String(err)}`,
-        user?.username ?? null,
       );
       setError(
         `La remisión ${created.folio} se guardó correctamente, pero no se pudo generar o guardar el PDF. Puedes intentarlo de nuevo más tarde.`,

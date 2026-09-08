@@ -4,11 +4,12 @@ import {
   getImageSrc,
   getPlasticProduct,
   getProductsUsingPlasticProduct,
-  logEvent,
+  logEventAsActor,
   type ProductUsingPlasticRow,
 } from "../db";
 import type { PlasticProduct } from "../types";
 import { hasPermission, useAuth } from "../auth";
+import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
 import { PiezaFormModal } from "./PiezasGeneralSection";
 import Toast from "./Toast";
 import basuraIcon from "../../Assets/basura.svg";
@@ -38,20 +39,28 @@ export default function PiezaDetalleScreen({ plasticProductId, onBack, onOpenPro
   const [usedIn, setUsedIn] = useState<ProductUsingPlasticRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  useRevokeObjectUrl(imageSrc);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   async function refresh() {
     setLoading(true);
-    const [data, usage] = await Promise.all([
-      getPlasticProduct(plasticProductId),
-      getProductsUsingPlasticProduct(plasticProductId),
-    ]);
-    setPieza(data);
-    setUsedIn(usage);
-    setLoading(false);
+    setLoadError(null);
+    try {
+      const [data, usage] = await Promise.all([
+        getPlasticProduct(plasticProductId),
+        getProductsUsingPlasticProduct(plasticProductId),
+      ]);
+      setPieza(data);
+      setUsedIn(usage);
+    } catch (err) {
+      setLoadError(`No se pudo cargar la pieza: ${String(err)}`);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -61,13 +70,9 @@ export default function PiezaDetalleScreen({ plasticProductId, onBack, onOpenPro
   }, [allowed, plasticProductId]);
 
   useEffect(() => {
-    if (allowed) return;
-    logEvent(
-      "WARNING",
-      `Acceso denegado a detalle de Pieza para ${user?.username ?? "desconocido"}`,
-      user?.username ?? null,
-    );
-  }, [allowed, user?.username]);
+    if (allowed || !user || !token) return;
+    logEventAsActor({ id: user.id, token }, "WARNING", `Acceso denegado a detalle de Pieza para ${user.username}`);
+  }, [allowed, user, token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,6 +115,13 @@ export default function PiezaDetalleScreen({ plasticProductId, onBack, onOpenPro
 
       {loading ? (
         <p className="hint">Cargando…</p>
+      ) : loadError ? (
+        <>
+          <p className="form-error">{loadError}</p>
+          <button type="button" className="btn btn-secondary" onClick={refresh}>
+            Reintentar
+          </button>
+        </>
       ) : !pieza ? (
         <>
           <h1>Pieza no encontrada</h1>

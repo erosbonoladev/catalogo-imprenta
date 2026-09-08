@@ -52,7 +52,9 @@ import { PROCESOS_IMPRENTA } from "./types";
 import { buildRequisicionMessage } from "./requisiciones";
 import { FOLIO_PREFIJOS, buildFolioString, fechaLocalDeHoy, formatFechaFolioLocal } from "./folios";
 import { computeSkuPrincipal } from "./precios";
+import { numeroATextoMoneda } from "./numeroALetras";
 import {
+  type DumpIndex,
   type DumpTable,
   backupFileName,
   buildBackupSql,
@@ -68,6 +70,13 @@ const client = createClient({
   authToken: import.meta.env.VITE_TURSO_AUTH_TOKEN,
   intMode: "number",
 });
+
+// Firma común entre Client y Transaction — funciones de un solo statement
+// que también se llaman desde dentro de una transacción más grande (p.ej.
+// createPlasticProduct/updatePlasticProduct desde savePlasticItems) aceptan
+// esto en vez de asumir siempre el client de módulo, para poder correr sobre
+// el mismo tx del llamador y quedar cubiertas por su commit/rollback.
+type Executor = Pick<Transaction, "execute">;
 
 function toImageBlob(data: unknown, mime: unknown): ImageBlob | null {
   if (!(data instanceof ArrayBuffer) || typeof mime !== "string") return null;
@@ -106,11 +115,40 @@ function rowToProduct(row: ProductRow): Product {
   };
 }
 
+// Búsqueda insensible a mayúsculas/minúsculas y a acentos: SQLite folda
+// mayúsculas solo en ASCII, así que "México"/"MEXICO" no calzan por sí solos.
+// `foldSearchColumn` envuelve la columna en `replace()` por cada vocal/ñ/ü
+// acentuada antes de aplicar `lower()`, y `normalizeSearchTerm` (mismo
+// criterio NFD que `normalizeHeader` en fichaImport.ts/precios.ts) hace lo
+// mismo del lado del término buscado, para que ambos lados queden en la
+// misma forma "plana" antes del LIKE.
+const FOLDABLE_CHARS: [string, string][] = [
+  ["á", "a"], ["Á", "a"],
+  ["é", "e"], ["É", "e"],
+  ["í", "i"], ["Í", "i"],
+  ["ó", "o"], ["Ó", "o"],
+  ["ú", "u"], ["Ú", "u"],
+  ["ü", "u"], ["Ü", "u"],
+  ["ñ", "n"], ["Ñ", "n"],
+];
+
+function foldSearchColumn(column: string): string {
+  const replaced = FOLDABLE_CHARS.reduce(
+    (expr, [from, to]) => `replace(${expr}, '${from}', '${to}')`,
+    column,
+  );
+  return `lower(${replaced})`;
+}
+
+function normalizeSearchTerm(value: string): string {
+  return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
 const SEARCH_FILTER_CLAUSES: Record<SearchFilter, string> = {
-  todo: "codigo LIKE ?1 OR nombre LIKE ?1 OR material LIKE ?1",
-  nombre: "nombre LIKE ?1 OR descripcion LIKE ?1",
-  sku: "codigo LIKE ?1",
-  material: "material LIKE ?1",
+  todo: `${foldSearchColumn("codigo")} LIKE ?1 OR ${foldSearchColumn("nombre")} LIKE ?1 OR ${foldSearchColumn("material")} LIKE ?1`,
+  nombre: `${foldSearchColumn("nombre")} LIKE ?1 OR ${foldSearchColumn("descripcion")} LIKE ?1`,
+  sku: `${foldSearchColumn("codigo")} LIKE ?1`,
+  material: `${foldSearchColumn("material")} LIKE ?1`,
 };
 
 // Sin las columnas de imagen (BLOB) — listar/buscar no las necesita y, con
@@ -131,7 +169,7 @@ export async function searchProducts(
   const result = trimmed
     ? await client.execute({
         sql: `SELECT ${PRODUCT_LIST_COLUMNS} FROM products WHERE ${SEARCH_FILTER_CLAUSES[filter]} ORDER BY nombre, material`,
-        args: [`%${trimmed}%`],
+        args: [`%${normalizeSearchTerm(trimmed)}%`],
       })
     : await client.execute(
         `SELECT ${PRODUCT_LIST_COLUMNS} FROM products ORDER BY nombre, material`,
@@ -416,7 +454,10 @@ export async function findProductsByNombre(nombre: string): Promise<Product[]> {
   return (result.rows as unknown as ProductRow[]).map(rowToProduct);
 }
 
-export async function setPresentacionOriginal(productId: number, text: string): Promise<void> {
+// Solo la usa FichaImportPanel (captura masiva, exclusiva de admin — ver
+// docs/PERMISSIONS.md), de ahí que exija Actor admin sin permiso otorgable.
+export async function setPresentacionOriginal(actor: Actor, productId: number, text: string): Promise<void> {
+  await assertActorAuthorized(actor);
   await client.execute({
     sql: "UPDATE products SET presentacion_original = ?1 WHERE id = ?2",
     args: [text, productId],
@@ -616,10 +657,14 @@ export async function readImageFileBlob(path: string): Promise<ImageBlob> {
   return validateImageBlob(data);
 }
 
+// Solo la usa ImageImportPanel (captura masiva, exclusiva de admin — ver
+// docs/PERMISSIONS.md), de ahí que exija Actor admin sin permiso otorgable.
 export async function updateProductImage(
+  actor: Actor,
   id: number,
   imagen: ImageBlob,
 ): Promise<void> {
+  await assertActorAuthorized(actor);
   await client.execute({
     sql: "UPDATE products SET imagen = ?1, imagen_mime = ?2 WHERE id = ?3",
     args: [imagen.data, imagen.mime, id],
@@ -811,36 +856,39 @@ export interface Actor {
 // propio llamador podría fabricar.
 async function loadActorSession(
   actor: Actor,
-): Promise<{ rol: string; activo: number } | undefined> {
+): Promise<{ username: string; rol: string; activo: number } | undefined> {
   const result = await client.execute({
-    sql: `SELECT rol, activo FROM users
+    sql: `SELECT username, rol, activo FROM users
           WHERE id = ?1 AND session_token = ?2
             AND session_expires_at IS NOT NULL AND session_expires_at > datetime('now')`,
     args: [actor.id, actor.token],
   });
-  return result.rows[0] as unknown as { rol: string; activo: number } | undefined;
+  return result.rows[0] as unknown as { username: string; rol: string; activo: number } | undefined;
 }
 
 // Para acciones que no tienen un permiso otorgable propio (ej. catálogo
 // base, intencionalmente abierto a cualquier usuario autenticado — ver
 // docs/PERMISSIONS.md): solo exige una sesión vigente y activa, sin rol ni
-// permiso específico.
-async function assertActorSession(actor: Actor): Promise<void> {
+// permiso específico. Devuelve el username verificado contra la BD (no el
+// que mande el llamador) para que las columnas de auditoría (usuario,
+// actualizado_por, etc.) se deriven del Actor real, no de un string aparte.
+async function assertActorSession(actor: Actor): Promise<string> {
   const row = await loadActorSession(actor);
   if (!row || !row.activo) {
     throw new Error("No autorizado: la sesión no es válida o venció.");
   }
+  return row.username;
 }
 
 async function assertActorAuthorized(
   actor: Actor,
   requiredPermiso?: Permiso | Permiso[],
-): Promise<void> {
+): Promise<string> {
   const row = await loadActorSession(actor);
   if (!row || !row.activo) {
     throw new Error("No autorizado: la sesión no es válida o venció.");
   }
-  if (row.rol === "admin") return;
+  if (row.rol === "admin") return row.username;
   if (!requiredPermiso) {
     throw new Error("No autorizado: esta acción requiere una cuenta administradora.");
   }
@@ -853,6 +901,7 @@ async function assertActorAuthorized(
   if (permResult.rows.length === 0) {
     throw new Error("No autorizado: falta el permiso requerido para esta acción.");
   }
+  return row.username;
 }
 
 export async function listUsers(): Promise<User[]> {
@@ -877,39 +926,81 @@ export async function createUser(actor: Actor, input: UserInput): Promise<number
   await assertActorAuthorized(actor);
   if (!input.password) throw new Error("La contraseña es obligatoria.");
   const hash = await invoke<string>("hash_password", { password: input.password });
-  const result = await client.execute({
-    sql: `INSERT INTO users (username, password_hash, activo, rol, backup_local_diario) VALUES (?1, ?2, ?3, ?4, ?5)`,
-    args: [input.username.trim(), hash, input.activo ? 1 : 0, input.rol, input.backup_local_diario ? 1 : 0],
-  });
-  const userId = Number(result.lastInsertRowid);
-  await savePermissions(userId, input.permisos);
-  return userId;
+
+  const tx = await client.transaction("write");
+  try {
+    const result = await tx.execute({
+      sql: `INSERT INTO users (username, password_hash, activo, rol, backup_local_diario) VALUES (?1, ?2, ?3, ?4, ?5)`,
+      args: [input.username.trim(), hash, input.activo ? 1 : 0, input.rol, input.backup_local_diario ? 1 : 0],
+    });
+    const userId = Number(result.lastInsertRowid);
+    await savePermissions(userId, input.permisos, tx);
+    await tx.commit();
+    return userId;
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
 }
 
 export async function updateUser(actor: Actor, id: number, input: UserInput): Promise<void> {
   await assertActorAuthorized(actor);
-  if (input.password) {
-    const hash = await invoke<string>("hash_password", { password: input.password });
-    await client.execute({
-      sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, backup_local_diario = ?4, password_hash = ?5, session_token = NULL, session_expires_at = NULL WHERE id = ?6`,
-      args: [input.username.trim(), input.activo ? 1 : 0, input.rol, input.backup_local_diario ? 1 : 0, hash, id],
-    });
-  } else {
-    await client.execute({
-      sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, backup_local_diario = ?4 WHERE id = ?5`,
-      args: [input.username.trim(), input.activo ? 1 : 0, input.rol, input.backup_local_diario ? 1 : 0, id],
-    });
+  const hash = input.password ? await invoke<string>("hash_password", { password: input.password }) : null;
+  const willBeActiveAdmin = input.rol === "admin" && !!input.activo;
+
+  const tx = await client.transaction("write");
+  try {
+    // Protección del último admin activo, verificada en el servidor (no solo
+    // en UsersPanel, que puede operar sobre un array de usuarios ya
+    // desactualizado en memoria): si este cambio hace que el usuario deje de
+    // ser admin-activo, exige que quede al menos otro admin-activo, contado
+    // dentro de esta misma transacción para que no haya ventana de carrera
+    // con otra edición concurrente.
+    if (!willBeActiveAdmin) {
+      const current = await tx.execute({ sql: "SELECT rol, activo FROM users WHERE id = ?1", args: [id] });
+      const row = current.rows[0] as unknown as { rol: string; activo: number } | undefined;
+      const wasActiveAdmin = !!row && row.rol === "admin" && !!row.activo;
+      if (wasActiveAdmin) {
+        const others = await tx.execute({
+          sql: "SELECT 1 FROM users WHERE id != ?1 AND rol = 'admin' AND activo = 1 LIMIT 1",
+          args: [id],
+        });
+        if (others.rows.length === 0) {
+          throw new Error("Debe existir al menos un administrador activo.");
+        }
+      }
+    }
+
+    if (hash) {
+      await tx.execute({
+        sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, backup_local_diario = ?4, password_hash = ?5, session_token = NULL, session_expires_at = NULL WHERE id = ?6`,
+        args: [input.username.trim(), input.activo ? 1 : 0, input.rol, input.backup_local_diario ? 1 : 0, hash, id],
+      });
+    } else {
+      await tx.execute({
+        sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, backup_local_diario = ?4 WHERE id = ?5`,
+        args: [input.username.trim(), input.activo ? 1 : 0, input.rol, input.backup_local_diario ? 1 : 0, id],
+      });
+    }
+    await savePermissions(id, input.permisos, tx);
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
   }
-  await savePermissions(id, input.permisos);
 }
 
-async function savePermissions(userId: number, permisos: Permiso[]): Promise<void> {
-  await client.execute({
+async function savePermissions(userId: number, permisos: Permiso[], executor: Executor = client): Promise<void> {
+  await executor.execute({
     sql: "DELETE FROM user_permissions WHERE user_id = ?1",
     args: [userId],
   });
   for (const permiso of permisos) {
-    await client.execute({
+    await executor.execute({
       sql: "INSERT INTO user_permissions (user_id, permiso) VALUES (?1, ?2)",
       args: [userId, permiso],
     });
@@ -932,14 +1023,21 @@ export async function heartbeat(userId: number): Promise<void> {
   });
 }
 
-export async function clearSession(userId: number): Promise<void> {
+// token identifica LA sesión que se está cerrando, no solo el usuario: sin
+// esto, un logout con un token ya viejo (p.ej. una pestaña que quedó atrás)
+// podía pisar session_token de una sesión más nueva del mismo usuario abierta
+// después en otro dispositivo, cerrándola sin que esa persona hiciera nada.
+// Mismo criterio que ya usan validateSession()/loadActorSession() (id AND
+// session_token). La fila de presencia en user_sessions sigue limpiándose
+// solo por user_id — no es sensible, es la tabla de "¿tiene la app abierta?".
+export async function clearSession(userId: number, token: string): Promise<void> {
   await client.execute({
     sql: "DELETE FROM user_sessions WHERE user_id = ?1",
     args: [userId],
   });
   await client.execute({
-    sql: "UPDATE users SET session_token = NULL, session_expires_at = NULL WHERE id = ?1",
-    args: [userId],
+    sql: "UPDATE users SET session_token = NULL, session_expires_at = NULL WHERE id = ?1 AND session_token = ?2",
+    args: [userId, token],
   });
 }
 
@@ -971,7 +1069,28 @@ export async function logEvent(
   }
 }
 
-export async function getRecentLogs(limit = 200): Promise<AppLog[]> {
+// Para eventos asociados a una acción de un usuario ya autenticado: resuelve
+// el username desde la sesión verificada en la BD en vez de confiar en el
+// string que arme el llamador (mismo motivo que assertActorSession/
+// assertActorAuthorized). No usar para eventos que ocurren antes de tener
+// una sesión válida (login fallido/bloqueado, restaurar sesión al abrir la
+// app) — ahí no hay Actor que verificar, logEvent() sigue aceptando el
+// string libre. Best-effort como logEvent(): un actor vencido/inválido no
+// debe romper el flujo que está intentando registrar el evento, solo
+// registra el evento sin usuario.
+export async function logEventAsActor(actor: Actor, nivel: LogLevel, mensaje: string): Promise<void> {
+  let usuario: string | null = null;
+  try {
+    const row = await loadActorSession(actor);
+    usuario = row?.username ?? null;
+  } catch {
+    // best-effort, ver arriba.
+  }
+  await logEvent(nivel, mensaje, usuario);
+}
+
+export async function getRecentLogs(actor: Actor, limit = 200): Promise<AppLog[]> {
+  await assertActorAuthorized(actor, "configuraciones");
   const result = await client.execute({
     sql: "SELECT * FROM app_logs ORDER BY id DESC LIMIT ?1",
     args: [limit],
@@ -979,7 +1098,10 @@ export async function getRecentLogs(limit = 200): Promise<AppLog[]> {
   return result.rows as unknown as AppLog[];
 }
 
-export async function clearLogs(): Promise<void> {
+// Capacidad manual aceptada (ver docs/ARCHITECTURE.md), no expuesta desde
+// LogsPanel (solo lectura por diseño) — exige Actor admin.
+export async function clearLogs(actor: Actor): Promise<void> {
+  await assertActorAuthorized(actor);
   await client.execute("DELETE FROM app_logs");
 }
 
@@ -1016,27 +1138,36 @@ export async function savePlasticPieces(
   productId: number,
   pieces: PlasticPiece[],
 ): Promise<void> {
-  await client.execute({
-    sql: "DELETE FROM product_plastic_pieces WHERE product_id = ?1",
-    args: [productId],
-  });
-  let orden = 1;
-  for (const piece of pieces) {
-    const sku = piece.sku.trim();
-    if (!sku) continue;
-    await client.execute({
-      sql: `INSERT INTO product_plastic_pieces (product_id, sku, color, imagen, imagen_mime, orden)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
-      args: [
-        productId,
-        sku,
-        piece.color.trim(),
-        piece.imagen?.data ?? null,
-        piece.imagen?.mime ?? null,
-        orden,
-      ],
+  const tx = await client.transaction("write");
+  try {
+    await tx.execute({
+      sql: "DELETE FROM product_plastic_pieces WHERE product_id = ?1",
+      args: [productId],
     });
-    orden += 1;
+    let orden = 1;
+    for (const piece of pieces) {
+      const sku = piece.sku.trim();
+      if (!sku) continue;
+      await tx.execute({
+        sql: `INSERT INTO product_plastic_pieces (product_id, sku, color, imagen, imagen_mime, orden)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+        args: [
+          productId,
+          sku,
+          piece.color.trim(),
+          piece.imagen?.data ?? null,
+          piece.imagen?.mime ?? null,
+          orden,
+        ],
+      });
+      orden += 1;
+    }
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
   }
 }
 
@@ -1103,9 +1234,9 @@ export async function searchPlasticProducts(
   const result = trimmed
     ? await client.execute({
         sql: `SELECT * FROM plastic_products
-              WHERE nombre LIKE ?1 OR sku LIKE ?1 OR color LIKE ?1
+              WHERE ${foldSearchColumn("nombre")} LIKE ?1 OR ${foldSearchColumn("sku")} LIKE ?1 OR ${foldSearchColumn("color")} LIKE ?1
               ORDER BY nombre, sku`,
-        args: [`%${trimmed}%`],
+        args: [`%${normalizeSearchTerm(trimmed)}%`],
       })
     : await client.execute("SELECT * FROM plastic_products ORDER BY nombre, sku");
   return (result.rows as unknown as PlasticProductRow[]).map(rowToPlasticProduct);
@@ -1170,9 +1301,10 @@ export async function deletePlasticProduct(actor: Actor, id: number): Promise<vo
 export async function createPlasticProduct(
   actor: Actor,
   input: PlasticProductInput,
+  executor: Executor = client,
 ): Promise<number> {
   await assertActorAuthorized(actor, "plasticos");
-  const result = await client.execute({
+  const result = await executor.execute({
     sql: `INSERT INTO plastic_products
           (nombre, sku, color, origen, descripcion, armado, dimension, peso, tipo_empaque, maquila, coste, imagen, imagen_mime)
           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`,
@@ -1199,12 +1331,10 @@ export async function updatePlasticProduct(
   actor: Actor,
   id: number,
   input: PlasticProductInput,
+  executor: Executor = client,
 ): Promise<void> {
-  // También se llama desde SkuMasterSection (permiso sku_master) para asignar
-  // el SKU a piezas que aún no tienen uno — no debería exigir además el
-  // permiso general de Piezas para esa acción puntual.
-  await assertActorAuthorized(actor, ["plasticos", "sku_master"]);
-  await client.execute({
+  await assertActorAuthorized(actor, "plasticos");
+  await executor.execute({
     sql: `UPDATE plastic_products
           SET nombre = ?1, sku = ?2, color = ?3, origen = ?4, descripcion = ?5, armado = ?6,
               dimension = ?7, peso = ?8, tipo_empaque = ?9, maquila = ?10, coste = ?11,
@@ -1226,6 +1356,22 @@ export async function updatePlasticProduct(
       input.imagen?.mime ?? null,
       id,
     ],
+  });
+}
+
+// Usada exclusivamente por SkuMasterSection: su único propósito ahí es
+// asignar/corregir el SKU de una pieza, no editarla — antes reusaba
+// updatePlasticProduct() con un spread de todos los campos ya cargados en
+// memoria (plasticProductToInput(pieza)), así que si alguien más editaba esa
+// misma pieza entre que SKU Master cargó su lista y que se guardó el SKU, ese
+// cambio se pisaba silenciosamente con los datos obsoletos. Esta variante
+// solo toca la columna sku, y solo exige el permiso sku_master (no plasticos,
+// que es un permiso más amplio que esta acción puntual no necesita).
+export async function updatePlasticProductSku(actor: Actor, id: number, sku: string): Promise<void> {
+  await assertActorAuthorized(actor, "sku_master");
+  await client.execute({
+    sql: "UPDATE plastic_products SET sku = ?1 WHERE id = ?2",
+    args: [sku.trim(), id],
   });
 }
 
@@ -1258,29 +1404,38 @@ export async function savePlasticItems(
   items: PlasticItem[],
 ): Promise<void> {
   await assertActorAuthorized(actor, "plasticos");
-  const resolved: { plasticProductId: number; orden: number }[] = [];
-  let orden = 1;
-  for (const item of items) {
-    if (!item.data.nombre.trim() && !item.data.sku.trim()) continue;
-    let plasticProductId: number;
-    if (item.plastic_product_id) {
-      plasticProductId = item.plastic_product_id;
-      await updatePlasticProduct(actor, plasticProductId, item.data);
-    } else {
-      plasticProductId = await createPlasticProduct(actor, item.data);
+  const tx = await client.transaction("write");
+  try {
+    const resolved: { plasticProductId: number; orden: number }[] = [];
+    let orden = 1;
+    for (const item of items) {
+      if (!item.data.nombre.trim() && !item.data.sku.trim()) continue;
+      let plasticProductId: number;
+      if (item.plastic_product_id) {
+        plasticProductId = item.plastic_product_id;
+        await updatePlasticProduct(actor, plasticProductId, item.data, tx);
+      } else {
+        plasticProductId = await createPlasticProduct(actor, item.data, tx);
+      }
+      resolved.push({ plasticProductId, orden });
+      orden += 1;
     }
-    resolved.push({ plasticProductId, orden });
-    orden += 1;
-  }
-  await client.execute({
-    sql: "DELETE FROM product_plastic_items WHERE product_id = ?1",
-    args: [productId],
-  });
-  for (const { plasticProductId, orden: itemOrden } of resolved) {
-    await client.execute({
-      sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden) VALUES (?1, ?2, ?3)`,
-      args: [productId, plasticProductId, itemOrden],
+    await tx.execute({
+      sql: "DELETE FROM product_plastic_items WHERE product_id = ?1",
+      args: [productId],
     });
+    for (const { plasticProductId, orden: itemOrden } of resolved) {
+      await tx.execute({
+        sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden) VALUES (?1, ?2, ?3)`,
+        args: [productId, plasticProductId, itemOrden],
+      });
+    }
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
   }
 }
 
@@ -1403,128 +1558,137 @@ export async function savePrintItems(
   );
   const keptIds = new Set<number>();
 
-  let orden = 1;
-  for (const item of items) {
-    const nombre = item.nombre.trim();
-    if (!nombre) continue;
+  const tx = await client.transaction("write");
+  try {
+    let orden = 1;
+    for (const item of items) {
+      const nombre = item.nombre.trim();
+      if (!nombre) continue;
 
-    const values = [
-      nombre,
-      item.tamano_final.trim(),
-      item.tipo_papel.trim(),
-      item.tintas.trim(),
-      item.gramos_puntos.trim(),
-      item.pliego.trim(),
-      item.tamano_extendido.trim(),
-      item.cortes_tamano.trim(),
-      item.maquina.trim(),
-      item.formacion.trim(),
-      item.numero_pliegos.trim(),
-      item.acabados.trim(),
-      item.notas.trim(),
-      item.numero_placas.trim(),
-      item.placas_existentes || null,
-      orden,
-    ];
+      const values = [
+        nombre,
+        item.tamano_final.trim(),
+        item.tipo_papel.trim(),
+        item.tintas.trim(),
+        item.gramos_puntos.trim(),
+        item.pliego.trim(),
+        item.tamano_extendido.trim(),
+        item.cortes_tamano.trim(),
+        item.maquina.trim(),
+        item.formacion.trim(),
+        item.numero_pliegos.trim(),
+        item.acabados.trim(),
+        item.notas.trim(),
+        item.numero_placas.trim(),
+        item.placas_existentes || null,
+        orden,
+      ];
 
-    let printItemId: number;
-    if (item.id && existingIds.has(item.id)) {
-      await client.execute({
-        sql: `UPDATE product_print_items SET
-                nombre=?1, tamano=?2, tipo_papel=?3, tintas=?4, gramos_puntos=?5, pliego=?6,
-                extendido=?7, corte_cm=?8, maquina=?9, formacion=?10, numero_pliegos=?11,
-                acabados=?12, notas=?13, numero_placas=?14,
-                placas_existentes=?15, orden=?16
-              WHERE id=?17`,
-        args: [...values, item.id],
+      let printItemId: number;
+      if (item.id && existingIds.has(item.id)) {
+        await tx.execute({
+          sql: `UPDATE product_print_items SET
+                  nombre=?1, tamano=?2, tipo_papel=?3, tintas=?4, gramos_puntos=?5, pliego=?6,
+                  extendido=?7, corte_cm=?8, maquina=?9, formacion=?10, numero_pliegos=?11,
+                  acabados=?12, notas=?13, numero_placas=?14,
+                  placas_existentes=?15, orden=?16
+                WHERE id=?17`,
+          args: [...values, item.id],
+        });
+        printItemId = item.id;
+        keptIds.add(item.id);
+      } else {
+        const result = await tx.execute({
+          sql: `INSERT INTO product_print_items (
+                  nombre, tamano, tipo_papel, tintas, gramos_puntos, pliego, extendido, corte_cm,
+                  maquina, formacion, numero_pliegos, acabados, notas, numero_placas,
+                  placas_existentes, orden, product_id
+                ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)`,
+          args: [...values, productId],
+        });
+        printItemId = Number(result.lastInsertRowid);
+      }
+
+      await tx.execute({
+        sql: "DELETE FROM product_print_item_checks WHERE print_item_id = ?1",
+        args: [printItemId],
       });
-      printItemId = item.id;
-      keptIds.add(item.id);
-    } else {
-      const result = await client.execute({
-        sql: `INSERT INTO product_print_items (
-                nombre, tamano, tipo_papel, tintas, gramos_puntos, pliego, extendido, corte_cm,
-                maquina, formacion, numero_pliegos, acabados, notas, numero_placas,
-                placas_existentes, orden, product_id
-              ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)`,
-        args: [...values, productId],
+      let checkOrden = 1;
+      for (const check of item.checks) {
+        await tx.execute({
+          sql: `INSERT INTO product_print_item_checks (print_item_id, nombre, marcado, orden)
+                VALUES (?1, ?2, ?3, ?4)`,
+          args: [printItemId, check.nombre.trim(), check.marcado ? 1 : 0, checkOrden],
+        });
+        checkOrden += 1;
+      }
+      await tx.execute({
+        sql: "DELETE FROM product_print_item_extras WHERE print_item_id = ?1",
+        args: [printItemId],
       });
-      printItemId = Number(result.lastInsertRowid);
+      let extraOrden = 1;
+      for (const extra of item.extras) {
+        const etiqueta = extra.etiqueta.trim();
+        const valor = extra.valor.trim();
+        if (!etiqueta || !valor) continue;
+        await tx.execute({
+          sql: `INSERT INTO product_print_item_extras (print_item_id, etiqueta, valor, orden)
+                VALUES (?1, ?2, ?3, ?4)`,
+          args: [printItemId, etiqueta, valor, extraOrden],
+        });
+        extraOrden += 1;
+      }
+
+      await tx.execute({
+        sql: "DELETE FROM product_print_item_images WHERE print_item_id = ?1",
+        args: [printItemId],
+      });
+      let imageOrden = 1;
+      for (const image of item.images) {
+        await tx.execute({
+          sql: `INSERT INTO product_print_item_images (print_item_id, imagen, imagen_mime, orden)
+                VALUES (?1, ?2, ?3, ?4)`,
+          args: [printItemId, image.imagen.data, image.imagen.mime, imageOrden],
+        });
+        imageOrden += 1;
+      }
+      orden += 1;
     }
 
-    await client.execute({
-      sql: "DELETE FROM product_print_item_checks WHERE print_item_id = ?1",
-      args: [printItemId],
-    });
-    let checkOrden = 1;
-    for (const check of item.checks) {
-      await client.execute({
-        sql: `INSERT INTO product_print_item_checks (print_item_id, nombre, marcado, orden)
-              VALUES (?1, ?2, ?3, ?4)`,
-        args: [printItemId, check.nombre.trim(), check.marcado ? 1 : 0, checkOrden],
+    for (const id of existingIds) {
+      if (keptIds.has(id)) continue;
+      await tx.execute({
+        sql: "DELETE FROM product_print_item_checks WHERE print_item_id=?1",
+        args: [id],
       });
-      checkOrden += 1;
-    }
-    await client.execute({
-      sql: "DELETE FROM product_print_item_extras WHERE print_item_id = ?1",
-      args: [printItemId],
-    });
-    let extraOrden = 1;
-    for (const extra of item.extras) {
-      const etiqueta = extra.etiqueta.trim();
-      const valor = extra.valor.trim();
-      if (!etiqueta || !valor) continue;
-      await client.execute({
-        sql: `INSERT INTO product_print_item_extras (print_item_id, etiqueta, valor, orden)
-              VALUES (?1, ?2, ?3, ?4)`,
-        args: [printItemId, etiqueta, valor, extraOrden],
+      await tx.execute({
+        sql: "DELETE FROM product_print_item_extras WHERE print_item_id=?1",
+        args: [id],
       });
-      extraOrden += 1;
-    }
-
-    await client.execute({
-      sql: "DELETE FROM product_print_item_images WHERE print_item_id = ?1",
-      args: [printItemId],
-    });
-    let imageOrden = 1;
-    for (const image of item.images) {
-      await client.execute({
-        sql: `INSERT INTO product_print_item_images (print_item_id, imagen, imagen_mime, orden)
-              VALUES (?1, ?2, ?3, ?4)`,
-        args: [printItemId, image.imagen.data, image.imagen.mime, imageOrden],
+      await tx.execute({
+        sql: "DELETE FROM product_print_item_images WHERE print_item_id=?1",
+        args: [id],
       });
-      imageOrden += 1;
+      await tx.execute({
+        sql: `DELETE FROM product_print_item_purchases WHERE print_item_order_id IN
+              (SELECT id FROM product_print_item_orders WHERE print_item_id = ?1)`,
+        args: [id],
+      });
+      await tx.execute({
+        sql: "DELETE FROM product_print_item_orders WHERE print_item_id=?1",
+        args: [id],
+      });
+      await tx.execute({
+        sql: "DELETE FROM product_print_items WHERE id=?1",
+        args: [id],
+      });
     }
-    orden += 1;
-  }
-
-  for (const id of existingIds) {
-    if (keptIds.has(id)) continue;
-    await client.execute({
-      sql: "DELETE FROM product_print_item_checks WHERE print_item_id=?1",
-      args: [id],
-    });
-    await client.execute({
-      sql: "DELETE FROM product_print_item_extras WHERE print_item_id=?1",
-      args: [id],
-    });
-    await client.execute({
-      sql: "DELETE FROM product_print_item_images WHERE print_item_id=?1",
-      args: [id],
-    });
-    await client.execute({
-      sql: `DELETE FROM product_print_item_purchases WHERE print_item_order_id IN
-            (SELECT id FROM product_print_item_orders WHERE print_item_id = ?1)`,
-      args: [id],
-    });
-    await client.execute({
-      sql: "DELETE FROM product_print_item_orders WHERE print_item_id=?1",
-      args: [id],
-    });
-    await client.execute({
-      sql: "DELETE FROM product_print_items WHERE id=?1",
-      args: [id],
-    });
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
   }
 }
 
@@ -1556,9 +1720,8 @@ export async function createPrintItemOrder(
     totalPliegos: number;
     folio: string;
   },
-  usuario?: string | null,
 ): Promise<PrintItemOrder> {
-  await assertActorAuthorized(actor, "imprenta");
+  const username = await assertActorAuthorized(actor, "imprenta");
   const result = await client.execute({
     sql: `INSERT INTO product_print_item_orders
           (print_item_id, merma, cantidad_arte, numero_tiros, formacion_usada, numero_pliegos_usado, total_pliegos, usuario, folio)
@@ -1571,7 +1734,7 @@ export async function createPrintItemOrder(
       input.formacionUsada,
       input.numeroPliegosUsado,
       input.totalPliegos,
-      usuario ?? null,
+      username,
       input.folio,
     ],
   });
@@ -1584,7 +1747,7 @@ export async function createPrintItemOrder(
     formacion_usada: input.formacionUsada,
     numero_pliegos_usado: input.numeroPliegosUsado,
     total_pliegos: input.totalPliegos,
-    usuario: usuario ?? null,
+    usuario: username,
     folio: input.folio,
     creado_en: new Date().toISOString(),
   };
@@ -1624,9 +1787,8 @@ export async function createPrintItemPurchase(
     totalTamanos: number;
     folio: string;
   },
-  usuario?: string | null,
 ): Promise<PrintItemPurchase> {
-  await assertActorAuthorized(actor, "imprenta");
+  const username = await assertActorAuthorized(actor, "imprenta");
   const result = await client.execute({
     sql: `INSERT INTO product_print_item_purchases
           (print_item_order_id, papel, pliego, maquina, cortes, cantidad, total_tamanos, usuario, folio)
@@ -1639,7 +1801,7 @@ export async function createPrintItemPurchase(
       input.cortes,
       input.cantidad,
       input.totalTamanos,
-      usuario ?? null,
+      username,
       input.folio,
     ],
   });
@@ -1652,10 +1814,74 @@ export async function createPrintItemPurchase(
     cortes: input.cortes,
     cantidad: input.cantidad,
     total_tamanos: input.totalTamanos,
-    usuario: usuario ?? null,
+    usuario: username,
     folio: input.folio,
     creado_en: new Date().toISOString(),
   };
+}
+
+// Usada por la "compra general" de OrderModal (varios ítems a la vez): antes
+// insertaba una compra por ítem con try/catch individual, seguía adelante si
+// una fallaba, y reportaba éxito igual — el PDF podía terminar listando
+// compras que nunca quedaron guardadas. Todo o nada: si un ítem falla,
+// ninguno queda escrito, para que el caller nunca reporte éxito con registros
+// faltantes.
+export async function createPrintItemPurchasesBatch(
+  actor: Actor,
+  entries: {
+    printItemOrderId: number;
+    papel: string;
+    pliego: string;
+    maquina: string;
+    cortes: number;
+    cantidad: number;
+    totalTamanos: number;
+    folio: string;
+  }[],
+): Promise<PrintItemPurchase[]> {
+  const username = await assertActorAuthorized(actor, "imprenta");
+  const tx = await client.transaction("write");
+  try {
+    const results: PrintItemPurchase[] = [];
+    for (const entry of entries) {
+      const result = await tx.execute({
+        sql: `INSERT INTO product_print_item_purchases
+              (print_item_order_id, papel, pliego, maquina, cortes, cantidad, total_tamanos, usuario, folio)
+              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)`,
+        args: [
+          entry.printItemOrderId,
+          entry.papel,
+          entry.pliego,
+          entry.maquina,
+          entry.cortes,
+          entry.cantidad,
+          entry.totalTamanos,
+          username,
+          entry.folio,
+        ],
+      });
+      results.push({
+        id: Number(result.lastInsertRowid),
+        print_item_order_id: entry.printItemOrderId,
+        papel: entry.papel,
+        pliego: entry.pliego,
+        maquina: entry.maquina,
+        cortes: entry.cortes,
+        cantidad: entry.cantidad,
+        total_tamanos: entry.totalTamanos,
+        usuario: username,
+        folio: entry.folio,
+        creado_en: new Date().toISOString(),
+      });
+    }
+    await tx.commit();
+    return results;
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
 }
 
 export async function getPrintItemPurchases(
@@ -1780,8 +2006,10 @@ function rowToRequisicion(row: RequisicionRow): Requisicion {
 }
 
 export async function createRequisicion(
+  actor: Actor,
   input: RequisicionInput,
 ): Promise<Requisicion> {
+  const usuario = await assertActorAuthorized(actor, "requisiciones");
   const fecha = fechaLocalDeHoy();
   // numero_dia se calcula dentro del mismo INSERT (subconsulta), no en un
   // SELECT previo por separado: SQLite/libSQL serializa las escrituras, así
@@ -1799,7 +2027,7 @@ export async function createRequisicion(
     args: [
       input.productId,
       fecha,
-      input.usuario,
+      usuario,
       input.etiqueta,
       input.descripcion,
       input.cantidad,
@@ -1826,9 +2054,11 @@ export async function createRequisicion(
 // ventana entre "folio consumido" y "requisición guardada" para los llamadores
 // que no necesitan el folio antes (no arman un PDF con él antes del insert).
 export async function createRequisicionConFolio(
+  actor: Actor,
   sku: string,
   input: Omit<RequisicionInput, "folio">,
 ): Promise<Requisicion> {
+  const usuario = await assertActorAuthorized(actor, "requisiciones");
   const fecha = fechaLocalDeHoy();
   const tx = await client.transaction("write");
   try {
@@ -1845,7 +2075,7 @@ export async function createRequisicionConFolio(
       args: [
         input.productId,
         fecha,
-        input.usuario,
+        usuario,
         input.etiqueta,
         input.descripcion,
         input.cantidad,
@@ -1883,22 +2113,47 @@ export async function createRequisicionConFolio(
  * botón "Crear backup ahora" como por el hook previo a importaciones.
  */
 export async function createBackupSql(): Promise<{ sql: string; manifest: import("./types").BackupManifest }> {
-  const tablesResult = await client.execute(
-    "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-  );
-  const tables: DumpTable[] = [];
-  for (const row of tablesResult.rows as unknown as { name: string; sql: string }[]) {
-    const columnsResult = await client.execute(`PRAGMA table_info(${row.name})`);
-    const columns = (columnsResult.rows as unknown as { name: string }[]).map((c) => c.name);
-    const rowsResult = await client.execute(`SELECT * FROM ${row.name}`);
-    tables.push({
-      name: row.name,
-      createSql: row.sql,
-      columns,
-      rows: rowsResult.rows as unknown as Record<string, unknown>[],
-    });
+  // Transacción de solo-lectura: todas las tablas (y los índices) se leen
+  // desde la misma foto consistente de la BD, para que un backup nunca mezcle
+  // el estado de una tabla con escrituras concurrentes de otra mientras el
+  // dump está en progreso.
+  const tx = await client.transaction("read");
+  try {
+    const tablesResult = await tx.execute(
+      "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    );
+    const tables: DumpTable[] = [];
+    for (const row of tablesResult.rows as unknown as { name: string; sql: string }[]) {
+      const columnsResult = await tx.execute(`PRAGMA table_info(${row.name})`);
+      const columns = (columnsResult.rows as unknown as { name: string }[]).map((c) => c.name);
+      const rowsResult = await tx.execute(`SELECT * FROM ${row.name}`);
+      tables.push({
+        name: row.name,
+        createSql: row.sql,
+        columns,
+        rows: rowsResult.rows as unknown as Record<string, unknown>[],
+      });
+    }
+
+    // Índices creados aparte de la definición de la tabla (sql IS NOT NULL
+    // excluye los índices automáticos de PRIMARY KEY/UNIQUE inline, que ya se
+    // recrean solos con el CREATE TABLE) — sin esto, restaurar un backup
+    // pierde cualquier índice único/de rendimiento agregado por separado.
+    const indexesResult = await tx.execute(
+      "SELECT name, tbl_name, sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL AND tbl_name NOT LIKE 'sqlite_%' ORDER BY name",
+    );
+    const indexes: DumpIndex[] = (
+      indexesResult.rows as unknown as { name: string; tbl_name: string; sql: string }[]
+    ).map((row) => ({ name: row.name, tableName: row.tbl_name, createSql: row.sql }));
+
+    await tx.commit();
+    return buildBackupSql(tables, indexes);
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
   }
-  return buildBackupSql(tables);
 }
 
 /**
@@ -1944,6 +2199,17 @@ export async function verifyRestoreCounts(
       if (actual !== expected) mismatches.push(`${table}: esperado ${expected}, encontrado ${actual}`);
     } catch (err) {
       mismatches.push(`${table}: no se pudo verificar (${String(err)})`);
+    }
+  }
+  if (expectedManifest.indices !== undefined && expectedManifest.indices.length > 0) {
+    try {
+      const r = await client.execute("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL");
+      const actualNames = new Set((r.rows as unknown as { name: string }[]).map((row) => row.name));
+      for (const idxName of expectedManifest.indices) {
+        if (!actualNames.has(idxName)) mismatches.push(`índice ${idxName}: no encontrado tras la restauración`);
+      }
+    } catch (err) {
+      mismatches.push(`índices: no se pudieron verificar (${String(err)})`);
     }
   }
   return { ok: mismatches.length === 0, mismatches };
@@ -2048,7 +2314,12 @@ function rowToBackupRecord(row: BackupRecordRow): BackupRecord {
   return { ...row, tipo: row.tipo as BackupTipo, estado: row.estado as BackupEstado };
 }
 
-export async function createBackupRecord(input: {
+// No exportada a propósito: exportarla permitiría fabricar/alterar filas de
+// backup_history (marcar un backup como OK sin que haya corrido) llamándola
+// directo desde afuera con cualquier Actor o ninguno. La usan runBackupNow()
+// (automático, sin Actor, dentro de este archivo) y recordRestoreResult()/
+// recordBackupSettingsChange() abajo (con Actor y el permiso ya verificado).
+async function createBackupRecord(input: {
   tipo: BackupTipo;
   origen: string;
   usuario: string | null;
@@ -2079,7 +2350,8 @@ export async function createBackupRecord(input: {
   return rowToBackupRecord(result.rows[0] as unknown as BackupRecordRow);
 }
 
-export async function updateBackupRecord(
+// No exportada a propósito — ver createBackupRecord arriba.
+async function updateBackupRecord(
   id: number,
   update: { estado: BackupEstado; tamano_bytes?: number; checksum_sha256?: string; detalle?: string },
 ): Promise<void> {
@@ -2091,7 +2363,85 @@ export async function updateBackupRecord(
   });
 }
 
-export async function listBackupHistory(limit = 100): Promise<BackupRecord[]> {
+// Variante de assertActorAuthorized que NO exige que session_token siga
+// coincidiendo — solo que el id corresponda a un usuario activo con el
+// permiso (o admin), tal como está la fila AHORA. Usada exclusivamente como
+// fallback en recordRestoreResult: sigue rechazando a cualquiera que
+// genuinamente no tenga el permiso (por id, no solo por token), así que no
+// es un bypass de autorización — solo no exige que el token en memoria del
+// llamador siga siendo el vigente.
+async function assertUserHasPermissionById(userId: number, requiredPermiso: Permiso): Promise<void> {
+  const result = await client.execute({
+    sql: "SELECT rol, activo FROM users WHERE id = ?1",
+    args: [userId],
+  });
+  const row = result.rows[0] as unknown as { rol: string; activo: number } | undefined;
+  if (!row || !row.activo) {
+    throw new Error("No autorizado: la sesión no es válida o venció.");
+  }
+  if (row.rol === "admin") return;
+  const permResult = await client.execute({
+    sql: "SELECT 1 FROM user_permissions WHERE user_id = ?1 AND permiso = ?2",
+    args: [userId, requiredPermiso],
+  });
+  if (permResult.rows.length === 0) {
+    throw new Error("No autorizado: falta el permiso requerido para esta acción.");
+  }
+}
+
+// Registra en backup_history el resultado de una restauración — separada de
+// createBackupRecord (privada) porque este flujo sí tiene un Actor real
+// detrás y debe exigir el mismo permiso que ya validó executeRestoreSql un
+// paso antes (backups_restaurar), para que esta fila no se pueda fabricar/
+// alterar llamando la función directamente sin pasar por ahí.
+//
+// Se llama DESPUÉS de que la restauración ya ocurrió — y una restauración
+// sobrescribe la tabla users completa, incluida la fila de este mismo actor,
+// así que su session_token puede dejar de coincidir con el que se capturó
+// antes de restaurar. Si la validación estricta (id + token) falla, se
+// revalida el mismo permiso solo por id (assertUserHasPermissionById) antes
+// de aceptar fallbackUsername — así un token vuelto stale por la propia
+// restauración no impide registrar la auditoría, pero alguien que
+// genuinamente nunca tuvo el permiso sigue siendo rechazado en ambos
+// intentos, igual que antes.
+export async function recordRestoreResult(
+  actor: Actor,
+  fallbackUsername: string,
+  input: {
+    tipo: Extract<BackupTipo, "RESTAURACION" | "RESTAURACION_ARCHIVO_SUBIDO">;
+    origen: string;
+    archivo: string;
+    estado: BackupEstado;
+    detalle?: string;
+  },
+): Promise<BackupRecord> {
+  let username: string;
+  try {
+    username = await assertActorAuthorized(actor, "backups_restaurar");
+  } catch {
+    await assertUserHasPermissionById(actor.id, "backups_restaurar");
+    username = fallbackUsername;
+  }
+  return createBackupRecord({ ...input, usuario: username, ubicacion: "-" });
+}
+
+// Registra en backup_history el cambio de programación — mismo motivo que
+// recordRestoreResult, exige el permiso que ya validó updateBackupSettings.
+export async function recordBackupSettingsChange(actor: Actor, detalle: string): Promise<BackupRecord> {
+  const username = await assertActorAuthorized(actor, "backups_configurar");
+  return createBackupRecord({
+    tipo: "CONFIGURACION_CAMBIADA",
+    origen: "Programación de backups",
+    usuario: username,
+    archivo: "-",
+    ubicacion: "-",
+    estado: "EXITOSO",
+    detalle,
+  });
+}
+
+export async function listBackupHistory(actor: Actor, limit = 100): Promise<BackupRecord[]> {
+  await assertActorAuthorized(actor, "backups_ver");
   const result = await client.execute({
     sql: "SELECT * FROM backup_history ORDER BY creado_en DESC, id DESC LIMIT ?1",
     args: [limit],
@@ -2153,7 +2503,8 @@ function rowToBackupSettings(row: BackupSettingsRow): BackupSettings {
   };
 }
 
-export async function getBackupSettings(): Promise<BackupSettings> {
+export async function getBackupSettings(actor: Actor): Promise<BackupSettings> {
+  await assertActorAuthorized(actor, "backups_ver");
   const result = await client.execute("SELECT * FROM backup_settings WHERE id = 1");
   return rowToBackupSettings(result.rows[0] as unknown as BackupSettingsRow);
 }
@@ -2248,9 +2599,8 @@ export async function updateBackupSettings(
     | "retencion_semanal_dias"
     | "retencion_mensual_dias"
   >,
-  usuario: string | null,
 ): Promise<void> {
-  await assertActorAuthorized(actor, "backups_configurar");
+  const username = await assertActorAuthorized(actor, "backups_configurar");
   await client.execute({
     sql: `UPDATE backup_settings
           SET automatico_activado = ?1, frecuencia = ?2, hora_ejecucion = ?3, intervalo_horas = ?4,
@@ -2266,7 +2616,7 @@ export async function updateBackupSettings(
       settings.retencion_diaria_dias,
       settings.retencion_semanal_dias,
       settings.retencion_mensual_dias,
-      usuario,
+      username,
     ],
   });
 }
@@ -2299,6 +2649,12 @@ function rowToPrecio(row: PrecioRow): Precio {
   };
 }
 
+function assertPrecioValido(precio: number): void {
+  if (!Number.isFinite(precio) || precio < 0) {
+    throw new Error("Ingresa un precio válido (mayor o igual a 0).");
+  }
+}
+
 export async function upsertPrecio(
   actor: Actor,
   input: PrecioInput & {
@@ -2312,41 +2668,52 @@ export async function upsertPrecio(
   // "Guardar producto" en RemisionForm (solo remisiones_crear) — cualquiera
   // de los dos habilita la escritura, para no restringir el flujo existente
   // de Remisiones.
-  await assertActorAuthorized(actor, ["precios_modificar", "remisiones_crear"]);
+  const username = await assertActorAuthorized(actor, ["precios_modificar", "remisiones_crear"]);
+  assertPrecioValido(input.precio);
   const skuPrincipal = computeSkuPrincipal(input.sku);
-  const existing = await client.execute({
-    sql: "SELECT precio FROM precios WHERE sku = ?1",
-    args: [input.sku],
-  });
-  const precioAnterior =
-    (existing.rows[0] as unknown as { precio: number } | undefined)?.precio ?? null;
 
-  const result = await client.execute({
-    sql: `INSERT INTO precios (sku, sku_principal, nombre, precio, actualizado_en, actualizado_por, tipo)
-          VALUES (?1, ?2, ?3, ?4, COALESCE(?5, datetime('now')), ?6, ?7)
-          ON CONFLICT(sku) DO UPDATE SET
-            sku_principal = ?2, nombre = ?3, precio = ?4,
-            actualizado_en = COALESCE(?5, datetime('now')), actualizado_por = ?6,
-            tipo = COALESCE(?7, precios.tipo)
-          RETURNING *`,
-    args: [
-      input.sku,
-      skuPrincipal,
-      input.nombre,
-      input.precio,
-      input.actualizadoEn ?? null,
-      input.usuario,
-      input.tipo ?? null,
-    ],
-  });
-  const row = result.rows[0] as unknown as PrecioRow;
+  const tx = await client.transaction("write");
+  try {
+    const existing = await tx.execute({
+      sql: "SELECT precio FROM precios WHERE sku = ?1",
+      args: [input.sku],
+    });
+    const precioAnterior =
+      (existing.rows[0] as unknown as { precio: number } | undefined)?.precio ?? null;
 
-  await client.execute({
-    sql: "INSERT INTO precios_historial (sku, precio_anterior, precio_nuevo, usuario) VALUES (?1, ?2, ?3, ?4)",
-    args: [input.sku, precioAnterior, input.precio, input.usuario],
-  });
+    const result = await tx.execute({
+      sql: `INSERT INTO precios (sku, sku_principal, nombre, precio, actualizado_en, actualizado_por, tipo)
+            VALUES (?1, ?2, ?3, ?4, COALESCE(?5, datetime('now')), ?6, ?7)
+            ON CONFLICT(sku) DO UPDATE SET
+              sku_principal = ?2, nombre = ?3, precio = ?4,
+              actualizado_en = COALESCE(?5, datetime('now')), actualizado_por = ?6,
+              tipo = COALESCE(?7, precios.tipo)
+            RETURNING *`,
+      args: [
+        input.sku,
+        skuPrincipal,
+        input.nombre,
+        input.precio,
+        input.actualizadoEn ?? null,
+        username,
+        input.tipo ?? null,
+      ],
+    });
+    const row = result.rows[0] as unknown as PrecioRow;
 
-  return rowToPrecio(row);
+    await tx.execute({
+      sql: "INSERT INTO precios_historial (sku, precio_anterior, precio_nuevo, usuario) VALUES (?1, ?2, ?3, ?4)",
+      args: [input.sku, precioAnterior, input.precio, username],
+    });
+
+    await tx.commit();
+    return rowToPrecio(row);
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
 }
 
 // Edita un precio existente permitiendo cambiar el SKU (identidad natural de
@@ -2358,43 +2725,64 @@ export async function updatePrecio(
   id: number,
   input: PrecioInput,
 ): Promise<Precio> {
-  await assertActorAuthorized(actor, "precios_modificar");
+  const username = await assertActorAuthorized(actor, "precios_modificar");
+  assertPrecioValido(input.precio);
   const skuPrincipal = computeSkuPrincipal(input.sku);
 
-  const conflict = await client.execute({
-    sql: "SELECT sku FROM precios WHERE sku = ?1 AND id != ?2",
-    args: [input.sku, id],
-  });
-  if (conflict.rows.length > 0) {
-    throw new Error(`El SKU ${input.sku} ya está en uso por otro producto.`);
+  const tx = await client.transaction("write");
+  try {
+    const conflict = await tx.execute({
+      sql: "SELECT sku FROM precios WHERE sku = ?1 AND id != ?2",
+      args: [input.sku, id],
+    });
+    if (conflict.rows.length > 0) {
+      throw new Error(`El SKU ${input.sku} ya está en uso por otro producto.`);
+    }
+
+    const existing = await tx.execute({
+      sql: "SELECT precio FROM precios WHERE id = ?1",
+      args: [id],
+    });
+    const precioAnterior =
+      (existing.rows[0] as unknown as { precio: number } | undefined)?.precio ?? null;
+
+    const result = await tx.execute({
+      sql: `UPDATE precios
+            SET sku = ?1, sku_principal = ?2, nombre = ?3, precio = ?4,
+                actualizado_en = datetime('now'), actualizado_por = ?5
+            WHERE id = ?6
+            RETURNING *`,
+      args: [input.sku, skuPrincipal, input.nombre, input.precio, username, id],
+    });
+    const row = result.rows[0] as unknown as PrecioRow;
+
+    await tx.execute({
+      sql: "INSERT INTO precios_historial (sku, precio_anterior, precio_nuevo, usuario) VALUES (?1, ?2, ?3, ?4)",
+      args: [input.sku, precioAnterior, input.precio, username],
+    });
+
+    await tx.commit();
+    return rowToPrecio(row);
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
   }
-
-  const existing = await client.execute({
-    sql: "SELECT precio FROM precios WHERE id = ?1",
-    args: [id],
-  });
-  const precioAnterior =
-    (existing.rows[0] as unknown as { precio: number } | undefined)?.precio ?? null;
-
-  const result = await client.execute({
-    sql: `UPDATE precios
-          SET sku = ?1, sku_principal = ?2, nombre = ?3, precio = ?4,
-              actualizado_en = datetime('now'), actualizado_por = ?5
-          WHERE id = ?6
-          RETURNING *`,
-    args: [input.sku, skuPrincipal, input.nombre, input.precio, input.usuario, id],
-  });
-  const row = result.rows[0] as unknown as PrecioRow;
-
-  await client.execute({
-    sql: "INSERT INTO precios_historial (sku, precio_anterior, precio_nuevo, usuario) VALUES (?1, ?2, ?3, ?4)",
-    args: [input.sku, precioAnterior, input.precio, input.usuario],
-  });
-
-  return rowToPrecio(row);
 }
 
-export async function getPrecio(sku: string): Promise<Precio | null> {
+// Permisos de las pantallas que hoy leen precios individuales/búsqueda:
+// PreciosModal (precios_ver/precios_modificar), RemisionForm/
+// RemisionDetalleModal (remisiones_acceso/remisiones_crear).
+const PRECIO_LECTURA_PERMISOS: Permiso[] = [
+  "precios_ver",
+  "precios_modificar",
+  "remisiones_acceso",
+  "remisiones_crear",
+];
+
+export async function getPrecio(actor: Actor, sku: string): Promise<Precio | null> {
+  await assertActorAuthorized(actor, PRECIO_LECTURA_PERMISOS);
   const result = await client.execute({
     sql: "SELECT * FROM precios WHERE sku = ?1",
     args: [sku],
@@ -2403,7 +2791,8 @@ export async function getPrecio(sku: string): Promise<Precio | null> {
   return row ? rowToPrecio(row) : null;
 }
 
-export async function getPreciosBySkuPrincipal(skuPrincipal: string): Promise<Precio[]> {
+export async function getPreciosBySkuPrincipal(actor: Actor, skuPrincipal: string): Promise<Precio[]> {
+  await assertActorAuthorized(actor, PRECIO_LECTURA_PERMISOS);
   const result = await client.execute({
     sql: "SELECT * FROM precios WHERE sku_principal = ?1 ORDER BY sku",
     args: [skuPrincipal],
@@ -2411,7 +2800,8 @@ export async function getPreciosBySkuPrincipal(skuPrincipal: string): Promise<Pr
   return (result.rows as unknown as PrecioRow[]).map(rowToPrecio);
 }
 
-export async function getPreciosList(): Promise<Precio[]> {
+export async function getPreciosList(actor: Actor): Promise<Precio[]> {
+  await assertActorAuthorized(actor, ["precios_ver", "precios_modificar", "sku_master", "backups_ver"]);
   const result = await client.execute("SELECT * FROM precios ORDER BY sku");
   return (result.rows as unknown as PrecioRow[]).map(rowToPrecio);
 }
@@ -2419,12 +2809,13 @@ export async function getPreciosList(): Promise<Precio[]> {
 // Búsqueda para el renglón de una remisión: el SKU (normal o con letra, ej.
 // "7078E") y el nombre que se muestran ahí son los de `precios`, no los de
 // `products` — un SKU con letra puede no tener ficha técnica propia.
-export async function searchPrecios(query: string): Promise<Precio[]> {
+export async function searchPrecios(actor: Actor, query: string): Promise<Precio[]> {
+  await assertActorAuthorized(actor, PRECIO_LECTURA_PERMISOS);
   const trimmed = query.trim();
   if (!trimmed) return [];
   const result = await client.execute({
-    sql: "SELECT * FROM precios WHERE sku LIKE ?1 OR nombre LIKE ?1 ORDER BY sku",
-    args: [`%${trimmed}%`],
+    sql: `SELECT * FROM precios WHERE ${foldSearchColumn("sku")} LIKE ?1 OR ${foldSearchColumn("nombre")} LIKE ?1 ORDER BY sku`,
+    args: [`%${normalizeSearchTerm(trimmed)}%`],
   });
   return (result.rows as unknown as PrecioRow[]).map(rowToPrecio);
 }
@@ -2467,6 +2858,66 @@ function rowToRemision(row: RemisionRow): Remision {
   };
 }
 
+// Misma fórmula que RemisionForm.tsx/RemisionDetalleModal.tsx — recalculada
+// server-side (en vez de confiar en precio_unitario/importe/subtotal/
+// descuento/iva/total/precio_texto tal como los mande el cliente) para que
+// llamar estas funciones directamente con esos campos manipulados no pueda
+// dejar una remisión con números inconsistentes. Si se cambia el % de IVA o
+// la fórmula de negocio, hay que actualizar los tres lugares a la vez.
+export const IVA_RATE = 0.16;
+
+// Aritmética pura, sin validar — comparte el mismo cálculo entre el servidor
+// (computeRemisionTotales abajo, que sí valida/lanza) y la vista previa en
+// vivo de RemisionForm.tsx/RemisionDetalleModal.tsx (que ya hace su propia
+// validación por renglón para mostrar errores puntuales, y no quiere que un
+// campo a medio teclear tire una excepción en cada render). Único lugar que
+// conoce la fórmula de negocio: IVA = Subtotal × IVA_RATE; Total = Subtotal
+// − Descuento − IVA (se resta, no se suma — regla de negocio documentada en
+// docs/WORKFLOWS.md, no un error).
+export function computeRemisionMontos(
+  renglones: { cantidad: number; precio_unitario: number }[],
+  descuentoPct: number,
+): { subtotal: number; descuento: number; iva: number; total: number } {
+  const subtotal = renglones.reduce((sum, r) => sum + r.cantidad * r.precio_unitario, 0);
+  const descuento = subtotal * (descuentoPct / 100);
+  const iva = subtotal * IVA_RATE;
+  const total = subtotal - descuento - iva;
+  return { subtotal, descuento, iva, total };
+}
+
+function computeRemisionTotales(
+  renglones: RemisionRenglonInput[],
+  descuentoPct: number,
+): {
+  renglones: RemisionRenglonInput[];
+  subtotal: number;
+  descuento: number;
+  iva: number;
+  total: number;
+  precioTexto: string;
+} {
+  if (renglones.length === 0) {
+    throw new Error("Agrega al menos un producto.");
+  }
+  if (!Number.isFinite(descuentoPct) || descuentoPct < 0 || descuentoPct > 100) {
+    throw new Error("El descuento % debe estar entre 0 y 100.");
+  }
+  const recomputed = renglones.map((r) => {
+    if (!Number.isFinite(r.cantidad) || r.cantidad <= 0) {
+      throw new Error(`Cantidad inválida en el renglón de ${r.sku || "producto sin SKU"}.`);
+    }
+    if (!Number.isFinite(r.precio_unitario) || r.precio_unitario < 0) {
+      throw new Error(`Precio inválido en el renglón de ${r.sku || "producto sin SKU"}.`);
+    }
+    return { ...r, importe: r.cantidad * r.precio_unitario };
+  });
+  const { subtotal, descuento, iva, total } = computeRemisionMontos(recomputed, descuentoPct);
+  if (total < 0) {
+    throw new Error("El total no puede quedar negativo — revisa el descuento.");
+  }
+  return { renglones: recomputed, subtotal, descuento, iva, total, precioTexto: numeroATextoMoneda(total) };
+}
+
 // Folio + header + renglones en una sola transacción interactiva. Antes,
 // RemisionForm llamaba a createFolio() por separado (confirmaba el folio de
 // inmediato) y luego a createRemision(), que sí escribía header+renglones
@@ -2478,10 +2929,11 @@ function rowToRemision(row: RemisionRow): Remision {
 export async function createRemisionConFolio(
   actor: Actor,
   sku: string,
-  input: Omit<RemisionInput, "folio">,
+  input: Omit<RemisionInput, "folio" | "subtotal" | "descuento" | "iva" | "total" | "precio_texto" | "usuario">,
   renglones: RemisionRenglonInput[],
 ): Promise<RemisionConRenglones> {
-  await assertActorAuthorized(actor, "remisiones_crear");
+  const username = await assertActorAuthorized(actor, "remisiones_crear");
+  const totales = computeRemisionTotales(renglones, input.descuento_pct);
   const tx = await client.transaction("write");
   try {
     const folio = await insertFolioRow(tx, "remision", sku);
@@ -2496,19 +2948,19 @@ export async function createRemisionConFolio(
         input.fecha,
         input.tipo,
         input.pedido_bodegas,
-        input.subtotal,
+        totales.subtotal,
         input.descuento_pct,
-        input.descuento,
-        input.iva,
-        input.total,
-        input.precio_texto,
-        input.usuario,
+        totales.descuento,
+        totales.iva,
+        totales.total,
+        totales.precioTexto,
+        username,
       ],
     });
     const headerRow = headerResult.rows[0] as unknown as RemisionRow;
 
     const savedRenglones: RemisionRenglon[] = [];
-    for (const [i, r] of renglones.entries()) {
+    for (const [i, r] of totales.renglones.entries()) {
       const rowResult = await tx.execute({
         sql: `INSERT INTO remision_renglones
                 (remision_id, numero_renglon, sku, producto_nombre, cantidad, precio_unitario, importe)
@@ -2537,13 +2989,11 @@ export async function createRemisionConFolio(
 export async function updateRemisionConRenglones(
   actor: Actor,
   id: number,
-  totales: Pick<
-    RemisionInput,
-    "pedido_bodegas" | "subtotal" | "descuento_pct" | "descuento" | "iva" | "total" | "precio_texto"
-  >,
+  totalesInput: Pick<RemisionInput, "pedido_bodegas" | "descuento_pct">,
   renglones: RemisionRenglonInput[],
 ): Promise<RemisionConRenglones> {
   await assertActorAuthorized(actor, "remisiones_crear");
+  const totales = computeRemisionTotales(renglones, totalesInput.descuento_pct);
   const tx = await client.transaction("write");
   try {
     const headerResult = await tx.execute({
@@ -2553,13 +3003,13 @@ export async function updateRemisionConRenglones(
             WHERE id = ?8
             RETURNING *`,
       args: [
-        totales.pedido_bodegas,
+        totalesInput.pedido_bodegas,
         totales.subtotal,
-        totales.descuento_pct,
+        totalesInput.descuento_pct,
         totales.descuento,
         totales.iva,
         totales.total,
-        totales.precio_texto,
+        totales.precioTexto,
         id,
       ],
     });
@@ -2569,7 +3019,7 @@ export async function updateRemisionConRenglones(
     await tx.execute({ sql: "DELETE FROM remision_renglones WHERE remision_id = ?1", args: [id] });
 
     const savedRenglones: RemisionRenglon[] = [];
-    for (const [i, r] of renglones.entries()) {
+    for (const [i, r] of totales.renglones.entries()) {
       const rowResult = await tx.execute({
         sql: `INSERT INTO remision_renglones
                 (remision_id, numero_renglon, sku, producto_nombre, cantidad, precio_unitario, importe)
@@ -2590,7 +3040,8 @@ export async function updateRemisionConRenglones(
   }
 }
 
-export async function listRemisiones(limit = 30): Promise<Remision[]> {
+export async function listRemisiones(actor: Actor, limit = 30): Promise<Remision[]> {
+  await assertActorAuthorized(actor, "remisiones_acceso");
   const result = await client.execute({
     sql: "SELECT * FROM remisiones ORDER BY id DESC LIMIT ?1",
     args: [limit],
@@ -2598,7 +3049,8 @@ export async function listRemisiones(limit = 30): Promise<Remision[]> {
   return (result.rows as unknown as RemisionRow[]).map(rowToRemision);
 }
 
-export async function getRemisionRenglones(remisionId: number): Promise<RemisionRenglon[]> {
+export async function getRemisionRenglones(actor: Actor, remisionId: number): Promise<RemisionRenglon[]> {
+  await assertActorAuthorized(actor, "remisiones_acceso");
   const result = await client.execute({
     sql: "SELECT * FROM remision_renglones WHERE remision_id = ?1 ORDER BY numero_renglon",
     args: [remisionId],
@@ -2608,12 +3060,8 @@ export async function getRemisionRenglones(remisionId: number): Promise<Remision
 
 // Mismo patrón que deletePrintItemOrder/deletePrintItemPurchase (Imprenta):
 // borrado real, no un flag — remision_renglones se borra primero por la FK.
-export async function deleteRemision(
-  actor: Actor,
-  id: number,
-  usuario: string | null,
-): Promise<void> {
-  await assertActorAuthorized(actor, "remisiones_cancelar");
+export async function deleteRemision(actor: Actor, id: number): Promise<void> {
+  const username = await assertActorAuthorized(actor, "remisiones_cancelar");
   const tx = await client.transaction("write");
   try {
     await tx.execute({ sql: "DELETE FROM remision_renglones WHERE remision_id = ?1", args: [id] });
@@ -2625,10 +3073,11 @@ export async function deleteRemision(
   } finally {
     tx.close();
   }
-  await logEvent("WARNING", `Remisión #${id} eliminada`, usuario);
+  await logEvent("WARNING", `Remisión #${id} eliminada`, username);
 }
 
-export async function listRemisionRenglonesParaHistorial(): Promise<RemisionHistorialRow[]> {
+export async function listRemisionRenglonesParaHistorial(actor: Actor): Promise<RemisionHistorialRow[]> {
+  await assertActorAuthorized(actor, "backups_ver");
   const result = await client.execute(`
     SELECT
       r.fecha AS fecha, r.folio AS folio, r.pedido_bodegas AS pedido_bodegas, r.cancelada AS cancelada,

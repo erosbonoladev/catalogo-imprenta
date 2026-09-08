@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   findProductByCodigo,
   listImageFolderFiles,
-  logEvent,
+  logEventAsActor,
   pickImageFolder,
   readImageFileBlob,
   runBackupNow,
@@ -210,10 +210,10 @@ export default function ImageImportPanel() {
         } catch (err) {
           conErrores += 1;
           errorRows.push({ archivo: row.archivo, motivo: String(err) });
-          logEvent(
+          logEventAsActor(
+            actor,
             "ERROR",
             `Captura masiva de imágenes: no se pudo guardar la imagen pendiente de "${row.archivo}": ${String(err)}`,
-            user?.username ?? null,
           );
         }
         continue;
@@ -223,26 +223,26 @@ export default function ImageImportPanel() {
         const product = row.matchedProduct;
         if (!product) throw new Error("No se encontró la ficha técnica para esta imagen.");
         const imagen = await readImageFileBlob(row.path);
-        await updateProductImage(product.id, imagen);
+        await updateProductImage(actor, product.id, imagen);
         if (row.status === "sustituir") sustituidas += 1;
         else asignadas += 1;
       } catch (err) {
         conErrores += 1;
         errorRows.push({ archivo: row.archivo, motivo: String(err) });
-        logEvent(
+        logEventAsActor(
+          actor,
           "ERROR",
           `Captura masiva de imágenes: no se pudo procesar "${row.archivo}": ${String(err)}`,
-          user?.username ?? null,
         );
       }
     }
 
     setCommitProgress({ done: rows.length, total: rows.length });
     setSummary({ asignadas, sustituidas, conservadas, pendientes, conErrores, total: rows.length, errorRows });
-    logEvent(
+    logEventAsActor(
+      actor,
       "INFO",
       `Captura masiva de imágenes: ${asignadas} asignadas, ${sustituidas} sustituidas, ${conservadas} conservadas, ${pendientes} guardadas para más adelante, ${conErrores} con errores (total ${rows.length}).`,
-      user?.username ?? null,
     );
     setPhase("done");
   }

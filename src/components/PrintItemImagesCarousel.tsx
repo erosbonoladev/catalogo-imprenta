@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getImageSrc, pickImage } from "../db";
+import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
 import type { ImageBlob, PrintItemImage } from "../types";
 import basuraIcon from "../../Assets/basura.svg";
 
@@ -22,6 +23,7 @@ export default function PrintItemImagesCarousel({
 }: Props) {
   const [index, setIndex] = useState(0);
   const [src, setSrc] = useState<string | null>(null);
+  useRevokeObjectUrl(src);
   const hasImages = images.length > 0;
 
   useEffect(() => {
@@ -32,9 +34,13 @@ export default function PrintItemImagesCarousel({
 
   useEffect(() => {
     let cancelled = false;
-    getImageSrc(images[index]?.imagen ?? null).then((url) => {
-      if (!cancelled) setSrc(url);
-    });
+    getImageSrc(images[index]?.imagen ?? null)
+      .then((url) => {
+        if (!cancelled) setSrc(url);
+      })
+      .catch(() => {
+        if (!cancelled) setSrc(null);
+      });
     return () => {
       cancelled = true;
     };

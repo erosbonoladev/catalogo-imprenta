@@ -20,17 +20,23 @@ Dos caminos, mismo formato de dump, mismo destino final de auditoría (tabla `ba
 
 ## Formato del backup
 
-Un archivo `clio_<fecha>_<hora>.sql.gz`: SQL estándar (schema completo vía `DROP TABLE IF EXISTS`+`CREATE TABLE` re-emitido tal cual está en `sqlite_master`, seguido de `INSERT` por fila, BLOBs como literales `X'...'`) comprimido con gzip, con una primera línea de metadata:
+Un archivo `clio_<fecha>_<hora>.sql.gz`: SQL estándar (schema completo vía `DROP TABLE IF EXISTS`+`CREATE TABLE` re-emitido tal cual está en `sqlite_master`, seguido de `INSERT` por fila, BLOBs como literales `X'...'`, y por último los `CREATE INDEX`/`CREATE UNIQUE INDEX` de esa tabla creados aparte de su definición — no solo las tablas) comprimido con gzip, con una primera línea de metadata:
 
 ```sql
--- CLIO_BACKUP_META {"version":1,"creadoEn":"...","tablas":{"products":1359,...}}
+-- CLIO_BACKUP_META {"version":1,"creadoEn":"...","tablas":{"products":1359,...},"indices":["idx_..."]}
 PRAGMA foreign_keys=OFF;
 BEGIN TRANSACTION;
+...
+CREATE UNIQUE INDEX idx_...;
 ...
 COMMIT;
 ```
 
-Es SQL real — técnicamente reproducible con `turso db shell <db> < backup.sql` si alguna vez hace falta salir del flujo de Clio — pero la restauración normal la ejecuta Clio mismo vía `client.batch()` (más seguro que confiar en `BEGIN`/`COMMIT` sueltos por HTTP). El backup incluye **todas** las tablas reales de la BD, incluidas las marcadas como "muertas" en [DATABASE.md](DATABASE.md) — un backup es una foto completa, no un recorte a lo que la app usa hoy.
+Es SQL real — técnicamente reproducible con `turso db shell <db> < backup.sql` si alguna vez hace falta salir del flujo de Clio — pero la restauración normal la ejecuta Clio mismo vía `client.migrate()` (transacción atómica del propio driver — más seguro que confiar en `BEGIN`/`COMMIT` sueltos por HTTP; ver el comentario junto a `executeRestoreSql()` en `src/db.ts` sobre por qué no `client.batch()`). El backup incluye **todas** las tablas reales de la BD, incluidas las marcadas como "muertas" en [DATABASE.md](DATABASE.md) — un backup es una foto completa, no un recorte a lo que la app usa hoy.
+
+`createBackupSql()` lee todas las tablas y los índices dentro de una única transacción de solo lectura (`client.transaction("read")`) — así el dump es una foto consistente de un solo instante, no una mezcla de estados si hay escrituras concurrentes mientras el dump está en progreso (tablas grandes pueden tardar varios segundos en leerse).
+
+**Nota sobre `clio-backups`**: como ese repo mantiene su propia réplica independiente del formato (no puede compartir un import con este código), hoy **no** captura índices — sus backups automáticos programados siguen siendo solo tablas+filas hasta que se actualice ahí también. Un backup sin `indices` en el manifiesto (los generados antes de este cambio, o por `clio-backups` mientras no se actualice) restaura igual, simplemente sin recrear ningún índice — no es un caso de error, `validateBackupSql()`/`verifyRestoreCounts()` tratan `indices` ausente como "sin expectativa que verificar", no como "se esperaban 0".
 
 La lógica de armado/parseo (escapado SQL, split de statements respetando comillas/blobs, checksum, gzip) vive en `src/backup.ts`, sin tocar la BD — así es reutilizable tal cual. El script Node de `clio-backups` es una réplica independiente del mismo formato (viven en repos distintos, no pueden compartir un import).
 
@@ -91,6 +97,8 @@ Sin restauración real a una BD de prueba (ver "Limitaciones conocidas"), pero n
 - Tiene el encabezado `-- CLIO_BACKUP_META`, `BEGIN TRANSACTION` y termina en `COMMIT;`.
 - El número de `CREATE TABLE` coincide con las tablas listadas en el manifiesto.
 - El número de `INSERT` por tabla coincide exactamente con el conteo que el propio manifiesto dice para esa tabla.
+- El número de `CREATE INDEX`/`CREATE UNIQUE INDEX` coincide con `indices` del manifiesto (si el manifiesto trae ese campo).
+- Ningún statement (fuera de los literales de texto de las filas) contiene una palabra que hará fallar la restauración (`ATTACH`/`DETACH`/`PRAGMA`/`TRIGGER`/`VIEW`/`VACUUM`/`REINDEX`) — la misma verificación que `executeRestoreSql()` aplicará al restaurar, corrida en el momento de crear el backup para no descubrir el problema meses después.
 
 Ver `validateBackupSql()` en `src/backup.ts`.
 
@@ -132,6 +140,7 @@ Ver `validateBackupSql()` en `src/backup.ts`.
 
 ## Limitaciones conocidas
 
-- **Verificación por restauración real en un entorno separado — no implementada.** Requeriría una segunda base Turso "de staging" para replayar el dump ahí y comparar. La verificación actual (estructural + conteo de filas cruzado contra el manifiesto) es real, pero no prueba que el SQL efectivamente se pueda ejecutar de punta a punta en una BD limpia. Para cerrar esto: crea una BD Turso de staging (free tier alcanza), agrega sus credenciales como secret adicional en `clio-backups` (`gh secret set STAGING_TURSO_URL`/`STAGING_TURSO_TOKEN`), y extiende `run.mjs` para restaurar ahí después de cada dump automático.
+- **Verificación por restauración real contra Turso — no implementada.** `tests/backups.test.ts` sí prueba de punta a punta (crear backup → restaurar → verificar tablas e índices) contra una BD libSQL local descartable como parte de `npm test`, así que el SQL generado se sabe ejecutable de punta a punta — pero eso corre contra SQLite local, no contra el motor de Turso en producción. Para cerrar esa brecha específica: crea una BD Turso de staging (free tier alcanza), agrega sus credenciales como secret adicional en `clio-backups` (`gh secret set STAGING_TURSO_URL`/`STAGING_TURSO_TOKEN`), y extiende `run.mjs` para restaurar ahí después de cada dump automático.
+- **`clio-backups` no captura índices todavía** — ver nota en "Formato del backup" arriba. Sus backups automáticos programados restauran datos correctamente pero no recrean índices creados aparte de la tabla, hasta que se replique ahí el mismo cambio que en `createBackupSql()`/`buildBackupSql()`.
 - **Backups disparados desde la app viven solo en la máquina que los disparó.** Un backup manual o pre-importación no se sube a GitHub en tiempo real (para no necesitar un segundo token de GitHub con permiso de escritura embebido en la app). Si esa laptop específica se pierde antes de que corra el siguiente backup automático, ese backup puntual se pierde con ella — el automático programado sigue funcionando igual, centralizado, sin depender de ninguna máquina en particular.
 - **Retención**: el workflow poda Releases vencidos automáticamente (regla dura: nunca el backup válido más reciente), pero los backups guardados *localmente* (manual/pre-importación/pre-restauración) no tienen poda automática todavía — hoy solo se borran a mano desde el historial (permiso `backups_eliminar`).

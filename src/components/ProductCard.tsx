@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getImageSrc, getProductImage } from "../db";
+import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
 import type { Product } from "../types";
 
 interface Props {
@@ -9,6 +10,7 @@ interface Props {
 
 export default function ProductCard({ product, onClick }: Props) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  useRevokeObjectUrl(imageSrc);
 
   useEffect(() => {
     let cancelled = false;
@@ -16,6 +18,9 @@ export default function ProductCard({ product, onClick }: Props) {
       .then(getImageSrc)
       .then((src) => {
         if (!cancelled) setImageSrc(src);
+      })
+      .catch(() => {
+        if (!cancelled) setImageSrc(null);
       });
     return () => {
       cancelled = true;

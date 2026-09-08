@@ -11,6 +11,7 @@ import {
   clearSession,
   heartbeat,
   logEvent,
+  logEventAsActor,
   readLocalBackupFile,
   runBackupNow,
   saveBackupFileAs,
@@ -123,11 +124,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const fresh = await validateSession(user.id, token).catch(() => undefined);
       // undefined = fallo de red al revalidar, no cerrar sesión por eso; null
       // = la BD dice explícitamente que ya no es válida (vencida, invalidada
-      // por un admin, o la cuenta se desactivó) — ahí sí forzar logout.
+      // por un admin, o la cuenta se desactivó) — ahí sí forzar logout. Un
+      // User válido significa que la sesión sigue vigente, pero rol/permisos/
+      // activo pudieron cambiar desde el último fetch (p.ej. un admin ajustó
+      // permisos en otra sesión) — sincronizar siempre, no solo detectar el
+      // caso de invalidación total.
       if (fresh === null) {
         localStorage.removeItem(STORAGE_KEY);
         setUser(null);
         setToken(null);
+      } else if (fresh) {
+        setUser(fresh);
       }
     }, SESSION_REVALIDATE_INTERVAL_MS);
     return () => clearInterval(interval);
@@ -158,7 +165,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       );
       setUser(result.user);
       setToken(result.token);
-      await logEvent("INFO", `Inicio de sesión: ${result.user.username}`, result.user.username);
+      await logEventAsActor(
+        { id: result.user.id, token: result.token },
+        "INFO",
+        `Inicio de sesión: ${result.user.username}`,
+      );
       return { ok: true };
     } catch (err) {
       return { ok: false, error: `No se pudo iniciar sesión: ${String(err)}` };
@@ -166,14 +177,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
-    if (user) {
-      clearSession(user.id).catch(() => {});
-      logEvent("INFO", `Cierre de sesión: ${user.username}`, user.username);
+    if (user && token) {
+      // Registrar el evento antes de limpiar la sesión: clearSession() pone
+      // session_token/session_expires_at en NULL, y si corriera primero
+      // logEventAsActor() ya no encontraría una sesión vigente que verificar.
+      // clearSession recibe el token para cerrar justo ESTA sesión, no
+      // cualquiera que el usuario tenga activa en ese momento (ver db.ts).
+      logEventAsActor({ id: user.id, token }, "INFO", `Cierre de sesión: ${user.username}`).finally(() => {
+        clearSession(user.id, token).catch(() => {});
+      });
     }
     localStorage.removeItem(STORAGE_KEY);
     setUser(null);
     setToken(null);
-  }, [user]);
+  }, [user, token]);
 
   useEffect(() => {
     if (!user) return;

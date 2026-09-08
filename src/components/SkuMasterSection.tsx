@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   getPreciosList,
-  logEvent,
+  logEventAsActor,
   searchPlasticProducts,
   searchProducts,
-  updatePlasticProduct,
+  updatePlasticProductSku,
 } from "../db";
-import type { PlasticProduct, PlasticProductInput, Precio, Product } from "../types";
+import type { PlasticProduct, Precio, Product } from "../types";
 import { computeSkuPrincipal } from "../precios";
 import { hasPermission, useAuth } from "../auth";
 import Pagination from "./Pagination";
@@ -31,23 +31,6 @@ interface SkuGroup {
   precios: Precio[];
 }
 
-function plasticProductToInput(p: PlasticProduct): PlasticProductInput {
-  return {
-    nombre: p.nombre,
-    sku: p.sku,
-    color: p.color,
-    origen: p.origen,
-    descripcion: p.descripcion,
-    material: p.material,
-    dimension: p.dimension,
-    peso: p.peso,
-    tipo_empaque: p.tipo_empaque,
-    maquila: p.maquila,
-    coste: p.coste,
-    imagen: p.imagen,
-  };
-}
-
 export default function SkuMasterSection({ onBack, onOpenProduct, onOpenPieza }: Props) {
   const { user, token } = useAuth();
   const allowed = hasPermission(user, "sku_master");
@@ -64,10 +47,11 @@ export default function SkuMasterSection({ onBack, onOpenProduct, onOpenPieza }:
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   async function refresh() {
+    if (!user || !token) return;
     const [productList, piezaList, precioList] = await Promise.all([
       searchProducts(""),
       searchPlasticProducts(""),
-      getPreciosList(),
+      getPreciosList({ id: user.id, token }),
     ]);
     setProductos(productList);
     setPiezas(piezaList);
@@ -78,16 +62,12 @@ export default function SkuMasterSection({ onBack, onOpenProduct, onOpenPieza }:
   useEffect(() => {
     if (!allowed) return;
     refresh();
-  }, [allowed]);
+  }, [allowed, user, token]);
 
   useEffect(() => {
-    if (allowed) return;
-    logEvent(
-      "WARNING",
-      `Acceso denegado a SKU Master para ${user?.username ?? "desconocido"}`,
-      user?.username ?? null,
-    );
-  }, [allowed, user?.username]);
+    if (allowed || !user || !token) return;
+    logEventAsActor({ id: user.id, token }, "WARNING", `Acceso denegado a SKU Master para ${user.username}`);
+  }, [allowed, user, token]);
 
   // Agrupa por SKU principal (misma regla que Precios, ver computeSkuPrincipal
   // en src/precios.ts) para mostrar qué ficha/pieza/precio comparten la misma
@@ -186,10 +166,7 @@ export default function SkuMasterSection({ onBack, onOpenProduct, onOpenPieza }:
     if (!nuevoSku) return;
     setSavingId(pieza.id);
     try {
-      await updatePlasticProduct({ id: user.id, token }, pieza.id, {
-        ...plasticProductToInput(pieza),
-        sku: nuevoSku,
-      });
+      await updatePlasticProductSku({ id: user.id, token }, pieza.id, nuevoSku);
       setDrafts((prev) => {
         const next = { ...prev };
         delete next[pieza.id];

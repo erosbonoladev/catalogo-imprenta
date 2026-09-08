@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getImageSrc, searchPlasticProducts } from "../db";
+import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
 import type { PlasticProduct } from "../types";
 
 interface Props {
@@ -12,15 +13,20 @@ export default function PlasticProductPicker({ excludeIds, onSelect, onClose }: 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PlasticProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadError(null);
     const timer = setTimeout(async () => {
-      const products = await searchPlasticProducts(query);
-      if (!cancelled) {
-        setResults(products);
-        setLoading(false);
+      try {
+        const products = await searchPlasticProducts(query);
+        if (!cancelled) setResults(products);
+      } catch (err) {
+        if (!cancelled) setLoadError(`No se pudo buscar: ${String(err)}`);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }, 150);
     return () => {
@@ -47,6 +53,8 @@ export default function PlasticProductPicker({ excludeIds, onSelect, onClose }: 
 
         {loading ? (
           <p className="hint">Buscando…</p>
+        ) : loadError ? (
+          <p className="form-error">{loadError}</p>
         ) : visible.length === 0 ? (
           <p className="hint">
             {query.trim()
@@ -82,12 +90,17 @@ interface RowProps {
 
 function PlasticPickerRow({ producto, onSelect }: RowProps) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  useRevokeObjectUrl(imageSrc);
 
   useEffect(() => {
     let cancelled = false;
-    getImageSrc(producto.imagen).then((src) => {
-      if (!cancelled) setImageSrc(src);
-    });
+    getImageSrc(producto.imagen)
+      .then((src) => {
+        if (!cancelled) setImageSrc(src);
+      })
+      .catch(() => {
+        if (!cancelled) setImageSrc(null);
+      });
     return () => {
       cancelled = true;
     };

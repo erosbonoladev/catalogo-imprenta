@@ -4,9 +4,10 @@ import {
   extractRestoreStatements,
   validateBackupSql,
   validateRestoreStatements,
+  type DumpIndex,
   type DumpTable,
 } from "../src/backup";
-import { executeRestoreSql } from "../src/db";
+import { createBackupSql, executeRestoreSql, verifyRestoreCounts } from "../src/db";
 import { countRows, createFixtureUser, rawClient, resetDb } from "./helpers";
 
 beforeEach(async () => {
@@ -135,5 +136,119 @@ COMMIT;
     expect(statements.some((s) => /^BEGIN/i.test(s))).toBe(false);
     expect(statements.some((s) => /^COMMIT/i.test(s))).toBe(false);
     expect(statements.some((s) => s.startsWith("--"))).toBe(false);
+  });
+});
+
+describe("índices — captura, dump y restauración (integridad de backup)", () => {
+  function sampleIndex(): DumpIndex {
+    return {
+      name: "idx_precios_sku",
+      tableName: "precios",
+      createSql: "CREATE UNIQUE INDEX idx_precios_sku ON precios (sku)",
+    };
+  }
+
+  it("buildBackupSql incluye el CREATE INDEX después de las filas de su tabla y lo lista en el manifiesto", () => {
+    const { sql, manifest } = buildBackupSql([sampleTable()], [sampleIndex()]);
+    expect(manifest.indices).toEqual(["idx_precios_sku"]);
+    expect(sql).toContain("CREATE UNIQUE INDEX idx_precios_sku ON precios (sku);");
+    // El índice va después del último INSERT de su tabla.
+    const lastInsert = sql.lastIndexOf("INSERT INTO precios");
+    const indexPos = sql.indexOf("CREATE UNIQUE INDEX idx_precios_sku");
+    expect(indexPos).toBeGreaterThan(lastInsert);
+  });
+
+  it("validateRestoreStatements acepta CREATE UNIQUE INDEX sobre una tabla conocida", () => {
+    const result = validateRestoreStatements(
+      ["CREATE UNIQUE INDEX idx_precios_sku ON precios (sku)"],
+      ["precios"],
+    );
+    expect(result).toEqual({ ok: true, errors: [] });
+  });
+
+  it("validateRestoreStatements rechaza un CREATE INDEX sobre una tabla desconocida", () => {
+    const result = validateRestoreStatements(
+      ["CREATE UNIQUE INDEX idx_evil ON tabla_inventada (x)"],
+      ["precios"],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors[0]).toMatch(/tabla desconocida/i);
+  });
+
+  it("validateBackupSql rechaza si el conteo de índices no coincide con el manifiesto", () => {
+    const { sql } = buildBackupSql([sampleTable()], [sampleIndex()]);
+    const tampered = sql.replace("CREATE UNIQUE INDEX idx_precios_sku ON precios (sku);\n", "");
+    const result = validateBackupSql(tampered);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e) => /número de índices/i.test(e))).toBe(true);
+  });
+
+  it("createBackupSql (contra la BD real de pruebas) captura un índice único creado por separado, y restaurarlo lo recrea", async () => {
+    const raw = rawClient();
+    await raw.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_test_users_username ON users (username)");
+
+    const { sql, manifest } = await createBackupSql();
+    expect(manifest.indices).toContain("idx_test_users_username");
+    expect(sql).toContain("CREATE UNIQUE INDEX idx_test_users_username ON users (username)");
+
+    // Se borra para simular exactamente lo que reportaba la auditoría: un
+    // restore que hoy perdía los índices porque nunca se capturaban.
+    await raw.execute("DROP INDEX idx_test_users_username");
+    const before = await raw.execute(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_test_users_username'",
+    );
+    expect(before.rows.length).toBe(0);
+
+    const a = await createFixtureUser({ username: "restaurador_idx", permisos: ["backups_restaurar"] });
+    await executeRestoreSql(a, sql);
+
+    const after = await raw.execute(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_test_users_username'",
+    );
+    expect(after.rows.length).toBe(1);
+
+    const verification = await verifyRestoreCounts(manifest);
+    expect(verification.ok).toBe(true);
+    expect(verification.mismatches).toEqual([]);
+
+    await raw.execute("DROP INDEX IF EXISTS idx_test_users_username");
+  });
+
+  it("createBackupSql lee todas las tablas desde una foto consistente (transacción de lectura), no consultas sueltas", async () => {
+    // No hay forma directa de forzar una escritura concurrente a mitad del
+    // dump en este entorno de pruebas de un solo proceso; esta prueba
+    // confirma al menos que la función sigue funcionando de punta a punta
+    // (no revienta al usar client.transaction("read")) y que el resultado es
+    // internamente consistente con lo que hay en la BD en el momento de la
+    // llamada.
+    const before = await countRows("precios");
+    const { manifest } = await createBackupSql();
+    expect(manifest.tablas.precios).toBe(before);
+  });
+});
+
+describe("validateBackupSql / validateRestoreStatements — simetría ante palabras peligrosas en datos", () => {
+  it("un valor de texto que contiene la palabra VIEW no rompe la validación de creación ni la de restauración", () => {
+    const table: DumpTable = {
+      name: "precios",
+      createSql: "CREATE TABLE precios (id INTEGER PRIMARY KEY, sku TEXT, nombre TEXT)",
+      columns: ["id", "sku", "nombre"],
+      rows: [{ id: 1, sku: "A1", nombre: "Cristal VIEW 4x4" }],
+    };
+    const { sql } = buildBackupSql([table]);
+
+    const creationValidation = validateBackupSql(sql);
+    expect(creationValidation.ok).toBe(true);
+    expect(creationValidation.errors).toEqual([]);
+
+    const restoreStatements = extractRestoreStatements(sql);
+    const restoreValidation = validateRestoreStatements(restoreStatements, ["precios"]);
+    expect(restoreValidation.ok).toBe(true);
+    expect(restoreValidation.errors).toEqual([]);
+  });
+
+  it("un statement que realmente usa CREATE TRIGGER/VIEW fuera de un literal sigue siendo rechazado", () => {
+    const malicious = "CREATE TRIGGER evil AFTER INSERT ON users BEGIN SELECT 1; END";
+    expect(validateRestoreStatements([malicious], ["users"]).ok).toBe(false);
   });
 });

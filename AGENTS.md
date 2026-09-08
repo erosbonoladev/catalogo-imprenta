@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-Guía para Claude Code en este repo. Esto es un **índice**: reglas siempre vigentes + comandos. El detalle de esquema/flujos/permisos vive en `docs/` — leer solo el archivo que aplique a la tarea (tabla al final). Ver también `AGENTS.md` (mismo contenido, mantenido para Codex y otros agentes) — si editas uno, edita el otro para que no se desincronicen.
+Guía para agentes de código (Codex y similares) en este repo. Esto es un **índice**: reglas siempre vigentes + comandos. El detalle de esquema/flujos/permisos vive en `docs/` — leer solo el archivo que aplique a la tarea (tabla al final). Ver también `CLAUDE.md` (mismo contenido, mantenido para Claude Code) — si editas uno, edita el otro para que no se desincronicen.
 
 ## Qué es
 

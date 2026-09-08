@@ -1,22 +1,21 @@
 import { useEffect, useState } from "react";
-import { clearLogs, getRecentLogs, logEvent } from "../db";
-import type { AppLog } from "../types";
+import { getRecentLogs } from "../db";
 import { useAuth } from "../auth";
-import basuraIcon from "../../Assets/basura.svg";
+import type { AppLog } from "../types";
 
 const POLL_INTERVAL_MS = 12_000;
 
 export default function LogsPanel() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [logs, setLogs] = useState<AppLog[]>([]);
   const [loading, setLoading] = useState(true);
-  const [confirmingClear, setConfirmingClear] = useState(false);
-  const [clearing, setClearing] = useState(false);
 
   useEffect(() => {
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     let cancelled = false;
     async function poll() {
-      const list = await getRecentLogs(200);
+      const list = await getRecentLogs(actor, 200);
       if (!cancelled) {
         setLogs(list);
         setLoading(false);
@@ -28,23 +27,7 @@ export default function LogsPanel() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, []);
-
-  async function handleClear() {
-    setClearing(true);
-    try {
-      await clearLogs();
-      await logEvent(
-        "INFO",
-        `Registro de eventos limpiado por ${user?.username ?? "desconocido"}`,
-        user?.username ?? null,
-      );
-      setLogs(await getRecentLogs(200));
-    } finally {
-      setClearing(false);
-      setConfirmingClear(false);
-    }
-  }
+  }, [user, token]);
 
   if (loading) return <p className="hint">Cargando…</p>;
 
@@ -53,30 +36,6 @@ export default function LogsPanel() {
       <p className="hint">
         Vista de solo lectura — no ejecuta comandos, solo muestra el historial de eventos.
       </p>
-
-      <div className="form-actions" style={{ margin: "0.75rem 0" }}>
-        {confirmingClear ? (
-          <span className="confirm-delete">
-            ¿Limpiar todo el registro?
-            <button className="btn btn-danger" onClick={handleClear} disabled={clearing}>
-              {clearing ? "Limpiando…" : "Sí, limpiar"}
-            </button>
-            <button className="btn-link" onClick={() => setConfirmingClear(false)}>
-              Cancelar
-            </button>
-          </span>
-        ) : (
-          <button
-            type="button"
-            className="icon-btn icon-btn-remove"
-            onClick={() => setConfirmingClear(true)}
-            title="Limpiar registro"
-            aria-label="Limpiar registro"
-          >
-            <img src={basuraIcon} alt="" aria-hidden="true" />
-          </button>
-        )}
-      </div>
 
       <div className="log-terminal">
         {logs.length === 0 ? (

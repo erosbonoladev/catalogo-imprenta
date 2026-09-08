@@ -3,13 +3,14 @@ import {
   createPlasticProduct,
   deletePlasticProduct,
   getImageSrc,
-  logEvent,
+  logEventAsActor,
   pickImage,
   searchPlasticProducts,
   updatePlasticProduct,
 } from "../db";
 import type { PlasticProduct, PlasticProductInput } from "../types";
 import { hasPermission, useAuth } from "../auth";
+import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
 import AutoGrowInput from "./AutoGrowInput";
 import Toast from "./Toast";
 import PlasticProductFields, { EMPTY_PLASTIC_DATA } from "./PlasticProductFields";
@@ -30,11 +31,19 @@ export default function PiezasGeneralSection({ onBack, onVerPieza }: Props) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   async function refresh() {
-    const list = await searchPlasticProducts("");
-    setPiezas(list);
-    setLoading(false);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const list = await searchPlasticProducts("");
+      setPiezas(list);
+    } catch (err) {
+      setLoadError(`No se pudo cargar la lista de piezas: ${String(err)}`);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -43,13 +52,9 @@ export default function PiezasGeneralSection({ onBack, onVerPieza }: Props) {
   }, [allowed]);
 
   useEffect(() => {
-    if (allowed) return;
-    logEvent(
-      "WARNING",
-      `Acceso denegado a Piezas General para ${user?.username ?? "desconocido"}`,
-      user?.username ?? null,
-    );
-  }, [allowed, user?.username]);
+    if (allowed || !user || !token) return;
+    logEventAsActor({ id: user.id, token }, "WARNING", `Acceso denegado a Piezas General para ${user.username}`);
+  }, [allowed, user, token]);
 
   if (!allowed) {
     return (
@@ -95,6 +100,13 @@ export default function PiezasGeneralSection({ onBack, onVerPieza }: Props) {
 
       {loading ? (
         <p className="hint">Cargando…</p>
+      ) : loadError ? (
+        <>
+          <p className="form-error">{loadError}</p>
+          <button type="button" className="btn btn-secondary" onClick={refresh}>
+            Reintentar
+          </button>
+        </>
       ) : piezas.length === 0 ? (
         <p className="hint">No hay piezas registradas.</p>
       ) : (
@@ -221,14 +233,19 @@ export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalPro
       : { ...EMPTY_PLASTIC_DATA },
   );
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  useRevokeObjectUrl(imageSrc);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    getImageSrc(data.imagen).then((src) => {
-      if (!cancelled) setImageSrc(src);
-    });
+    getImageSrc(data.imagen)
+      .then((src) => {
+        if (!cancelled) setImageSrc(src);
+      })
+      .catch(() => {
+        if (!cancelled) setImageSrc(null);
+      });
     return () => {
       cancelled = true;
     };

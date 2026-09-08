@@ -3,19 +3,21 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import {
   allowFsPath,
+  computeRemisionMontos,
   getPrecio,
   getPreciosBySkuPrincipal,
   getRemisionRenglones,
-  logEvent,
+  logEventAsActor,
   searchPrecios,
   updateRemisionConRenglones,
 } from "../db";
 import { buildRemisionPdf } from "../pdf";
 import { formatMoney } from "../excelExport";
 import { numeroATextoMoneda } from "../numeroALetras";
-import { computeSkuPrincipal } from "../precios";
+import { computeSkuPrincipal, parseAmount } from "../precios";
 import { hasPermission, useAuth } from "../auth";
 import type { Precio, Remision, RemisionRenglon, RemisionRenglonInput } from "../types";
+import type { Actor } from "../db";
 import Toast from "./Toast";
 import basuraIcon from "../../Assets/basura.svg";
 
@@ -32,8 +34,6 @@ interface RenglonDraft {
   cantidad: string;
   precioUnitario: string;
 }
-
-const IVA_RATE = 0.16;
 
 function formatFechaCorta(fechaIso: string): string {
   const [y, m, d] = fechaIso.split("-");
@@ -67,36 +67,39 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
   const [savingPdf, setSavingPdf] = useState(false);
 
   useEffect(() => {
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     let cancelled = false;
     (async () => {
-      const list = await getRemisionRenglones(remision.id);
+      const list = await getRemisionRenglones(actor, remision.id);
       if (!cancelled) setRenglones(list);
     })();
     return () => {
       cancelled = true;
     };
-  }, [remision.id]);
+  }, [remision.id, user, token]);
 
   useEffect(() => {
-    if (!query.trim()) {
+    if (!query.trim() || !user || !token) {
       setResults([]);
       return;
     }
+    const actor = { id: user.id, token };
     let cancelled = false;
     const timer = setTimeout(async () => {
-      const precios = await searchPrecios(query);
+      const precios = await searchPrecios(actor, query);
       if (!cancelled) setResults(precios.slice(0, 8));
     }, 150);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query]);
+  }, [query, user, token]);
 
-  async function lookupPrecioParaSku(sku: string): Promise<string> {
-    const exacto = await getPrecio(sku);
+  async function lookupPrecioParaSku(actor: Actor, sku: string): Promise<string> {
+    const exacto = await getPrecio(actor, sku);
     if (exacto) return String(exacto.precio);
-    const relacionados = await getPreciosBySkuPrincipal(computeSkuPrincipal(sku));
+    const relacionados = await getPreciosBySkuPrincipal(actor, computeSkuPrincipal(sku));
     return relacionados[0] ? String(relacionados[0].precio) : "";
   }
 
@@ -144,8 +147,8 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
   async function handleAddManual() {
     const sku = manualSku.trim();
     const productoNombre = manualNombre.trim();
-    if (!sku || !productoNombre) return;
-    const precioUnitario = await lookupPrecioParaSku(sku);
+    if (!sku || !productoNombre || !user || !token) return;
+    const precioUnitario = await lookupPrecioParaSku({ id: user.id, token }, sku);
     setRows((prev) => [
       ...prev,
       { key: nextKey.current++, sku, productoNombre, cantidad: "1", precioUnitario },
@@ -165,28 +168,25 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
   const parsedRows = useMemo(
     () =>
       rows.map((r) => {
-        const cantidadNum = parseFloat(r.cantidad.replace(",", "."));
-        const precioNum = parseFloat(r.precioUnitario.replace(",", "."));
+        const cantidadNum = parseAmount(r.cantidad);
+        const precioNum = parseAmount(r.precioUnitario);
         return {
           ...r,
-          cantidadNum: Number.isFinite(cantidadNum) ? cantidadNum : 0,
-          precioNum: Number.isFinite(precioNum) ? precioNum : 0,
+          // null (vacío o no numérico) se muestra como 0 en la vista previa,
+          // pero la validación de guardado exige cantidadNum/precioNum > 0
+          // más abajo — un campo vacío o con basura nunca pasa como válido.
+          cantidadNum: cantidadNum ?? 0,
+          precioNum: precioNum ?? 0,
         };
       }),
     [rows],
   );
 
-  const subtotal = useMemo(
-    () => parsedRows.reduce((sum, r) => sum + r.cantidadNum * r.precioNum, 0),
-    [parsedRows],
+  const descuentoPctNum = useMemo(() => parseAmount(descuentoPct) ?? 0, [descuentoPct]);
+  const { subtotal, descuento, iva, total } = useMemo(
+    () => computeRemisionMontos(parsedRows.map((r) => ({ cantidad: r.cantidadNum, precio_unitario: r.precioNum })), descuentoPctNum),
+    [parsedRows, descuentoPctNum],
   );
-  const descuentoPctNum = useMemo(() => {
-    const n = parseFloat(descuentoPct.replace(",", "."));
-    return Number.isFinite(n) ? n : 0;
-  }, [descuentoPct]);
-  const descuento = subtotal * (descuentoPctNum / 100);
-  const iva = subtotal * IVA_RATE;
-  const total = subtotal - descuento - iva;
   const precioTexto = numeroATextoMoneda(total);
 
   async function handleGuardarEdicion() {
@@ -234,12 +234,7 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
         remision.id,
         {
           pedido_bodegas: pedidoBodegas.trim(),
-          subtotal,
           descuento_pct: descuentoPctNum,
-          descuento,
-          iva,
-          total,
-          precio_texto: precioTexto,
         },
         renglonesInput,
       );
@@ -247,7 +242,7 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
       setRenglones(updated.renglones);
       setMode("view");
       setToastMessage("Remisión actualizada.");
-      logEvent("INFO", `Remisión ${updated.folio} editada`, user?.username ?? null);
+      logEventAsActor(actor, "INFO", `Remisión ${updated.folio} editada`);
       onUpdated();
     } catch (err) {
       setError(`No se pudo guardar la edición: ${String(err)}`);
@@ -260,7 +255,8 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
   // — nunca se crea uno nuevo) para poder volver a guardarlo si se perdió el
   // archivo original o se acaba de editar la remisión.
   async function handleGuardarPdf() {
-    if (!renglones) return;
+    if (!renglones || !user || !token) return;
+    const actor = { id: user.id, token };
     setSavingPdf(true);
     try {
       const pdfBytes = await buildRemisionPdf(header, renglones);
@@ -275,10 +271,10 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
         setToastMessage("PDF guardado.");
       }
     } catch (err) {
-      logEvent(
+      logEventAsActor(
+        actor,
         "ERROR",
         `No se pudo generar/guardar el PDF de la remisión ${header.folio}: ${String(err)}`,
-        user?.username ?? null,
       );
       setToastMessage("No se pudo guardar el PDF.");
     } finally {

@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import {
   getImageSrc,
   getPlasticItems,
-  logEvent,
+  logEventAsActor,
   pickImage,
   savePlasticItems,
 } from "../db";
 import type { PlasticItem, PlasticProduct, PlasticProductInput } from "../types";
 import { hasPermission, useAuth } from "../auth";
+import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
 import AutoGrowInput from "./AutoGrowInput";
 import Toast from "./Toast";
 import PlasticProductPicker from "./PlasticProductPicker";
@@ -43,24 +44,30 @@ export default function PlasticosSection({ productId, onBack }: Props) {
   const [showToast, setShowToast] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  function loadItems() {
+    setLoading(true);
+    setLoadError(null);
+    getPlasticItems(productId)
+      .then((list) => {
+        setItems(list);
+        setSavedItems(list);
+      })
+      .catch((err) => setLoadError(`No se pudieron cargar las piezas: ${String(err)}`))
+      .finally(() => setLoading(false));
+  }
 
   useEffect(() => {
     if (!allowed) return;
-    getPlasticItems(productId).then((list) => {
-      setItems(list);
-      setSavedItems(list);
-      setLoading(false);
-    });
+    loadItems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productId, allowed]);
 
   useEffect(() => {
-    if (allowed) return;
-    logEvent(
-      "WARNING",
-      `Acceso denegado a Piezas para ${user?.username ?? "desconocido"}`,
-      user?.username ?? null,
-    );
-  }, [allowed, user?.username]);
+    if (allowed || !user || !token) return;
+    logEventAsActor({ id: user.id, token }, "WARNING", `Acceso denegado a Piezas para ${user.username}`);
+  }, [allowed, user, token]);
 
   function updateItemData(index: number, patch: Partial<PlasticProductInput>) {
     setDirty(true);
@@ -116,10 +123,11 @@ export default function PlasticosSection({ productId, onBack }: Props) {
 
   async function handleSave() {
     if (!user || !token) return;
+    const actor = { id: user.id, token };
     setSaving(true);
     setError(null);
     try {
-      await savePlasticItems({ id: user.id, token }, productId, items);
+      await savePlasticItems(actor, productId, items);
       const refreshed = await getPlasticItems(productId);
       setItems(refreshed);
       setSavedItems(refreshed);
@@ -128,7 +136,7 @@ export default function PlasticosSection({ productId, onBack }: Props) {
       setShowToast(true);
     } catch (err) {
       setError(`No se pudo guardar: ${String(err)}`);
-      logEvent("ERROR", `No se pudo guardar Piezas del producto ${productId}: ${String(err)}`, user?.username ?? null);
+      logEventAsActor(actor, "ERROR", `No se pudo guardar Piezas del producto ${productId}: ${String(err)}`);
     } finally {
       setSaving(false);
     }
@@ -139,6 +147,11 @@ export default function PlasticosSection({ productId, onBack }: Props) {
     setDirty(false);
     setError(null);
     setEditMode(false);
+  }
+
+  function handleBackClick() {
+    if (dirty && !confirm("Hay cambios sin guardar. ¿Salir de todas formas?")) return;
+    onBack();
   }
 
   if (!allowed) {
@@ -164,13 +177,27 @@ export default function PlasticosSection({ productId, onBack }: Props) {
     );
   }
 
+  if (loadError) {
+    return (
+      <div className="private-section">
+        <button className="btn-link" onClick={onBack}>
+          ← Volver a la ficha técnica
+        </button>
+        <p className="form-error">{loadError}</p>
+        <button type="button" className="btn btn-secondary" onClick={loadItems}>
+          Reintentar
+        </button>
+      </div>
+    );
+  }
+
   const linkedIds = items
     .map((item) => item.plastic_product_id)
     .filter((id): id is number => id !== null);
 
   return (
     <div className="private-section">
-      <button className="btn-link" onClick={onBack}>
+      <button className="btn-link" onClick={handleBackClick}>
         ← Volver a la ficha técnica
       </button>
       <h1>Piezas</h1>
@@ -251,12 +278,17 @@ interface PlasticItemCardProps {
 
 function PlasticItemCard({ item, editMode, onChange, onPickImage, onRemove }: PlasticItemCardProps) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  useRevokeObjectUrl(imageSrc);
 
   useEffect(() => {
     let cancelled = false;
-    getImageSrc(item.data.imagen).then((src) => {
-      if (!cancelled) setImageSrc(src);
-    });
+    getImageSrc(item.data.imagen)
+      .then((src) => {
+        if (!cancelled) setImageSrc(src);
+      })
+      .catch(() => {
+        if (!cancelled) setImageSrc(null);
+      });
     return () => {
       cancelled = true;
     };

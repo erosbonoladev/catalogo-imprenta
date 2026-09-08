@@ -263,6 +263,8 @@ export interface BackupManifest {
   version: 1;
   creadoEn: string;
   tablas: Record<string, number>;
+  /** Nombres de índices capturados (además de las tablas). Ausente en backups viejos (pre-índices) — tratar como "sin expectativa", no como 0. */
+  indices?: string[];
 }
 
 export type BackupFrecuencia = "diario" | "cada_n_horas" | "semanal";
@@ -349,7 +351,6 @@ export interface RequisicionInput {
   etiqueta: string;
   descripcion: string;
   cantidad: number;
-  usuario: string | null;
   folio: string;
 }
 
@@ -386,7 +387,6 @@ export interface PrecioInput {
   sku: string;
   nombre: string;
   precio: number;
-  usuario: string | null;
   // Opcional: si se omite al actualizar un precio existente, upsertPrecio()
   // conserva la clasificación que ya tenía (ver COALESCE en su query) — no
   // reclasifica accidentalmente un producto por una simple edición de precio.
@@ -453,7 +453,6 @@ export interface RemisionInput {
   iva: number;
   total: number;
   precio_texto: string;
-  usuario: string | null;
 }
 
 export interface RemisionConRenglones extends Remision {

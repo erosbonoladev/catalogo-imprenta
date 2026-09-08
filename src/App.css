@@ -1040,6 +1040,40 @@ body,
   opacity: 0.85;
 }
 
+.login-password-wrap {
+  position: relative;
+  display: flex;
+}
+
+.login-password-input {
+  width: 100%;
+  padding-right: 2.6rem;
+}
+
+.login-password-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 2.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.login-password-toggle:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.login-password-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* Plásticos / Imprenta private sections */
 
 .private-section h1 {

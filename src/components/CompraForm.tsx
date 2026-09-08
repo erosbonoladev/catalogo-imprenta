@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import type { PrintItem, PrintItemOrder, PrintItemPurchase, Product } from "../types";
-import { allowFsPath, createFolio, createPrintItemPurchase, getPrintItemPurchases, logEvent } from "../db";
+import { allowFsPath, createFolio, createPrintItemPurchase, getPrintItemPurchases, logEventAsActor } from "../db";
 import { useAuth } from "../auth";
 import { buildPurchasePdf } from "../pdf";
 
@@ -108,17 +108,12 @@ export default function CompraForm({ product, item, orders, multi, refreshKey }:
           totalTamanos,
           folio: folio.folio,
         },
-        user?.username,
       );
       setPurchases((prev) => [purchase, ...prev]);
       setSuccess(true);
     } catch (err) {
       setError(`No se pudo guardar la compra: ${String(err)}`);
-      logEvent(
-        "ERROR",
-        `No se pudo guardar la Compra del ítem ${item.id}: ${String(err)}`,
-        user?.username ?? null,
-      );
+      logEventAsActor(actor, "ERROR", `No se pudo guardar la Compra del ítem ${item.id}: ${String(err)}`);
     } finally {
       setSaving(false);
     }

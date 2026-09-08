@@ -3,7 +3,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { hasPermission, useAuth } from "../auth";
 import {
   MAX_RESTORE_FILE_BYTES,
-  createBackupRecord,
   deleteBackupRecord,
   executeRestoreSql,
   getBackupSettings,
@@ -11,9 +10,11 @@ import {
   listBackupHistory,
   listRemisionRenglonesParaHistorial,
   localBackupFileExists,
-  logEvent,
+  logEventAsActor,
   pickBackupFile,
   readLocalBackupFile,
+  recordBackupSettingsChange,
+  recordRestoreResult,
   runBackupNow,
   saveBackupFileAs,
   updateBackupSettings,
@@ -102,10 +103,12 @@ interface RestoreFlow {
   confirmText: string;
   message: string;
   sizeBytes: number;
+  /** true una vez que executeRestoreSql() efectivamente sobrescribió la BD — a partir de ahí users (y con ella cualquier sesión, incluida la propia) quedó en el estado del backup restaurado, así que cerrar y pedir un login nuevo es obligatorio, no solo un "Cerrar" cosmético. */
+  sessionInvalidated: boolean;
 }
 
 export default function BackupsPanel() {
-  const { user, token } = useAuth();
+  const { user, token, logout } = useAuth();
   const canVer = hasPermission(user, "backups_ver");
   const canCrear = hasPermission(user, "backups_crear");
   const canDescargar = hasPermission(user, "backups_descargar");
@@ -134,10 +137,20 @@ export default function BackupsPanel() {
       return;
     }
     refresh();
-  }, [canVer]);
+  }, [canVer, user, token]);
 
   async function refresh() {
-    const [s, h] = await Promise.all([getBackupSettings(), listBackupHistory(50)]);
+    if (!user || !token) return;
+    // getBackupSettings()/listBackupHistory() exigen backups_ver en el
+    // servidor (por diseño) — un actor con solo backups_crear/configurar/etc.
+    // puede seguir usando su acción puntual sin esto, así que no hay nada que
+    // refrescar aquí para esa combinación (no es un error, solo no aplica).
+    if (!canVer) {
+      setLoading(false);
+      return;
+    }
+    const actor = { id: user.id, token };
+    const [s, h] = await Promise.all([getBackupSettings(actor), listBackupHistory(actor, 50)]);
     setSettingsDraft(s);
     setSettingsDirty(false);
     setHistory(h);
@@ -165,8 +178,8 @@ export default function BackupsPanel() {
       if (canDescargar) {
         const bytes = await readLocalBackupFile(result.record.ubicacion);
         const saved = await saveBackupFileAs(result.record.archivo, bytes);
-        if (saved) {
-          await logEvent("INFO", `Backup descargado: ${result.record.archivo}`, user?.username ?? null);
+        if (saved && user && token) {
+          await logEventAsActor({ id: user.id, token }, "INFO", `Backup descargado: ${result.record.archivo}`);
         }
         setToastMessage(
           saved ? "Backup creado y guardado en la ubicación elegida." : "Backup creado y verificado con éxito.",
@@ -181,14 +194,15 @@ export default function BackupsPanel() {
   }
 
   async function handleExportPreciosList() {
-    if (exportingPrecios) return;
+    if (exportingPrecios || !user || !token) return;
+    const actor = { id: user.id, token };
     setExportingPrecios(true);
     try {
-      const precios = await getPreciosList();
+      const precios = await getPreciosList(actor);
       const bytes = buildPreciosListWorkbook(precios);
       const saved = await saveBackupFileAs("Lista de precios.xlsx", bytes);
       if (saved) {
-        await logEvent("INFO", "Lista de precios exportada.", user?.username ?? null);
+        await logEventAsActor(actor, "INFO", "Lista de precios exportada.");
         setToastMessage("Lista de precios exportada.");
       }
     } finally {
@@ -197,14 +211,15 @@ export default function BackupsPanel() {
   }
 
   async function handleExportRemisionesHistorial() {
-    if (exportingRemisiones) return;
+    if (exportingRemisiones || !user || !token) return;
+    const actor = { id: user.id, token };
     setExportingRemisiones(true);
     try {
-      const rows = await listRemisionRenglonesParaHistorial();
+      const rows = await listRemisionRenglonesParaHistorial(actor);
       const bytes = buildRemisionesHistorialWorkbook(rows);
       const saved = await saveBackupFileAs("Historial de remisiones.xlsx", bytes);
       if (saved) {
-        await logEvent("INFO", "Historial de remisiones exportado.", user?.username ?? null);
+        await logEventAsActor(actor, "INFO", "Historial de remisiones exportado.");
         setToastMessage("Historial de remisiones exportado.");
       }
     } finally {
@@ -226,8 +241,8 @@ export default function BackupsPanel() {
     }
     const bytes = await readLocalBackupFile(record.ubicacion);
     const saved = await saveBackupFileAs(record.archivo, bytes);
-    if (saved) {
-      await logEvent("INFO", `Backup descargado: ${record.archivo}`, user?.username ?? null);
+    if (saved && user && token) {
+      await logEventAsActor({ id: user.id, token }, "INFO", `Backup descargado: ${record.archivo}`);
       setToastMessage("Backup guardado.");
     }
   }
@@ -241,10 +256,10 @@ export default function BackupsPanel() {
       return;
     }
     await deleteBackupRecord({ id: user.id, token }, record.id);
-    await logEvent(
+    await logEventAsActor(
+      { id: user.id, token },
       "WARNING",
       `Backup eliminado: ${record.archivo} (${record.tipo})`,
-      user?.username ?? null,
     );
     setConfirmDeleteId(null);
     await refresh();
@@ -261,6 +276,7 @@ export default function BackupsPanel() {
         confirmText: "",
         message: "",
         sizeBytes: 0,
+        sessionInvalidated: false,
       });
       return;
     }
@@ -279,6 +295,7 @@ export default function BackupsPanel() {
         confirmText: "",
         message: "",
         sizeBytes: rawBytes.length,
+        sessionInvalidated: false,
       });
       return;
     }
@@ -292,6 +309,7 @@ export default function BackupsPanel() {
       confirmText: "",
       message: "",
       sizeBytes: rawBytes.length,
+      sessionInvalidated: false,
     });
 
     let sql: string;
@@ -307,6 +325,7 @@ export default function BackupsPanel() {
         confirmText: "",
         message: "",
         sizeBytes: rawBytes.length,
+        sessionInvalidated: false,
       });
       return;
     }
@@ -328,6 +347,7 @@ export default function BackupsPanel() {
       confirmText: "",
       message: "",
       sizeBytes: rawBytes.length,
+      sessionInvalidated: false,
     });
   }
 
@@ -364,9 +384,14 @@ export default function BackupsPanel() {
     if (!token || !user) return;
 
     setRestoreFlow({ ...restoreFlow, status: "running", message: "Creando backup de emergencia…" });
-    const usuario = user?.username ?? null;
+    const actor = { id: user.id, token };
+    const username = user.username;
 
-    const preRestore = await runBackupNow("BACKUP_PRE_RESTAURACION", `Antes de restaurar ${restoreFlow.fileName}`, usuario);
+    const preRestore = await runBackupNow(
+      "BACKUP_PRE_RESTAURACION",
+      `Antes de restaurar ${restoreFlow.fileName}`,
+      username,
+    );
     if (!preRestore.ok) {
       setRestoreFlow({
         ...restoreFlow,
@@ -379,44 +404,72 @@ export default function BackupsPanel() {
 
     setRestoreFlow((prev) => (prev ? { ...prev, message: "Restaurando…" } : prev));
     try {
-      await executeRestoreSql({ id: user.id, token }, restoreFlow.sql);
+      await executeRestoreSql(actor, restoreFlow.sql);
     } catch (err) {
       setRestoreFlow({ ...restoreFlow, status: "error", message: `Falló la restauración: ${String(err)}` });
-      await logEvent("ERROR", `Restauración fallida (${restoreFlow.fileName}): ${String(err)}`, usuario);
+      await logEventAsActor(actor, "ERROR", `Restauración fallida (${restoreFlow.fileName}): ${String(err)}`);
       await refresh();
       return;
     }
 
+    // A partir de aquí la restauración YA ocurrió: sobrescribió la tabla
+    // users completa, incluida la fila de este mismo usuario, así que
+    // actor.token puede dejar de ser válido a mitad de este mismo flujo.
+    // Todo lo que sigue es best-effort — nunca debe dejar la UI colgada en
+    // "Verificando…" solo porque una re-validación de sesión falla por algo
+    // que la propia restauración acaba de causar.
     setRestoreFlow((prev) => (prev ? { ...prev, message: "Verificando…" } : prev));
-    const verification = await verifyRestoreCounts(restoreFlow.validation.manifest);
 
-    const tipo: BackupTipo = restoreFlow.matchedRecordId ? "RESTAURACION" : "RESTAURACION_ARCHIVO_SUBIDO";
+    let verification: { ok: boolean; mismatches: string[] };
+    try {
+      verification = await verifyRestoreCounts(restoreFlow.validation.manifest);
+    } catch (err) {
+      verification = { ok: false, mismatches: [`No se pudo verificar: ${String(err)}`] };
+    }
+
+    const tipo = restoreFlow.matchedRecordId ? "RESTAURACION" : "RESTAURACION_ARCHIVO_SUBIDO";
     const origen = restoreFlow.matchedRecordId
       ? `Backup #${restoreFlow.matchedRecordId} (${restoreFlow.fileName})`
       : `Archivo subido: ${restoreFlow.fileName}`;
-    await createBackupRecord({
-      tipo,
-      origen,
-      usuario,
-      archivo: restoreFlow.fileName,
-      ubicacion: "-",
-      estado: verification.ok ? "EXITOSO" : "FALLIDO",
-      detalle: verification.ok ? "" : verification.mismatches.join("; "),
-    });
-    await logEvent(
+
+    let auditWarning = "";
+    try {
+      await recordRestoreResult(actor, username, {
+        tipo,
+        origen,
+        archivo: restoreFlow.fileName,
+        estado: verification.ok ? "EXITOSO" : "FALLIDO",
+        detalle: verification.ok ? "" : verification.mismatches.join("; "),
+      });
+    } catch (err) {
+      auditWarning = ` (no se pudo registrar en el historial de backups: ${String(err)})`;
+    }
+    // logEventAsActor() nunca lanza (best-effort por diseño, ver db.ts) —
+    // sigue siendo seguro llamarla sin try/catch aquí.
+    await logEventAsActor(
+      actor,
       verification.ok ? "INFO" : "ERROR",
       `${tipo}: ${origen} — ${verification.ok ? "verificado" : `discrepancias: ${verification.mismatches.join("; ")}`}`,
-      usuario,
     );
 
     setRestoreFlow({
       ...restoreFlow,
       status: verification.ok ? "success" : "error",
       message: verification.ok
-        ? "Restauración completada y verificada."
-        : `Restauración completada con discrepancias: ${verification.mismatches.join("; ")}`,
+        ? `Restauración completada y verificada.${auditWarning} Por seguridad, cierra sesión y vuelve a iniciarla.`
+        : `Restauración completada con discrepancias: ${verification.mismatches.join("; ")}${auditWarning}`,
+      sessionInvalidated: true,
     });
-    await refresh();
+    await refresh().catch(() => {});
+  }
+
+  // La restauración sobrescribió users (incluida la sesión de quien la
+  // ejecutó) — cualquier token/permiso en memoria de aquí en adelante es
+  // sospechoso por definición, así que se cierra sesión real en vez de solo
+  // cerrar el modal, forzando un login nuevo contra el estado ya restaurado.
+  function acknowledgeRestoreAndLogout() {
+    setRestoreFlow(null);
+    logout();
   }
 
   function updateDraft<K extends keyof BackupSettings>(key: K, value: BackupSettings[K]) {
@@ -426,36 +479,24 @@ export default function BackupsPanel() {
 
   async function handleSaveSettings() {
     if (!settingsDraft || !canConfigurar || !token || !user) return;
+    const actor = { id: user.id, token };
     setSavingSettings(true);
     try {
-      await updateBackupSettings(
-        { id: user.id, token },
-        {
-          automatico_activado: settingsDraft.automatico_activado,
-          frecuencia: settingsDraft.frecuencia,
-          hora_ejecucion: settingsDraft.hora_ejecucion,
-          intervalo_horas: settingsDraft.intervalo_horas,
-          dia_semana: settingsDraft.dia_semana,
-          retencion_diaria_dias: settingsDraft.retencion_diaria_dias,
-          retencion_semanal_dias: settingsDraft.retencion_semanal_dias,
-          retencion_mensual_dias: settingsDraft.retencion_mensual_dias,
-        },
-        user?.username ?? null,
-      );
-      await createBackupRecord({
-        tipo: "CONFIGURACION_CAMBIADA",
-        origen: "Programación de backups",
-        usuario: user?.username ?? null,
-        archivo: "-",
-        ubicacion: "-",
-        estado: "EXITOSO",
-        detalle: `activado=${settingsDraft.automatico_activado}, frecuencia=${settingsDraft.frecuencia}, hora=${settingsDraft.hora_ejecucion}`,
+      await updateBackupSettings(actor, {
+        automatico_activado: settingsDraft.automatico_activado,
+        frecuencia: settingsDraft.frecuencia,
+        hora_ejecucion: settingsDraft.hora_ejecucion,
+        intervalo_horas: settingsDraft.intervalo_horas,
+        dia_semana: settingsDraft.dia_semana,
+        retencion_diaria_dias: settingsDraft.retencion_diaria_dias,
+        retencion_semanal_dias: settingsDraft.retencion_semanal_dias,
+        retencion_mensual_dias: settingsDraft.retencion_mensual_dias,
       });
-      await logEvent(
-        "INFO",
-        `Programación de backups actualizada por ${user?.username ?? "desconocido"}`,
-        user?.username ?? null,
+      await recordBackupSettingsChange(
+        actor,
+        `activado=${settingsDraft.automatico_activado}, frecuencia=${settingsDraft.frecuencia}, hora=${settingsDraft.hora_ejecucion}`,
       );
+      await logEventAsActor(actor, "INFO", `Programación de backups actualizada por ${user.username}`);
       setToastMessage("Programación guardada.");
       await refresh();
     } finally {
@@ -463,42 +504,52 @@ export default function BackupsPanel() {
     }
   }
 
-  if (!canVer) {
-    return <p className="hint">No tienes permiso para ver los backups.</p>;
+  // Configuraciones deja entrar a este tab con cualquiera de los 6 permisos
+  // backups_* (no solo backups_ver) — así que el gate de aquí adentro debe
+  // reflejar lo mismo: cada acción se habilita por su propio permiso, no por
+  // un único "ver o nada". listBackupHistory()/getBackupSettings() sí exigen
+  // backups_ver específicamente en el servidor (por diseño, ver
+  // docs/PERMISSIONS.md) — quien solo tenga backups_crear/backups_configurar/
+  // etc. puede usar su acción puntual sin necesitar ver el historial.
+  const canAlgo = canVer || canCrear || canDescargar || canRestaurar || canConfigurar || canEliminar;
+  if (!canAlgo) {
+    return <p className="hint">No tienes permiso para usar ningún backup.</p>;
   }
 
-  if (loading || !settingsDraft) {
+  if (loading) {
     return <p className="hint">Cargando…</p>;
   }
 
-  const proximaEjecucion = computeNextRun(settingsDraft);
+  const proximaEjecucion = settingsDraft ? computeNextRun(settingsDraft) : null;
 
   return (
     <div className="backups-panel">
       <div className="backups-status-card">
         <h2>Respaldos de Clio</h2>
-        <div className="backups-status-grid">
-          <div>
-            <span className="backups-status-label">Estado del sistema</span>
-            <span>{estadoOk === null ? "—" : estadoOk ? "🟢 OK" : "🔴 Con errores"}</span>
+        {canVer && (
+          <div className="backups-status-grid">
+            <div>
+              <span className="backups-status-label">Estado del sistema</span>
+              <span>{estadoOk === null ? "—" : estadoOk ? "🟢 OK" : "🔴 Con errores"}</span>
+            </div>
+            <div>
+              <span className="backups-status-label">Último backup</span>
+              <span>{formatDateTime(ultimo?.creado_en ?? null)}</span>
+            </div>
+            <div>
+              <span className="backups-status-label">Último backup exitoso</span>
+              <span>{formatDateTime(ultimoExitoso?.creado_en ?? null)}</span>
+            </div>
+            <div>
+              <span className="backups-status-label">Backups disponibles</span>
+              <span>{history.length}</span>
+            </div>
+            <div>
+              <span className="backups-status-label">Espacio local utilizado</span>
+              <span>{formatBytes(espacioLocal)}</span>
+            </div>
           </div>
-          <div>
-            <span className="backups-status-label">Último backup</span>
-            <span>{formatDateTime(ultimo?.creado_en ?? null)}</span>
-          </div>
-          <div>
-            <span className="backups-status-label">Último backup exitoso</span>
-            <span>{formatDateTime(ultimoExitoso?.creado_en ?? null)}</span>
-          </div>
-          <div>
-            <span className="backups-status-label">Backups disponibles</span>
-            <span>{history.length}</span>
-          </div>
-          <div>
-            <span className="backups-status-label">Espacio local utilizado</span>
-            <span>{formatBytes(espacioLocal)}</span>
-          </div>
-        </div>
+        )}
 
         <div className="form-actions">
           {canCrear && (
@@ -511,26 +562,40 @@ export default function BackupsPanel() {
               Subir archivo de restauración
             </button>
           )}
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={handleExportPreciosList}
-            disabled={exportingPrecios}
-          >
-            {exportingPrecios ? "Generando…" : "Lista de precios"}
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={handleExportRemisionesHistorial}
-            disabled={exportingRemisiones}
-          >
-            {exportingRemisiones ? "Generando…" : "Historial de remisiones"}
-          </button>
+          {canVer && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={handleExportPreciosList}
+              disabled={exportingPrecios}
+            >
+              {exportingPrecios ? "Generando…" : "Lista de precios"}
+            </button>
+          )}
+          {canVer && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={handleExportRemisionesHistorial}
+              disabled={exportingRemisiones}
+            >
+              {exportingRemisiones ? "Generando…" : "Historial de remisiones"}
+            </button>
+          )}
         </div>
       </div>
 
-      {canConfigurar && (
+      {canConfigurar && !settingsDraft && (
+        <div className="backups-settings-card">
+          <h3>Programación</h3>
+          <p className="hint">
+            Para ver y editar la programación también necesitas el permiso "Backups: ver" — se usa para leer
+            la configuración actual antes de poder cambiarla.
+          </p>
+        </div>
+      )}
+
+      {canConfigurar && settingsDraft && (
         <div className="backups-settings-card">
           <h3>Programación</h3>
           <div className="form-row">
@@ -648,6 +713,7 @@ export default function BackupsPanel() {
         </div>
       )}
 
+      {canVer && (
       <div className="backups-history-card">
         <h3>Historial</h3>
         {history.length === 0 ? (
@@ -706,6 +772,7 @@ export default function BackupsPanel() {
           </table>
         )}
       </div>
+      )}
 
       {restoreFlow && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
@@ -779,9 +846,15 @@ export default function BackupsPanel() {
               <>
                 <p className={restoreFlow.status === "success" ? "hint" : "form-error"}>{restoreFlow.message}</p>
                 <div className="form-actions">
-                  <button type="button" className="btn btn-primary" onClick={cancelRestoreFlow}>
-                    Cerrar
-                  </button>
+                  {restoreFlow.sessionInvalidated ? (
+                    <button type="button" className="btn btn-primary" onClick={acknowledgeRestoreAndLogout}>
+                      Entendido, iniciar sesión de nuevo
+                    </button>
+                  ) : (
+                    <button type="button" className="btn btn-primary" onClick={cancelRestoreFlow}>
+                      Cerrar
+                    </button>
+                  )}
                 </div>
               </>
             )}

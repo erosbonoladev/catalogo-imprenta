@@ -2,7 +2,7 @@ import { useState } from "react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
-import { allowFsPath, createRequisicionConFolio, logEvent } from "../db";
+import { allowFsPath, createRequisicionConFolio, logEventAsActor } from "../db";
 import { buildRequisicionPdf } from "../pdf";
 import { buildWhatsAppUrl, WHATSAPP_BODEGA_NUMBER } from "../requisiciones";
 import type { Product, Requisicion } from "../types";
@@ -23,7 +23,7 @@ export default function RequisicionModal({
   descripcion,
   onClose,
 }: Props) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [cantidad, setCantidad] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +31,8 @@ export default function RequisicionModal({
 
   async function handleGenerar() {
     setError(null);
+    if (!user || !token) return;
+    const actor = { id: user.id, token };
     const trimmed = cantidad.trim();
     if (!trimmed) {
       setError("La cantidad es obligatoria.");
@@ -58,14 +60,13 @@ export default function RequisicionModal({
       // createRequisicionConFolio) — así una falla justo después de consumir
       // el folio no lo deja huérfano. El PDF se arma después, ya con el folio
       // confirmado, y su guardado sigue siendo best-effort más abajo.
-      const requisicion = await createRequisicionConFolio(product.codigo, {
+      const requisicion = await createRequisicionConFolio(actor, product.codigo, {
         productId: product.id,
         productNombre: product.nombre,
         productCodigo: product.codigo,
         etiqueta,
         descripcion,
         cantidad: cantidadNum,
-        usuario: user?.username ?? null,
       });
       const pdfBytes = await buildRequisicionPdf(product, {
         folio: requisicion.folio,
@@ -73,10 +74,10 @@ export default function RequisicionModal({
         cantidad: cantidadNum,
       });
       setResultado(requisicion);
-      logEvent(
+      logEventAsActor(
+        actor,
         "INFO",
         `Requisición #${requisicion.numero_dia} generada: ${cantidadNum} - ${etiqueta}`,
-        user?.username ?? null,
       );
 
       // El guardado del PDF es best-effort: el envío de WhatsApp abajo debe
@@ -101,10 +102,10 @@ export default function RequisicionModal({
           }
         }
       } catch (err) {
-        logEvent(
+        logEventAsActor(
+          actor,
           "ERROR",
           `No se pudo guardar el PDF de la requisición ${requisicion.folio}: ${String(err)}`,
-          user?.username ?? null,
         );
       }
 
@@ -115,11 +116,7 @@ export default function RequisicionModal({
       }
     } catch (err) {
       setError(`No se pudo registrar la requisición: ${String(err)}`);
-      logEvent(
-        "ERROR",
-        `Error al generar requisición para "${etiqueta}": ${String(err)}`,
-        user?.username ?? null,
-      );
+      logEventAsActor(actor, "ERROR", `Error al generar requisición para "${etiqueta}": ${String(err)}`);
     } finally {
       setSaving(false);
     }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { findProductByCodigo, logEvent, pickExcelFile, runBackupNow, upsertPrecio } from "../db";
+import { findProductByCodigo, logEventAsActor, pickExcelFile, runBackupNow, upsertPrecio } from "../db";
 import {
   classifyPrecioRows,
   computeSkuPrincipal,
@@ -160,7 +160,6 @@ export default function PreciosImportPanel() {
               sku: row.sku,
               nombre: row.nombre,
               precio: row.precio ?? 0,
-              usuario: user?.username ?? null,
               actualizadoEn: row.fechaIso,
             });
             actualizados += 1;
@@ -168,10 +167,10 @@ export default function PreciosImportPanel() {
           } catch (err) {
             conErrores += 1;
             errorRows.push({ fila: row.fila, motivo: String(err) });
-            logEvent(
+            logEventAsActor(
+              actor,
               "ERROR",
               `Captura masiva de precios: no se pudo guardar la fila ${row.fila}: ${String(err)}`,
-              user?.username ?? null,
             );
           }
         }),
@@ -187,10 +186,10 @@ export default function PreciosImportPanel() {
       conErrores,
       errorRows,
     });
-    logEvent(
+    logEventAsActor(
+      actor,
       "INFO",
       `Captura masiva de precios: ${actualizados} actualizados, ${noEncontrados} no encontrados, ${conErrores} con errores (total ${rows.length}).`,
-      user?.username ?? null,
     );
     setPhase("done");
   }

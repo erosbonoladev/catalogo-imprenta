@@ -15,6 +15,12 @@ export interface DumpTable {
   rows: Record<string, unknown>[];
 }
 
+export interface DumpIndex {
+  name: string;
+  tableName: string;
+  createSql: string;
+}
+
 const META_PREFIX = "-- CLIO_BACKUP_META ";
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -48,11 +54,15 @@ function buildInsertStatement(table: DumpTable, row: Record<string, unknown>): s
   return `INSERT INTO ${table.name} (${table.columns.join(", ")}) VALUES (${values});`;
 }
 
-export function buildBackupSql(tables: DumpTable[]): { sql: string; manifest: BackupManifest } {
+export function buildBackupSql(
+  tables: DumpTable[],
+  indexes: DumpIndex[] = [],
+): { sql: string; manifest: BackupManifest } {
   const manifest: BackupManifest = {
     version: 1,
     creadoEn: new Date().toISOString(),
     tablas: Object.fromEntries(tables.map((t) => [t.name, t.rows.length])),
+    indices: indexes.map((idx) => idx.name),
   };
 
   const lines: string[] = [
@@ -64,6 +74,11 @@ export function buildBackupSql(tables: DumpTable[]): { sql: string; manifest: Ba
     lines.push(`${table.createSql};`);
     for (const row of table.rows) {
       lines.push(buildInsertStatement(table, row));
+    }
+    // Los índices se recrean después de cargar las filas de su tabla, para no
+    // pagar el mantenimiento del índice durante la carga masiva.
+    for (const idx of indexes.filter((i) => i.tableName === table.name)) {
+      lines.push(`${idx.createSql};`);
     }
   }
   lines.push("COMMIT;");
@@ -160,13 +175,60 @@ const CREATE_TABLE_RE = new RegExp(
   "i",
 );
 const INSERT_INTO_RE = new RegExp(`^INSERT\\s+INTO\\s+${TABLE_TOKEN}\\s*\\(`, "i");
-// Defensa adicional además del prefijo de verbo — ninguna de las 3 formas
+// index name (grupos 1-4) ... ON ... table name (grupos 5-8)
+const CREATE_INDEX_RE = new RegExp(
+  `^CREATE\\s+(?:UNIQUE\\s+)?INDEX\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?${TABLE_TOKEN}\\s+ON\\s+${TABLE_TOKEN}\\s*\\(`,
+  "i",
+);
+// Defensa adicional además del prefijo de verbo — ninguna de las 4 formas
 // permitidas debería poder contener estas palabras, pero se rechazan
 // explícitamente por si acaso (\b evita falsos positivos como "trigger_id").
+// Corre solo sobre el "esqueleto" del statement (con los literales de string
+// reemplazados) para no rechazar filas cuyo VALOR de texto contenga, por
+// ejemplo, la palabra "VIEW".
 const DANGEROUS_KEYWORDS_RE = /\b(ATTACH|DETACH|PRAGMA|TRIGGER|VIEW|VACUUM|REINDEX)\b/i;
+
+/** Reemplaza cada literal 'string' por un placeholder del mismo largo aprox., para que la detección de palabras peligrosas no mire dentro de datos de fila. Respeta '' como comilla escapada. */
+function blankStringLiterals(stmt: string): string {
+  let out = "";
+  let inString = false;
+  let i = 0;
+  while (i < stmt.length) {
+    const ch = stmt[i];
+    if (inString) {
+      if (ch === "'" && stmt[i + 1] === "'") {
+        out += "  ";
+        i += 2;
+        continue;
+      }
+      if (ch === "'") {
+        inString = false;
+        out += "'";
+        i++;
+        continue;
+      }
+      out += " ";
+      i++;
+      continue;
+    }
+    if (ch === "'") {
+      inString = true;
+      out += "'";
+      i++;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
 
 function extractTableName(match: RegExpMatchArray): string {
   return match[1] ?? match[2] ?? match[3] ?? match[4] ?? "";
+}
+
+function extractGroup(match: RegExpMatchArray, offset: number): string {
+  return match[offset + 1] ?? match[offset + 2] ?? match[offset + 3] ?? match[offset + 4] ?? "";
 }
 
 /**
@@ -190,7 +252,7 @@ export function validateRestoreStatements(
 
   for (const [i, stmt] of statements.entries()) {
     const trimmed = stmt.trim();
-    if (DANGEROUS_KEYWORDS_RE.test(trimmed)) {
+    if (DANGEROUS_KEYWORDS_RE.test(blankStringLiterals(trimmed))) {
       errors.push(`Statement #${i + 1} contiene una palabra clave no permitida: "${trimmed.slice(0, 80)}…"`);
       continue;
     }
@@ -198,16 +260,17 @@ export function validateRestoreStatements(
     const dropMatch = trimmed.match(DROP_TABLE_RE);
     const createMatch = trimmed.match(CREATE_TABLE_RE);
     const insertMatch = trimmed.match(INSERT_INTO_RE);
-    const match = dropMatch ?? createMatch ?? insertMatch;
+    const createIndexMatch = trimmed.match(CREATE_INDEX_RE);
+    const match = dropMatch ?? createMatch ?? insertMatch ?? createIndexMatch;
 
     if (!match) {
       errors.push(
-        `Statement #${i + 1} no es un DROP TABLE IF EXISTS / CREATE TABLE / INSERT INTO válido: "${trimmed.slice(0, 80)}…"`,
+        `Statement #${i + 1} no es un DROP TABLE IF EXISTS / CREATE TABLE / INSERT INTO / CREATE INDEX válido: "${trimmed.slice(0, 80)}…"`,
       );
       continue;
     }
 
-    const table = extractTableName(match);
+    const table = createIndexMatch ? extractGroup(createIndexMatch, 4) : extractTableName(match);
     if (!known.has(table)) {
       errors.push(`Statement #${i + 1} referencia una tabla desconocida: "${table}".`);
     }
@@ -244,6 +307,13 @@ export function validateBackupSql(sql: string): BackupValidation {
     );
   }
 
+  const createIndexCount = statements.filter((s) => /^CREATE\s+(UNIQUE\s+)?INDEX/i.test(s)).length;
+  if (manifest && manifest.indices !== undefined && createIndexCount !== manifest.indices.length) {
+    errors.push(
+      `El número de índices (${createIndexCount}) no coincide con los metadatos del backup (${manifest.indices.length}).`,
+    );
+  }
+
   if (manifest) {
     const insertCounts: Record<string, number> = {};
     for (const s of statements) {
@@ -255,6 +325,20 @@ export function validateBackupSql(sql: string): BackupValidation {
       if (actual !== count) {
         errors.push(`La tabla "${table}" tiene ${actual} filas en el archivo; se esperaban ${count}.`);
       }
+    }
+  }
+
+  // Misma validación de palabras peligrosas que executeRestoreSql aplicará al
+  // restaurar (sobre el mismo subconjunto de statements, con los literales de
+  // texto en blanco) — así un backup que fallaría al restaurar se detecta
+  // apenas se crea, no meses después cuando alguien intenta usarlo.
+  const restorable = extractRestoreStatements(sql);
+  for (const [i, s] of restorable.entries()) {
+    const trimmed = s.trim();
+    if (DANGEROUS_KEYWORDS_RE.test(blankStringLiterals(trimmed))) {
+      errors.push(
+        `Statement #${i + 1} contiene una palabra clave no permitida y hará fallar la restauración: "${trimmed.slice(0, 80)}…"`,
+      );
     }
   }
 

@@ -4,7 +4,7 @@ import { writeFile } from "@tauri-apps/plugin-fs";
 import type { PlacasExistentes, PrintItem, PrintItemOrder, Product } from "../types";
 import { buildOrderPdf } from "../pdf";
 import type { OrderEntry } from "../pdf";
-import { allowFsPath, createFolio, createPrintItemOrder, logEvent } from "../db";
+import { allowFsPath, createFolio, createPrintItemOrder, logEventAsActor } from "../db";
 import { useAuth } from "../auth";
 
 const PLACAS_EXISTENTES_LABEL: Record<PlacasExistentes, string> = {
@@ -179,14 +179,13 @@ export default function ProduccionForm({ product, items, onOrderCreated, onSwitc
               totalPliegos: entry.totalPliegos,
               folio: folio.folio,
             },
-            user?.username,
           );
           onOrderCreated(entry.item.id, order);
         } catch (err) {
-          logEvent(
+          logEventAsActor(
+            actor,
             "ERROR",
             `No se pudo guardar la orden de producción del ítem ${entry.item.id}: ${String(err)}`,
-            user?.username ?? null,
           );
         }
       }

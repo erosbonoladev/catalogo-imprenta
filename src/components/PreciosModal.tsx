@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getPrecio, getPreciosBySkuPrincipal, updatePrecio, upsertPrecio } from "../db";
-import { computeSkuPrincipal } from "../precios";
+import { computeSkuPrincipal, parseAmount } from "../precios";
 import { formatMoney } from "../excelExport";
 import type { Precio, Product } from "../types";
 import { hasPermission, useAuth } from "../auth";
@@ -24,7 +24,7 @@ export default function PreciosModal({ product, onClose }: Props) {
   const canModificar = hasPermission(user, "precios_modificar");
 
   const [precios, setPrecios] = useState<Precio[] | null>(null);
-  const [drafts, setDrafts] = useState<Map<number, { sku?: string; precio?: string }>>(new Map());
+  const [drafts, setDrafts] = useState<Map<number, { sku?: string; nombre?: string; precio?: string }>>(new Map());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -37,24 +37,25 @@ export default function PreciosModal({ product, onClose }: Props) {
   const [addSaving, setAddSaving] = useState(false);
   const [duplicatePrecio, setDuplicatePrecio] = useState<Precio | null>(null);
 
-  async function refreshPrecios() {
+  async function refreshPrecios(actor: { id: number; token: string }) {
     const skuPrincipal = computeSkuPrincipal(product.codigo);
-    const list = await getPreciosBySkuPrincipal(skuPrincipal);
+    const list = await getPreciosBySkuPrincipal(actor, skuPrincipal);
     setPrecios(list);
   }
 
   useEffect(() => {
-    if (!canVer) return;
+    if (!canVer || !user || !token) return;
+    const actor = { id: user.id, token };
     let cancelled = false;
     (async () => {
       const skuPrincipal = computeSkuPrincipal(product.codigo);
-      const list = await getPreciosBySkuPrincipal(skuPrincipal);
+      const list = await getPreciosBySkuPrincipal(actor, skuPrincipal);
       if (!cancelled) setPrecios(list);
     })();
     return () => {
       cancelled = true;
     };
-  }, [canVer, product.codigo]);
+  }, [canVer, product.codigo, user, token]);
 
   if (!canVer) {
     return (
@@ -72,7 +73,7 @@ export default function PreciosModal({ product, onClose }: Props) {
     );
   }
 
-  function setDraftField(id: number, field: "sku" | "precio", value: string) {
+  function setDraftField(id: number, field: "sku" | "nombre" | "precio", value: string) {
     setDrafts((prev) => {
       const next = new Map(prev);
       next.set(id, { ...next.get(id), [field]: value });
@@ -86,12 +87,17 @@ export default function PreciosModal({ product, onClose }: Props) {
     if (!precio || !draft) return false;
     const skuChanged = draft.sku !== undefined && draft.sku.trim() !== precio.sku;
     if (skuChanged) return true;
+    const nombreChanged = draft.nombre !== undefined && draft.nombre.trim() !== precio.nombre;
+    if (nombreChanged) return true;
     if (draft.precio === undefined) return false;
     // Comparar como número, no como texto: retipear "10.50" sobre un precio
     // guardado como 10.5 no debe contar como cambio real (evita un renglón
-    // de precios_historial con precio_anterior === precio_nuevo).
-    const draftPrecio = Number(draft.precio);
-    return !Number.isFinite(draftPrecio) || draftPrecio !== precio.precio;
+    // de precios_historial con precio_anterior === precio_nuevo). Un precio
+    // inválido/vacío sí cuenta como "cambió" — así entra a la validación de
+    // handleGuardar() y se rechaza con un mensaje claro, en vez de compararse
+    // como NaN (siempre distinto) o como 0 (falso positivo de "sin cambios").
+    const draftPrecio = parseAmount(draft.precio);
+    return draftPrecio === null || draftPrecio !== precio.precio;
   });
 
   async function handleGuardar() {
@@ -116,13 +122,20 @@ export default function PreciosModal({ product, onClose }: Props) {
         return;
       }
 
-      const nuevoPrecio = draft.precio !== undefined ? Number(draft.precio) : existing.precio;
-      if (!Number.isFinite(nuevoPrecio) || nuevoPrecio <= 0) {
+      const nombre = (draft.nombre ?? existing.nombre).trim();
+      if (!nombre) {
+        setError(`El nombre de ${sku} no puede quedar vacío.`);
+        setSaving(false);
+        return;
+      }
+
+      const nuevoPrecio = draft.precio !== undefined ? parseAmount(draft.precio) : existing.precio;
+      if (nuevoPrecio === null || nuevoPrecio <= 0) {
         setError(`El precio de ${sku} debe ser un número mayor que 0.`);
         setSaving(false);
         return;
       }
-      toSave.push({ id, sku, nombre: existing.nombre, precio: nuevoPrecio });
+      toSave.push({ id, sku, nombre, precio: nuevoPrecio });
     }
 
     try {
@@ -134,11 +147,10 @@ export default function PreciosModal({ product, onClose }: Props) {
           sku: item.sku,
           nombre: item.nombre,
           precio: item.precio,
-          usuario: user?.username ?? null,
         });
       }
       const skuPrincipal = computeSkuPrincipal(product.codigo);
-      const refreshed = await getPreciosBySkuPrincipal(skuPrincipal);
+      const refreshed = await getPreciosBySkuPrincipal(actor, skuPrincipal);
       setPrecios(refreshed);
       setDrafts(new Map());
       setToastMessage("Precios actualizados.");
@@ -169,8 +181,8 @@ export default function PreciosModal({ product, onClose }: Props) {
       setAddError("El nombre es obligatorio.");
       return null;
     }
-    const precio = Number(newPrecio.replace(",", "."));
-    if (!Number.isFinite(precio) || precio < 0) {
+    const precio = parseAmount(newPrecio);
+    if (precio === null || precio < 0) {
       setAddError("El precio debe ser un número mayor o igual a 0.");
       return null;
     }
@@ -187,13 +199,13 @@ export default function PreciosModal({ product, onClose }: Props) {
     const actor = { id: user.id, token };
     setAddSaving(true);
     try {
-      const existing = await getPrecio(parsed.sku);
+      const existing = await getPrecio(actor, parsed.sku);
       if (existing) {
         setDuplicatePrecio(existing);
         return;
       }
-      await upsertPrecio(actor, { ...parsed, usuario: user?.username ?? null });
-      await refreshPrecios();
+      await upsertPrecio(actor, parsed);
+      await refreshPrecios(actor);
       resetNewForm();
       setToastMessage("Producto agregado.");
     } catch (err) {
@@ -209,8 +221,8 @@ export default function PreciosModal({ product, onClose }: Props) {
     const actor = { id: user.id, token };
     setAddSaving(true);
     try {
-      await upsertPrecio(actor, { ...parsed, usuario: user?.username ?? null });
-      await refreshPrecios();
+      await upsertPrecio(actor, parsed);
+      await refreshPrecios(actor);
       resetNewForm();
       setToastMessage("Producto actualizado.");
     } catch (err) {
@@ -256,7 +268,18 @@ export default function PreciosModal({ product, onClose }: Props) {
                         p.sku
                       )}
                     </td>
-                    <td>{p.nombre}</td>
+                    <td>
+                      {canModificar ? (
+                        <input
+                          type="text"
+                          value={drafts.get(p.id)?.nombre ?? p.nombre}
+                          onChange={(e) => setDraftField(p.id, "nombre", e.target.value)}
+                          disabled={saving}
+                        />
+                      ) : (
+                        p.nombre
+                      )}
+                    </td>
                     <td>
                       {canModificar ? (
                         <input

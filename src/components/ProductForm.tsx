@@ -6,13 +6,14 @@ import {
   getProduct,
   getProductDescriptions,
   getProductSpecs,
-  logEvent,
+  logEventAsActor,
   pickImage,
   updateProduct,
 } from "../db";
 import type { ProductDescription, ProductInput, ProductSpec } from "../types";
 import { DESCRIPCIONES_FIJAS, DESCRIPCION_CATALOGO, ensureFixedDescriptions } from "../descriptions";
 import { useAuth } from "../auth";
+import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
 import AutoGrowInput from "./AutoGrowInput";
 import basuraIcon from "../../Assets/basura.svg";
 
@@ -45,35 +46,49 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
   const [newDescTexto, setNewDescTexto] = useState("");
   const [descError, setDescError] = useState<string | null>(null);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  useRevokeObjectUrl(imageSrc);
   const [barcodeSrc, setBarcodeSrc] = useState<string | null>(null);
+  useRevokeObjectUrl(barcodeSrc);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!productId) return;
-    (async () => {
-      const [existing, existingSpecs, existingDescriptions] = await Promise.all([
-        getProduct(productId),
-        getProductSpecs(productId),
-        getProductDescriptions(productId),
-      ]);
-      if (!existing) return;
-      setProduct({
-        codigo: existing.codigo,
-        nombre: existing.nombre,
-        categoria: existing.categoria,
-        material: existing.material,
-        descripcion: existing.descripcion,
-        imagen: existing.imagen,
-        imagen_codigo_barras: existing.imagen_codigo_barras,
-      });
-      setSpecs(existingSpecs);
-      setDescriptions(ensureFixedDescriptions(existingDescriptions));
-      setImageSrc(await getImageSrc(existing.imagen));
-      setBarcodeSrc(await getImageSrc(existing.imagen_codigo_barras));
-    })();
-  }, [productId]);
+    let cancelled = false;
+    async function loadExisting() {
+      setLoadError(null);
+      try {
+        const [existing, existingSpecs, existingDescriptions] = await Promise.all([
+          getProduct(productId as number),
+          getProductSpecs(productId as number),
+          getProductDescriptions(productId as number),
+        ]);
+        if (cancelled || !existing) return;
+        setProduct({
+          codigo: existing.codigo,
+          nombre: existing.nombre,
+          categoria: existing.categoria,
+          material: existing.material,
+          descripcion: existing.descripcion,
+          imagen: existing.imagen,
+          imagen_codigo_barras: existing.imagen_codigo_barras,
+        });
+        setSpecs(existingSpecs);
+        setDescriptions(ensureFixedDescriptions(existingDescriptions));
+        setImageSrc(await getImageSrc(existing.imagen));
+        setBarcodeSrc(await getImageSrc(existing.imagen_codigo_barras));
+      } catch (err) {
+        if (!cancelled) setLoadError(`No se pudo cargar el producto: ${String(err)}`);
+      }
+    }
+    loadExisting();
+    return () => {
+      cancelled = true;
+    };
+  }, [productId, reloadKey]);
 
   function updateField<K extends keyof ProductInput>(key: K, value: ProductInput[K]) {
     setDirty(true);
@@ -197,19 +212,37 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
       onDone(id);
     } catch (err) {
       setError(`No se pudo guardar el producto: ${String(err)}`);
-      logEvent("ERROR", `No se pudo guardar el producto: ${String(err)}`, user?.username ?? null);
+      logEventAsActor(actor, "ERROR", `No se pudo guardar el producto: ${String(err)}`);
     } finally {
       setSaving(false);
     }
   }
 
+  function handleCancelClick() {
+    if (dirty && !confirm("Hay cambios sin guardar. ¿Salir de todas formas?")) return;
+    onCancel();
+  }
+
   return (
     <div className="product-form">
-      <button className="btn-link" onClick={onCancel}>
+      <button className="btn-link" onClick={handleCancelClick}>
         ← Cancelar
       </button>
 
       <h1>{productId ? "Editar ficha técnica" : "Nuevo producto"}</h1>
+
+      {loadError && (
+        <div className="form-row">
+          <p className="form-error">{loadError}</p>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setReloadKey((k) => k + 1)}
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit}>
         <div className="form-row">
@@ -403,7 +436,7 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
           <button type="submit" className="btn btn-primary" disabled={saving || !dirty}>
             {saving ? "Guardando…" : "Guardar"}
           </button>
-          <button type="button" className="btn btn-secondary" onClick={onCancel}>
+          <button type="button" className="btn btn-secondary" onClick={handleCancelClick}>
             Cancelar
           </button>
         </div>

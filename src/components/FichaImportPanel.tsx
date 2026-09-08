@@ -3,7 +3,7 @@ import {
   createProduct,
   findProductByCodigo,
   findProductsByNombre,
-  logEvent,
+  logEventAsActor,
   pickExcelFile,
   runBackupNow,
   setPresentacionOriginal,
@@ -206,17 +206,13 @@ export default function FichaImportPanel() {
             specs,
           );
           if (row.presentacion.trim()) {
-            await setPresentacionOriginal(id, row.presentacion.trim());
+            await setPresentacionOriginal(actor, id, row.presentacion.trim());
           }
           nuevas += 1;
         } catch (err) {
           conErrores += 1;
           errorRows.push({ fila: row.fila, motivo: String(err) });
-          logEvent(
-            "ERROR",
-            `Captura masiva: no se pudo crear la fila ${row.fila}: ${String(err)}`,
-            user?.username ?? null,
-          );
+          logEventAsActor(actor, "ERROR", `Captura masiva: no se pudo crear la fila ${row.fila}: ${String(err)}`);
         }
         continue;
       }
@@ -245,26 +241,22 @@ export default function FichaImportPanel() {
           specs,
         );
         if (row.presentacion.trim()) {
-          await setPresentacionOriginal(existing.id, row.presentacion.trim());
+          await setPresentacionOriginal(actor, existing.id, row.presentacion.trim());
         }
         actualizadas += 1;
       } catch (err) {
         conErrores += 1;
         errorRows.push({ fila: row.fila, motivo: String(err) });
-        logEvent(
-          "ERROR",
-          `Captura masiva: no se pudo actualizar la fila ${row.fila}: ${String(err)}`,
-          user?.username ?? null,
-        );
+        logEventAsActor(actor, "ERROR", `Captura masiva: no se pudo actualizar la fila ${row.fila}: ${String(err)}`);
       }
     }
 
     setCommitProgress({ done: rows.length, total: rows.length });
     setSummary({ nuevas, actualizadas, omitidas, conErrores, total: rows.length, errorRows });
-    logEvent(
+    logEventAsActor(
+      actor,
       "INFO",
       `Captura masiva de fichas técnicas: ${nuevas} nuevas, ${actualizadas} actualizadas, ${omitidas} omitidas, ${conErrores} con errores (total ${rows.length}).`,
-      user?.username ?? null,
     );
     setPhase("done");
   }
