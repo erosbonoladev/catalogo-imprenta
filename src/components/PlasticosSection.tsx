@@ -30,6 +30,8 @@ const CAMPOS_VISTA: { label: string; key: keyof PlasticProductInput }[] = [
   { label: "Tipo de empaque", key: "tipo_empaque" },
   { label: "Maquila", key: "maquila" },
   { label: "Coste", key: "coste" },
+  { label: "Componentes de fabricación", key: "componentes_fabricacion" },
+  { label: "Dimensiones de empaque", key: "dimensiones_empaque" },
 ];
 
 export default function PlasticosSection({ productId, onBack }: Props) {
@@ -103,6 +105,8 @@ export default function PlasticosSection({ productId, onBack }: Props) {
           tipo_empaque: producto.tipo_empaque,
           maquila: producto.maquila,
           coste: producto.coste,
+          componentes_fabricacion: producto.componentes_fabricacion,
+          dimensiones_empaque: producto.dimensiones_empaque,
           imagen: producto.imagen,
         },
       },

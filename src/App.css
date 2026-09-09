@@ -1910,7 +1910,9 @@ body,
 }
 
 .import-status-duplicada,
-.import-status-sustituir {
+.import-status-sustituir,
+.import-status-actualizar,
+.import-status-sin-relacion {
   background-color: var(--warning-solid);
 }
 

@@ -2,13 +2,15 @@ import { useState } from "react";
 import FichaImportPanel from "./FichaImportPanel";
 import ImageImportPanel from "./ImageImportPanel";
 import PreciosImportPanel from "./PreciosImportPanel";
+import PiezasImportPanel from "./PiezasImportPanel";
 
-type SubTab = "fichas" | "imagenes" | "precios";
+type SubTab = "fichas" | "imagenes" | "precios" | "piezas";
 
 const SUB_TABS: { value: SubTab; label: string }[] = [
   { value: "fichas", label: "Fichas técnicas" },
   { value: "imagenes", label: "Imágenes" },
   { value: "precios", label: "Precios" },
+  { value: "piezas", label: "Piezas" },
 ];
 
 export default function CapturaMasivaPanel() {
@@ -33,6 +35,7 @@ export default function CapturaMasivaPanel() {
       {subTab === "fichas" && <FichaImportPanel />}
       {subTab === "imagenes" && <ImageImportPanel />}
       {subTab === "precios" && <PreciosImportPanel />}
+      {subTab === "piezas" && <PiezasImportPanel />}
     </div>
   );
 }

@@ -59,6 +59,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     tipo_empaque TEXT,
     maquila TEXT,
     coste TEXT,
+    componentes_fabricacion TEXT,
+    dimensiones_empaque TEXT,
     imagen BLOB,
     imagen_mime TEXT,
     creado_en TEXT NOT NULL DEFAULT (datetime('now'))
@@ -78,6 +80,14 @@ export const SCHEMA_STATEMENTS: string[] = [
     product_id INTEGER NOT NULL,
     plastic_product_id INTEGER NOT NULL,
     orden INTEGER NOT NULL DEFAULT 1
+  )`,
+  `CREATE TABLE piezas_import_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    creado_en TEXT NOT NULL DEFAULT (datetime('now')),
+    creado_por TEXT,
+    plastic_product_ids TEXT NOT NULL,
+    total INTEGER NOT NULL,
+    deshecho_en TEXT
   )`,
   `CREATE TABLE product_print_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

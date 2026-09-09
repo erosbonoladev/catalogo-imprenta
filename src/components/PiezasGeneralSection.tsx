@@ -228,6 +228,8 @@ export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalPro
           tipo_empaque: existing.tipo_empaque,
           maquila: existing.maquila,
           coste: existing.coste,
+          componentes_fabricacion: existing.componentes_fabricacion,
+          dimensiones_empaque: existing.dimensiones_empaque,
           imagen: existing.imagen,
         }
       : { ...EMPTY_PLASTIC_DATA },

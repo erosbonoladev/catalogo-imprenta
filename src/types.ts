@@ -69,6 +69,8 @@ export interface PlasticProduct {
   tipo_empaque: string;
   maquila: string;
   coste: string;
+  componentes_fabricacion: string;
+  dimensiones_empaque: string;
   imagen: ImageBlob | null;
   creado_en: string;
 }
@@ -85,6 +87,8 @@ export interface PlasticProductInput {
   tipo_empaque: string;
   maquila: string;
   coste: string;
+  componentes_fabricacion: string;
+  dimensiones_empaque: string;
   imagen: ImageBlob | null;
 }
 

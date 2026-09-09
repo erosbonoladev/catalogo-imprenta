@@ -13,6 +13,15 @@
     "fs:allow-appdata-read-recursive",
     "fs:allow-appdata-write-recursive",
     "updater:default",
-    "process:default"
+    "process:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://drive.google.com/*" },
+        { "url": "https://docs.google.com/*" },
+        { "url": "https://*.googleusercontent.com/*" },
+        { "url": "https://photos.google.com/*" }
+      ]
+    }
   ]
 }

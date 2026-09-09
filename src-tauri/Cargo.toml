@@ -1,6 +1,6 @@
 [package]
 name = "imprenta-app"
-version = "0.10.5"
+version = "0.11.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -26,5 +26,6 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+tauri-plugin-http = "2"
 bcrypt = "0.15"
 

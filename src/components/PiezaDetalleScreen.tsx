@@ -30,6 +30,8 @@ const CAMPOS: { label: string; key: keyof PlasticProduct }[] = [
   { label: "Tipo de empaque", key: "tipo_empaque" },
   { label: "Maquila", key: "maquila" },
   { label: "Coste", key: "coste" },
+  { label: "Componentes de fabricación", key: "componentes_fabricacion" },
+  { label: "Dimensiones de empaque", key: "dimensiones_empaque" },
 ];
 
 export default function PiezaDetalleScreen({ plasticProductId, onBack, onOpenProduct }: Props) {

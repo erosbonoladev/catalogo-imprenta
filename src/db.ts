@@ -1,6 +1,7 @@
 import { createClient, type Client, type Transaction } from "@libsql/client/web";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { exists, mkdir, readDir, readFile, remove, writeFile } from "@tauri-apps/plugin-fs";
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { invoke } from "@tauri-apps/api/core";
 import { appDataDir, join } from "@tauri-apps/api/path";
 import type {
@@ -495,7 +496,11 @@ export async function getImageSrc(
 // --- Validación de archivos importados (no confiar solo en la extensión) ---
 
 export const MAX_IMAGE_FILE_BYTES = 20 * 1024 * 1024;
-export const MAX_EXCEL_IMPORT_FILE_BYTES = 25 * 1024 * 1024;
+// 25MB alcanzaba para los Excel de solo texto (fichas/precios); la
+// importación de piezas admite imágenes embebidas dentro del propio .xlsx,
+// que pueden pesar varios cientos de KB cada una — se sube el tope con
+// margen amplio, compartido por los tres flujos de importación.
+export const MAX_EXCEL_IMPORT_FILE_BYTES = 200 * 1024 * 1024;
 
 function formatMB(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -545,6 +550,63 @@ function validateImageBlob(data: Uint8Array): ImageBlob {
     );
   }
   return { data, mime };
+}
+
+// Wrapper público de validateImageBlob — usado por la importación masiva de
+// piezas para validar imágenes descargadas sin duplicar la lógica de firma
+// real de bytes (detectImageMime es privada a este módulo).
+export function validateImportedImageBytes(data: Uint8Array): ImageBlob {
+  return validateImageBlob(data);
+}
+
+// Descarga la imagen de un link del Excel de Piezas (columna "Links Imágenes
+// Piezas", típicamente Google Drive/Photos). Usa @tauri-apps/plugin-http en
+// vez de fetch() del navegador porque la petición corre en el proceso Rust,
+// fuera del alcance del CSP connect-src del webview (que solo permite
+// Turso) — el dominio de destino igual queda acotado por el scope de
+// capabilities/default.json (http:default), no por esto.
+//
+// User-Agent explícito: Google devuelve 403 en algunos endpoints de Drive
+// cuando la petición no trae uno reconocible (el cliente HTTP de Tauri, sin
+// esto, manda su propio user-agent genérico).
+export async function downloadImportedImage(url: string): Promise<ImageBlob> {
+  let response: Response;
+  try {
+    response = await tauriFetch(url, {
+      method: "GET",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
+  } catch (err) {
+    throw new Error(`No se pudo descargar la imagen: ${String(err)}`);
+  }
+  if (!response.ok) {
+    throw new Error(`La descarga de la imagen falló (HTTP ${response.status}).`);
+  }
+  const buffer = await response.arrayBuffer();
+  return validateImageBlob(new Uint8Array(buffer));
+}
+
+// Prueba varias URLs candidatas para la misma imagen en orden hasta que una
+// funcione (ver buildImageLinkCandidates en piezasImport.ts) — necesario
+// porque drive.google.com/uc?export=download devuelve 403 con cierta
+// frecuencia para peticiones no interactivas, incluso con el archivo
+// compartido públicamente; el endpoint de miniatura es más confiable para
+// imágenes y se intenta primero.
+export async function downloadImportedImageFromCandidates(urls: string[]): Promise<ImageBlob> {
+  const errors: string[] = [];
+  for (const url of urls) {
+    try {
+      return await downloadImportedImage(url);
+    } catch (err) {
+      errors.push(String(err));
+    }
+  }
+  throw new Error(
+    `No se pudo descargar la imagen desde ninguna variante del link (${errors.length} intento(s)): ${errors.join(" | ")}`,
+  );
 }
 
 // xlsx es un contenedor ZIP — firma "PK" con cualquiera de los subtipos
@@ -1186,6 +1248,8 @@ interface PlasticProductRow {
   tipo_empaque: string;
   maquila: string;
   coste: string;
+  componentes_fabricacion: string;
+  dimensiones_empaque: string;
   imagen: ArrayBuffer | null;
   imagen_mime: string | null;
   creado_en: string;
@@ -1205,6 +1269,8 @@ function rowToPlasticProduct(row: PlasticProductRow): PlasticProduct {
     tipo_empaque: row.tipo_empaque,
     maquila: row.maquila,
     coste: row.coste,
+    componentes_fabricacion: row.componentes_fabricacion,
+    dimensiones_empaque: row.dimensiones_empaque,
     imagen: toImageBlob(row.imagen, row.imagen_mime),
     creado_en: row.creado_en,
   };
@@ -1223,6 +1289,8 @@ function plasticProductToData(product: PlasticProduct): PlasticProductInput {
     tipo_empaque: product.tipo_empaque,
     maquila: product.maquila,
     coste: product.coste,
+    componentes_fabricacion: product.componentes_fabricacion,
+    dimensiones_empaque: product.dimensiones_empaque,
     imagen: product.imagen,
   };
 }
@@ -1306,8 +1374,8 @@ export async function createPlasticProduct(
   await assertActorAuthorized(actor, "plasticos");
   const result = await executor.execute({
     sql: `INSERT INTO plastic_products
-          (nombre, sku, color, origen, descripcion, armado, dimension, peso, tipo_empaque, maquila, coste, imagen, imagen_mime)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`,
+          (nombre, sku, color, origen, descripcion, armado, dimension, peso, tipo_empaque, maquila, coste, componentes_fabricacion, dimensiones_empaque, imagen, imagen_mime)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)`,
     args: [
       input.nombre.trim(),
       input.sku.trim(),
@@ -1320,6 +1388,8 @@ export async function createPlasticProduct(
       input.tipo_empaque.trim(),
       input.maquila.trim(),
       input.coste.trim(),
+      input.componentes_fabricacion.trim(),
+      input.dimensiones_empaque.trim(),
       input.imagen?.data ?? null,
       input.imagen?.mime ?? null,
     ],
@@ -1338,8 +1408,8 @@ export async function updatePlasticProduct(
     sql: `UPDATE plastic_products
           SET nombre = ?1, sku = ?2, color = ?3, origen = ?4, descripcion = ?5, armado = ?6,
               dimension = ?7, peso = ?8, tipo_empaque = ?9, maquila = ?10, coste = ?11,
-              imagen = ?12, imagen_mime = ?13
-          WHERE id = ?14`,
+              componentes_fabricacion = ?12, dimensiones_empaque = ?13, imagen = ?14, imagen_mime = ?15
+          WHERE id = ?16`,
     args: [
       input.nombre.trim(),
       input.sku.trim(),
@@ -1352,6 +1422,8 @@ export async function updatePlasticProduct(
       input.tipo_empaque.trim(),
       input.maquila.trim(),
       input.coste.trim(),
+      input.componentes_fabricacion.trim(),
+      input.dimensiones_empaque.trim(),
       input.imagen?.data ?? null,
       input.imagen?.mime ?? null,
       id,
@@ -1431,6 +1503,168 @@ export async function savePlasticItems(
       });
     }
     await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
+}
+
+// Busca una pieza por nombre exacto (sin distinguir mayúsculas/espacios),
+// pero solo entre las ya ligadas a ese juego específico. Usada cuando la
+// fila de importación no trae SKU propio — el criterio de "ya existe" pasa
+// a ser juego + nombre.
+export async function findPlasticProductInJuegoByNombre(
+  nombre: string,
+  productId: number,
+): Promise<PlasticProduct | null> {
+  const result = await client.execute({
+    sql: `SELECT pp.* FROM plastic_products pp
+          JOIN product_plastic_items ppi ON ppi.plastic_product_id = pp.id
+          WHERE ppi.product_id = ?1 AND LOWER(TRIM(pp.nombre)) = LOWER(TRIM(?2))
+          LIMIT 1`,
+    args: [productId, nombre],
+  });
+  const row = result.rows[0] as unknown as PlasticProductRow | undefined;
+  return row ? rowToPlasticProduct(row) : null;
+}
+
+// Busca una pieza por SKU exacto, pero solo entre las ya ligadas a ese juego
+// específico — plastic_products.sku no es único (la misma pieza puede
+// repetirse en distintos juegos como filas separadas), así que "ya existe"
+// para efectos de importación masiva significa SKU + juego, no SKU solo.
+// Usada cuando la fila de importación sí trae SKU propio (ej. "1138-1",
+// asignado por la empresa como sub-SKU del juego, o un SKU reutilizado de
+// otro contexto como "3346-17").
+export async function findPlasticProductInJuegoBySku(
+  sku: string,
+  productId: number,
+): Promise<PlasticProduct | null> {
+  const result = await client.execute({
+    sql: `SELECT pp.* FROM plastic_products pp
+          JOIN product_plastic_items ppi ON ppi.plastic_product_id = pp.id
+          WHERE ppi.product_id = ?1 AND pp.sku = ?2
+          LIMIT 1`,
+    args: [productId, sku.trim()],
+  });
+  const row = result.rows[0] as unknown as PlasticProductRow | undefined;
+  return row ? rowToPlasticProduct(row) : null;
+}
+
+// Upsert incremental de una fila de importación masiva de piezas: a
+// diferencia de savePlasticItems (que reemplaza TODA la relación de un
+// juego), esta función solo crea/actualiza una pieza puntual sin tocar el
+// resto de piezas ya ligadas al juego que no vinieron en el Excel.
+// `productId` es null cuando la fila no se pudo relacionar con ningún juego
+// pero el usuario decidió importarla igual — la pieza se crea/actualiza en
+// el catálogo maestro sin fila en product_plastic_items.
+export async function importPiezaRow(
+  actor: Actor,
+  productId: number | null,
+  plasticProductId: number | null,
+  input: PlasticProductInput,
+  orden: number,
+): Promise<number> {
+  await assertActorAuthorized(actor, "plasticos");
+  const tx = await client.transaction("write");
+  try {
+    let resolvedId: number;
+    if (plasticProductId) {
+      await updatePlasticProduct(actor, plasticProductId, input, tx);
+      resolvedId = plasticProductId;
+    } else {
+      resolvedId = await createPlasticProduct(actor, input, tx);
+      if (productId !== null) {
+        await tx.execute({
+          sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden) VALUES (?1, ?2, ?3)`,
+          args: [productId, resolvedId, orden],
+        });
+      }
+    }
+    await tx.commit();
+    return resolvedId;
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
+}
+
+// --- Lotes de importación masiva de piezas (para poder deshacer) ---
+
+export interface PiezaImportBatch {
+  id: number;
+  creado_en: string;
+  creado_por: string | null;
+  total: number;
+}
+
+// Registra qué piezas se CREARON (no las actualizadas — esas no se pueden
+// deshacer sin perder los datos previos) en una corrida de importación
+// masiva, para que "Eliminar última importación masiva" sepa exactamente
+// qué borrar. No hace nada si la lista viene vacía (nada que deshacer).
+export async function recordPiezaImportBatch(actor: Actor, plasticProductIds: number[]): Promise<void> {
+  if (plasticProductIds.length === 0) return;
+  await assertActorAuthorized(actor, "plasticos");
+  const usuario = (await loadActorSession(actor))?.username ?? null;
+  await client.execute({
+    sql: `INSERT INTO piezas_import_batches (creado_por, plastic_product_ids, total) VALUES (?1, ?2, ?3)`,
+    args: [usuario, JSON.stringify(plasticProductIds), plasticProductIds.length],
+  });
+}
+
+// Último lote de importación de piezas que todavía no se deshizo — null si
+// no hay ninguno (nunca se importó, o ya se deshizo el más reciente).
+export async function getLastPiezaImportBatch(): Promise<PiezaImportBatch | null> {
+  const result = await client.execute(
+    `SELECT id, creado_en, creado_por, total FROM piezas_import_batches
+     WHERE deshecho_en IS NULL
+     ORDER BY id DESC LIMIT 1`,
+  );
+  const row = result.rows[0] as unknown as PiezaImportBatch | undefined;
+  return row ?? null;
+}
+
+// Borra las piezas creadas por el último lote de importación no deshecho
+// (y su relación con el juego, si tenían) y marca el lote como deshecho —
+// no se puede deshacer dos veces el mismo lote. Atómico: si una pieza del
+// lote ya se había borrado manualmente antes, el DELETE simplemente no
+// afecta esa fila, sin error.
+export async function undoLastPiezaImportBatch(actor: Actor): Promise<{ eliminadas: number }> {
+  await assertActorAuthorized(actor, "plasticos");
+  const tx = await client.transaction("write");
+  try {
+    const result = await tx.execute(
+      `SELECT id, plastic_product_ids FROM piezas_import_batches
+       WHERE deshecho_en IS NULL
+       ORDER BY id DESC LIMIT 1`,
+    );
+    const row = result.rows[0] as unknown as { id: number; plastic_product_ids: string } | undefined;
+    if (!row) {
+      throw new Error("No hay ninguna importación de piezas para deshacer.");
+    }
+    const ids = JSON.parse(row.plastic_product_ids) as number[];
+    let eliminadas = 0;
+    if (ids.length > 0) {
+      const placeholders = ids.map((_, i) => `?${i + 1}`).join(", ");
+      await tx.execute({
+        sql: `DELETE FROM product_plastic_items WHERE plastic_product_id IN (${placeholders})`,
+        args: ids,
+      });
+      const deleteResult = await tx.execute({
+        sql: `DELETE FROM plastic_products WHERE id IN (${placeholders})`,
+        args: ids,
+      });
+      eliminadas = deleteResult.rowsAffected;
+    }
+    await tx.execute({
+      sql: `UPDATE piezas_import_batches SET deshecho_en = datetime('now') WHERE id = ?1`,
+      args: [row.id],
+    });
+    await tx.commit();
+    return { eliminadas };
   } catch (err) {
     await tx.rollback();
     throw err;

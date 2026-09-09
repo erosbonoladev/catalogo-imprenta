@@ -15,6 +15,8 @@ export const EMPTY_PLASTIC_DATA: PlasticProductInput = {
   tipo_empaque: "",
   maquila: "",
   coste: "",
+  componentes_fabricacion: "",
+  dimensiones_empaque: "",
   imagen: null,
 };
 
@@ -69,6 +71,16 @@ export default function PlasticProductFields({ data, imageSrc, onChange, onPickI
         />
         <PlasticField label="Maquila" value={data.maquila} onChange={(v) => onChange({ maquila: v })} />
         <PlasticField label="Coste" value={data.coste} onChange={(v) => onChange({ coste: v })} />
+        <PlasticField
+          label="Componentes de fabricación"
+          value={data.componentes_fabricacion}
+          onChange={(v) => onChange({ componentes_fabricacion: v })}
+        />
+        <PlasticField
+          label="Dimensiones de empaque"
+          value={data.dimensiones_empaque}
+          onChange={(v) => onChange({ dimensiones_empaque: v })}
+        />
       </div>
     </>
   );
