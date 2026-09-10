@@ -340,7 +340,14 @@ const REMISION_PEDIDO_Y = 220.4;
 
 // Rectángulos blancos para tapar los valores de ejemplo (XXXXXX/DD-MM-AA/
 // JALISCO) horneados en la plantilla original antes de escribir el valor real.
-const REMISION_ERASE_FOLIO: [number, number, number, number] = [493, 160, 62, 22];
+// El folio real (REM-<bodega>-DDMMYY-00001) suele ser mucho más largo que el
+// placeholder "XXXXXX" — bodega es texto libre — así que el rectángulo cubre
+// todo el espacio en blanco disponible en la plantilla (confirmado contra la
+// imagen: sin línea/borde que lo limite entre "NO. FOLIO" y "PEDIDO BODEGAS").
+const REMISION_ERASE_FOLIO: [number, number, number, number] = [460, 159, 130, 24];
+// Ancho máximo dentro de ese mismo espacio en blanco — el tamaño de letra del
+// folio se reduce (fitFolioFontSize) hasta entrar aquí en vez de salirse del área.
+const REMISION_FOLIO_MAX_WIDTH = 122;
 const REMISION_ERASE_FECHA: [number, number, number, number] = [326, 205, 95, 20];
 const REMISION_ERASE_PEDIDO: [number, number, number, number] = [493, 205, 56, 22];
 // El valor de "Precio en texto" no viene horneado en la plantilla (a
@@ -380,6 +387,21 @@ function truncateToWidth(doc: jsPDF, text: string, maxWidth: number): string {
   return `${truncated}…`;
 }
 
+// Reduce el tamaño de letra (en vez de truncar, a diferencia de
+// truncateToWidth) hasta que el folio entre en el ancho disponible — a
+// diferencia de un nombre de producto, el folio es un identificador legal del
+// documento y no debe perder caracteres.
+function fitFolioFontSize(doc: jsPDF, text: string, maxWidth: number, startSize: number, minSize: number): number {
+  doc.setFont("helvetica", "bold");
+  let size = startSize;
+  doc.setFontSize(size);
+  while (size > minSize && doc.getTextWidth(text) > maxWidth) {
+    size -= 0.5;
+    doc.setFontSize(size);
+  }
+  return size;
+}
+
 function formatFechaRemision(fechaIso: string): string {
   const [y, m, d] = fechaIso.split("-");
   return `${d}/${m}/${y}`;
@@ -398,6 +420,7 @@ export async function buildRemisionPdf(
   }
 
   const totalPages = Math.max(1, Math.ceil(renglones.length / REMISION_ROWS_PER_PAGE));
+  const folioFontSize = fitFolioFontSize(doc, remision.folio, REMISION_FOLIO_MAX_WIDTH, 10.5, 6);
 
   for (let page = 0; page < totalPages; page++) {
     if (page > 0) doc.addPage();
@@ -412,9 +435,10 @@ export async function buildRemisionPdf(
     doc.rect(...REMISION_ERASE_PEDIDO, "F");
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(10.5);
+    doc.setFontSize(folioFontSize);
     doc.text(remision.folio, REMISION_FOLIO_X, REMISION_FOLIO_Y, { align: "center" });
     doc.setFont("helvetica", "normal");
+    doc.setFontSize(10.5);
     doc.text(formatFechaRemision(remision.fecha), REMISION_FECHA_X, REMISION_FECHA_Y, {
       align: "center",
     });

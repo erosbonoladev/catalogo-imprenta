@@ -22,20 +22,20 @@ async function actor(permisos: string[]) {
 }
 
 describe("computeRemisionMontos — fórmula única compartida con RemisionForm.tsx/RemisionDetalleModal.tsx", () => {
-  it("IVA se calcula sobre el subtotal (no sobre subtotal-descuento), y el total RESTA el IVA (regla de negocio documentada en WORKFLOWS.md)", () => {
+  it("IVA se calcula sobre el subtotal (no sobre subtotal-descuento), y el total SUMA el IVA (regla de negocio documentada en WORKFLOWS.md)", () => {
     const montos = computeRemisionMontos([{ cantidad: 2, precio_unitario: 100 }], 10);
     expect(montos.subtotal).toBe(200);
     expect(montos.descuento).toBe(20); // 10% de 200
     expect(montos.iva).toBeCloseTo(32); // 16% de 200 (subtotal), no de 180
-    expect(montos.total).toBeCloseTo(200 - 20 - 32); // 148 — el IVA se resta, no se suma
+    expect(montos.total).toBeCloseTo(200 - 20 + 32); // 212 — el IVA se suma, no se resta
   });
 
-  it("sin descuento, con 0% IVA sigue restándose del subtotal", () => {
+  it("sin descuento, el IVA se suma al subtotal", () => {
     const montos = computeRemisionMontos([{ cantidad: 1, precio_unitario: 50 }], 0);
     expect(montos.subtotal).toBe(50);
     expect(montos.descuento).toBe(0);
     expect(montos.iva).toBeCloseTo(8);
-    expect(montos.total).toBeCloseTo(42);
+    expect(montos.total).toBeCloseTo(58);
   });
 
   it("suma varios renglones antes de aplicar descuento/IVA sobre el subtotal combinado", () => {
@@ -79,7 +79,7 @@ describe("createRemisionConFolio", () => {
     expect(created.subtotal).toBe(100);
     expect(created.descuento).toBe(0);
     expect(created.iva).toBeCloseTo(16);
-    expect(created.total).toBeCloseTo(84);
+    expect(created.total).toBeCloseTo(116);
   });
 
   it("deriva remisiones.usuario del Actor verificado, no de un string aparte", async () => {
@@ -145,7 +145,7 @@ describe("updateRemisionConRenglones", () => {
     expect(updated.folio).toBe(created.folio);
     expect(updated.usuario).toBe(created.usuario);
     expect(updated.subtotal).toBe(200);
-    expect(updated.total).toBeCloseTo(168);
+    expect(updated.total).toBeCloseTo(232);
     expect(updated.renglones).toHaveLength(2);
     expect(await countRows("remision_renglones", "remision_id = ?1", [created.id])).toBe(2);
   });

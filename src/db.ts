@@ -3501,8 +3501,8 @@ export const IVA_RATE = 0.16;
 // validación por renglón para mostrar errores puntuales, y no quiere que un
 // campo a medio teclear tire una excepción en cada render). Único lugar que
 // conoce la fórmula de negocio: IVA = Subtotal × IVA_RATE; Total = Subtotal
-// − Descuento − IVA (se resta, no se suma — regla de negocio documentada en
-// docs/WORKFLOWS.md, no un error).
+// − Descuento + IVA (se suma — regla de negocio documentada en
+// docs/WORKFLOWS.md).
 export function computeRemisionMontos(
   renglones: { cantidad: number; precio_unitario: number }[],
   descuentoPct: number,
@@ -3510,7 +3510,7 @@ export function computeRemisionMontos(
   const subtotal = renglones.reduce((sum, r) => sum + r.cantidad * r.precio_unitario, 0);
   const descuento = subtotal * (descuentoPct / 100);
   const iva = subtotal * IVA_RATE;
-  const total = subtotal - descuento - iva;
+  const total = subtotal - descuento + iva;
   return { subtotal, descuento, iva, total };
 }
 
