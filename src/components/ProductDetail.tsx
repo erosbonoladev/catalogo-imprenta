@@ -21,6 +21,7 @@ interface Props {
   onDeleted: () => void;
   onOpenPlasticos: (productId: number) => void;
   onOpenImprenta: (productId: number) => void;
+  onOpenMaderas: (productId: number) => void;
 }
 
 function formatFechaCorta(fechaSql: string): string {
@@ -36,6 +37,7 @@ export default function ProductDetail({
   onDeleted,
   onOpenPlasticos,
   onOpenImprenta,
+  onOpenMaderas,
 }: Props) {
   const { user, token } = useAuth();
   const [product, setProduct] = useState<Product | null>(null);
@@ -230,6 +232,14 @@ export default function ProductDetail({
                 onClick={() => onOpenImprenta(product.id)}
               >
                 Imprenta
+              </button>
+            )}
+            {hasPermission(user, "maderas") && (
+              <button
+                className="btn btn-secondary"
+                onClick={() => onOpenMaderas(product.id)}
+              >
+                Maderas
               </button>
             )}
             {confirmingDelete ? (

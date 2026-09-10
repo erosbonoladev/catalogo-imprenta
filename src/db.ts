@@ -48,6 +48,9 @@ import type {
   TipoRemision,
   User,
   UserInput,
+  WoodItem,
+  WoodProduct,
+  WoodProductInput,
 } from "./types";
 import { PROCESOS_IMPRENTA } from "./types";
 import { buildRequisicionMessage } from "./requisiciones";
@@ -395,6 +398,13 @@ export async function deleteProduct(actor: Actor, id: number): Promise<void> {
     // las piezas en sí (plastic_products), solo el vínculo de esta ficha.
     await tx.execute({
       sql: "DELETE FROM product_plastic_items WHERE product_id = ?1",
+      args: [id],
+    });
+    // Mismo criterio que product_plastic_items justo arriba — vínculos con
+    // el catálogo maestro de Maderas. No borra los productos de madera en
+    // sí (wood_products), solo el vínculo de esta ficha.
+    await tx.execute({
+      sql: "DELETE FROM product_wood_items WHERE product_id = ?1",
       args: [id],
     });
     const items = await tx.execute({
@@ -1310,6 +1320,24 @@ export async function searchPlasticProducts(
   return (result.rows as unknown as PlasticProductRow[]).map(rowToPlasticProduct);
 }
 
+// Sin las columnas de imagen (BLOB) — mismo criterio que PRODUCT_LIST_COLUMNS
+// arriba. Con más de 2600 piezas y ~48MB acumulados en las que sí tienen
+// imagen, traerlas todas en pantallas que solo listan texto (PiezasGeneralSection,
+// SkuMasterSection) es la causa real de que esas dos pantallas tarden en
+// cargar. `searchPlasticProducts` (con imagen) sigue existiendo tal cual para
+// PlasticProductPicker/PlasticosSection, que sí necesitan la imagen porque la
+// reenvían a `updatePlasticProduct` al vincular una pieza existente a una
+// ficha — cambiar esa función habría borrado imágenes existentes en silencio.
+const PLASTIC_PRODUCT_LIST_COLUMNS =
+  "id, nombre, sku, color, origen, descripcion, armado, dimension, peso, tipo_empaque, maquila, coste, componentes_fabricacion, dimensiones_empaque, creado_en";
+
+export async function listPlasticProductsSummary(): Promise<PlasticProduct[]> {
+  const result = await client.execute(
+    `SELECT ${PLASTIC_PRODUCT_LIST_COLUMNS} FROM plastic_products ORDER BY nombre, sku`,
+  );
+  return (result.rows as unknown as PlasticProductRow[]).map(rowToPlasticProduct);
+}
+
 export async function getPlasticProduct(id: number): Promise<PlasticProduct | null> {
   const result = await client.execute({
     sql: "SELECT * FROM plastic_products WHERE id = ?1",
@@ -1673,6 +1701,368 @@ export async function undoLastPiezaImportBatch(actor: Actor): Promise<{ eliminad
   }
 }
 
+// --- Maderas (catálogo reutilizable, mismo patrón que Piezas) ---
+
+interface WoodProductRow {
+  id: number;
+  nombre: string;
+  sku: string;
+  tamano: string;
+  capas: string;
+  largo: string;
+  ancho: string;
+  espesor: string;
+  caben_hoja_mdf: string;
+  minutos_laser: string;
+  importe_madera: number | null;
+  pintura: number | null;
+  importe_corte_laser: number | null;
+  etiqueta_adhesiva: number | null;
+  otro_importe: number | null;
+  otro_concepto: string;
+  etiqueta_empaque: number | null;
+  costo_total: number | null;
+  precio_venta: number | null;
+  imagen: ArrayBuffer | null;
+  imagen_mime: string | null;
+  creado_en: string;
+}
+
+function rowToWoodProduct(row: WoodProductRow): WoodProduct {
+  return {
+    id: row.id,
+    nombre: row.nombre,
+    sku: row.sku,
+    tamano: row.tamano,
+    capas: row.capas,
+    largo: row.largo,
+    ancho: row.ancho,
+    espesor: row.espesor,
+    caben_hoja_mdf: row.caben_hoja_mdf,
+    minutos_laser: row.minutos_laser,
+    importe_madera: row.importe_madera,
+    pintura: row.pintura,
+    importe_corte_laser: row.importe_corte_laser,
+    etiqueta_adhesiva: row.etiqueta_adhesiva,
+    otro_importe: row.otro_importe,
+    otro_concepto: row.otro_concepto,
+    etiqueta_empaque: row.etiqueta_empaque,
+    costo_total: row.costo_total,
+    precio_venta: row.precio_venta,
+    imagen: toImageBlob(row.imagen, row.imagen_mime),
+    creado_en: row.creado_en,
+  };
+}
+
+function woodProductToData(product: WoodProduct): WoodProductInput {
+  return {
+    nombre: product.nombre,
+    sku: product.sku,
+    tamano: product.tamano,
+    capas: product.capas,
+    largo: product.largo,
+    ancho: product.ancho,
+    espesor: product.espesor,
+    caben_hoja_mdf: product.caben_hoja_mdf,
+    minutos_laser: product.minutos_laser,
+    importe_madera: product.importe_madera,
+    pintura: product.pintura,
+    importe_corte_laser: product.importe_corte_laser,
+    etiqueta_adhesiva: product.etiqueta_adhesiva,
+    otro_importe: product.otro_importe,
+    otro_concepto: product.otro_concepto,
+    etiqueta_empaque: product.etiqueta_empaque,
+    costo_total: product.costo_total,
+    precio_venta: product.precio_venta,
+    imagen: product.imagen,
+  };
+}
+
+// Usada por WoodProductPicker ("Agregar un producto existente" dentro de
+// Maderas) — igual que searchPlasticProducts, sin Actor (lectura abierta).
+export async function searchWoodProducts(query: string): Promise<WoodProduct[]> {
+  const trimmed = query.trim();
+  const result = trimmed
+    ? await client.execute({
+        sql: `SELECT * FROM wood_products
+              WHERE ${foldSearchColumn("nombre")} LIKE ?1 OR ${foldSearchColumn("sku")} LIKE ?1
+              ORDER BY nombre, sku`,
+        args: [`%${normalizeSearchTerm(trimmed)}%`],
+      })
+    : await client.execute("SELECT * FROM wood_products ORDER BY nombre, sku");
+  return (result.rows as unknown as WoodProductRow[]).map(rowToWoodProduct);
+}
+
+export async function createWoodProduct(
+  actor: Actor,
+  input: WoodProductInput,
+  executor: Executor = client,
+): Promise<number> {
+  await assertActorAuthorized(actor, "maderas");
+  const result = await executor.execute({
+    sql: `INSERT INTO wood_products
+          (nombre, sku, tamano, capas, largo, ancho, espesor, caben_hoja_mdf, minutos_laser,
+           importe_madera, pintura, importe_corte_laser, etiqueta_adhesiva, otro_importe, otro_concepto,
+           etiqueta_empaque, costo_total, precio_venta, imagen, imagen_mime)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)`,
+    args: [
+      input.nombre.trim(),
+      input.sku.trim(),
+      input.tamano.trim(),
+      input.capas.trim(),
+      input.largo.trim(),
+      input.ancho.trim(),
+      input.espesor.trim(),
+      input.caben_hoja_mdf.trim(),
+      input.minutos_laser.trim(),
+      input.importe_madera,
+      input.pintura,
+      input.importe_corte_laser,
+      input.etiqueta_adhesiva,
+      input.otro_importe,
+      input.otro_concepto.trim(),
+      input.etiqueta_empaque,
+      input.costo_total,
+      input.precio_venta,
+      input.imagen?.data ?? null,
+      input.imagen?.mime ?? null,
+    ],
+  });
+  return Number(result.lastInsertRowid);
+}
+
+export async function updateWoodProduct(
+  actor: Actor,
+  id: number,
+  input: WoodProductInput,
+  executor: Executor = client,
+): Promise<void> {
+  await assertActorAuthorized(actor, "maderas");
+  await executor.execute({
+    sql: `UPDATE wood_products
+          SET nombre = ?1, sku = ?2, tamano = ?3, capas = ?4, largo = ?5, ancho = ?6, espesor = ?7,
+              caben_hoja_mdf = ?8, minutos_laser = ?9, importe_madera = ?10, pintura = ?11,
+              importe_corte_laser = ?12, etiqueta_adhesiva = ?13, otro_importe = ?14, otro_concepto = ?15,
+              etiqueta_empaque = ?16, costo_total = ?17, precio_venta = ?18, imagen = ?19, imagen_mime = ?20
+          WHERE id = ?21`,
+    args: [
+      input.nombre.trim(),
+      input.sku.trim(),
+      input.tamano.trim(),
+      input.capas.trim(),
+      input.largo.trim(),
+      input.ancho.trim(),
+      input.espesor.trim(),
+      input.caben_hoja_mdf.trim(),
+      input.minutos_laser.trim(),
+      input.importe_madera,
+      input.pintura,
+      input.importe_corte_laser,
+      input.etiqueta_adhesiva,
+      input.otro_importe,
+      input.otro_concepto.trim(),
+      input.etiqueta_empaque,
+      input.costo_total,
+      input.precio_venta,
+      input.imagen?.data ?? null,
+      input.imagen?.mime ?? null,
+      id,
+    ],
+  });
+}
+
+interface WoodItemRow extends WoodProductRow {
+  item_id: number;
+  item_orden: number;
+}
+
+export async function getWoodItems(productId: number): Promise<WoodItem[]> {
+  const result = await client.execute({
+    sql: `SELECT pwi.id AS item_id, pwi.orden AS item_orden, wp.*
+          FROM product_wood_items pwi
+          JOIN wood_products wp ON wp.id = pwi.wood_product_id
+          WHERE pwi.product_id = ?1
+          ORDER BY pwi.orden, pwi.id`,
+    args: [productId],
+  });
+  return (result.rows as unknown as WoodItemRow[]).map((row) => ({
+    id: row.item_id,
+    product_id: productId,
+    wood_product_id: row.id,
+    orden: row.item_orden,
+    data: woodProductToData(rowToWoodProduct(row)),
+  }));
+}
+
+export async function saveWoodItems(actor: Actor, productId: number, items: WoodItem[]): Promise<void> {
+  await assertActorAuthorized(actor, "maderas");
+  const tx = await client.transaction("write");
+  try {
+    const resolved: { woodProductId: number; orden: number }[] = [];
+    let orden = 1;
+    for (const item of items) {
+      if (!item.data.nombre.trim() && !item.data.sku.trim()) continue;
+      let woodProductId: number;
+      if (item.wood_product_id) {
+        woodProductId = item.wood_product_id;
+        await updateWoodProduct(actor, woodProductId, item.data, tx);
+      } else {
+        woodProductId = await createWoodProduct(actor, item.data, tx);
+      }
+      resolved.push({ woodProductId, orden });
+      orden += 1;
+    }
+    await tx.execute({
+      sql: "DELETE FROM product_wood_items WHERE product_id = ?1",
+      args: [productId],
+    });
+    for (const { woodProductId, orden: itemOrden } of resolved) {
+      await tx.execute({
+        sql: `INSERT INTO product_wood_items (product_id, wood_product_id, orden) VALUES (?1, ?2, ?3)`,
+        args: [productId, woodProductId, itemOrden],
+      });
+    }
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
+}
+
+// Busca una pieza de madera ya ligada a ese juego por nombre+tamaño (sin
+// distinguir mayúsculas/espacios) — a diferencia de Piezas, el SKU de una
+// fila de Maderas identifica al JUEGO (se repite en varias filas cuando un
+// juego tiene varias piezas de madera distintas), no a la pieza individual,
+// así que no sirve como criterio de "ya existe" por sí solo — ver
+// src/maderaImport.ts.
+export async function findWoodProductInJuegoByNombreTamano(
+  nombre: string,
+  tamano: string,
+  productId: number,
+): Promise<WoodProduct | null> {
+  const result = await client.execute({
+    sql: `SELECT wp.* FROM wood_products wp
+          JOIN product_wood_items pwi ON pwi.wood_product_id = wp.id
+          WHERE pwi.product_id = ?1
+            AND LOWER(TRIM(wp.nombre)) = LOWER(TRIM(?2))
+            AND LOWER(TRIM(wp.tamano)) = LOWER(TRIM(?3))
+          LIMIT 1`,
+    args: [productId, nombre, tamano],
+  });
+  const row = result.rows[0] as unknown as WoodProductRow | undefined;
+  return row ? rowToWoodProduct(row) : null;
+}
+
+// Upsert incremental de una fila de importación masiva de maderas — mismo
+// criterio que importPiezaRow: crea/actualiza solo esa pieza de madera sin
+// tocar el resto de las ya ligadas al juego. `productId` null cuando la fila
+// no se pudo relacionar con ningún juego (sin SKU, o SKU sin producto
+// coincidente) pero el usuario decidió importarla igual.
+export async function importWoodRow(
+  actor: Actor,
+  productId: number | null,
+  woodProductId: number | null,
+  input: WoodProductInput,
+  orden: number,
+): Promise<number> {
+  await assertActorAuthorized(actor, "maderas");
+  const tx = await client.transaction("write");
+  try {
+    let resolvedId: number;
+    if (woodProductId) {
+      await updateWoodProduct(actor, woodProductId, input, tx);
+      resolvedId = woodProductId;
+    } else {
+      resolvedId = await createWoodProduct(actor, input, tx);
+      if (productId !== null) {
+        await tx.execute({
+          sql: `INSERT INTO product_wood_items (product_id, wood_product_id, orden) VALUES (?1, ?2, ?3)`,
+          args: [productId, resolvedId, orden],
+        });
+      }
+    }
+    await tx.commit();
+    return resolvedId;
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
+}
+
+// --- Lotes de importación masiva de maderas (para poder deshacer) ---
+
+export interface MaderaImportBatch {
+  id: number;
+  creado_en: string;
+  creado_por: string | null;
+  total: number;
+}
+
+export async function recordMaderaImportBatch(actor: Actor, woodProductIds: number[]): Promise<void> {
+  if (woodProductIds.length === 0) return;
+  await assertActorAuthorized(actor, "maderas");
+  const usuario = (await loadActorSession(actor))?.username ?? null;
+  await client.execute({
+    sql: `INSERT INTO madera_import_batches (creado_por, wood_product_ids, total) VALUES (?1, ?2, ?3)`,
+    args: [usuario, JSON.stringify(woodProductIds), woodProductIds.length],
+  });
+}
+
+export async function getLastMaderaImportBatch(): Promise<MaderaImportBatch | null> {
+  const result = await client.execute(
+    `SELECT id, creado_en, creado_por, total FROM madera_import_batches
+     WHERE deshecho_en IS NULL
+     ORDER BY id DESC LIMIT 1`,
+  );
+  const row = result.rows[0] as unknown as MaderaImportBatch | undefined;
+  return row ?? null;
+}
+
+export async function undoLastMaderaImportBatch(actor: Actor): Promise<{ eliminadas: number }> {
+  await assertActorAuthorized(actor, "maderas");
+  const tx = await client.transaction("write");
+  try {
+    const result = await tx.execute(
+      `SELECT id, wood_product_ids FROM madera_import_batches
+       WHERE deshecho_en IS NULL
+       ORDER BY id DESC LIMIT 1`,
+    );
+    const row = result.rows[0] as unknown as { id: number; wood_product_ids: string } | undefined;
+    if (!row) {
+      throw new Error("No hay ninguna importación de maderas para deshacer.");
+    }
+    const ids = JSON.parse(row.wood_product_ids) as number[];
+    let eliminadas = 0;
+    if (ids.length > 0) {
+      const placeholders = ids.map((_, i) => `?${i + 1}`).join(", ");
+      await tx.execute({
+        sql: `DELETE FROM product_wood_items WHERE wood_product_id IN (${placeholders})`,
+        args: ids,
+      });
+      const deleteResult = await tx.execute({
+        sql: `DELETE FROM wood_products WHERE id IN (${placeholders})`,
+        args: ids,
+      });
+      eliminadas = deleteResult.rowsAffected;
+    }
+    await tx.execute({
+      sql: `UPDATE madera_import_batches SET deshecho_en = datetime('now') WHERE id = ?1`,
+      args: [row.id],
+    });
+    await tx.commit();
+    return { eliminadas };
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
+}
+
 // --- Imprenta ---
 
 interface PrintItemRow {
@@ -1727,54 +2117,59 @@ export async function getPrintItems(productId: number): Promise<PrintItem[]> {
     sql: "SELECT * FROM product_print_items WHERE product_id = ?1 ORDER BY orden, id",
     args: [productId],
   });
-  const items: PrintItem[] = [];
-  for (const row of result.rows as unknown as PrintItemRow[]) {
-    const [checkResult, extraResult, imageResult] = await Promise.all([
-      client.execute({
-        sql: "SELECT * FROM product_print_item_checks WHERE print_item_id = ?1 ORDER BY orden, id",
-        args: [row.id],
-      }),
-      client.execute({
-        sql: "SELECT * FROM product_print_item_extras WHERE print_item_id = ?1 ORDER BY orden, id",
-        args: [row.id],
-      }),
-      client.execute({
-        sql: "SELECT * FROM product_print_item_images WHERE print_item_id = ?1 ORDER BY orden, id",
-        args: [row.id],
-      }),
-    ]);
-    const checks = (
-      checkResult.rows as unknown as (Omit<PrintItemCheck, "marcado"> & {
-        marcado: number;
-      })[]
-    ).map((check) => ({ ...check, marcado: Boolean(check.marcado) }));
-    const extras = extraResult.rows as unknown as PrintItemExtra[];
-    const images = (imageResult.rows as unknown as PrintItemImageRow[]).map(rowToPrintItemImage);
-    items.push({
-      id: row.id,
-      product_id: row.product_id,
-      nombre: row.nombre,
-      tamano_extendido: row.extendido ?? "",
-      tamano_final: row.tamano ?? "",
-      tintas: row.tintas ?? "",
-      tipo_papel: row.tipo_papel ?? "",
-      gramos_puntos: row.gramos_puntos ?? "",
-      pliego: row.pliego ?? "",
-      cortes_tamano: row.corte_cm ?? "",
-      maquina: row.maquina ?? "",
-      formacion: row.formacion ?? "",
-      numero_pliegos: row.numero_pliegos ?? "",
-      numero_placas: row.numero_placas ?? "",
-      placas_existentes: (row.placas_existentes as PlacasExistentes | null) ?? "",
-      checks: normalizeChecks(checks),
-      extras,
-      images,
-      acabados: row.acabados ?? "",
-      notas: row.notas ?? "",
-      orden: row.orden,
-    });
-  }
-  return items;
+  const rows = result.rows as unknown as PrintItemRow[];
+  // Un round-trip por fila en paralelo (Promise.all sobre todas las filas),
+  // en vez de un for-loop que esperaba cada fila antes de pedir la
+  // siguiente — con varios ítems de imprenta en una misma ficha, eso
+  // serializaba N round-trips a Turso donde ninguno depende del anterior.
+  return Promise.all(
+    rows.map(async (row) => {
+      const [checkResult, extraResult, imageResult] = await Promise.all([
+        client.execute({
+          sql: "SELECT * FROM product_print_item_checks WHERE print_item_id = ?1 ORDER BY orden, id",
+          args: [row.id],
+        }),
+        client.execute({
+          sql: "SELECT * FROM product_print_item_extras WHERE print_item_id = ?1 ORDER BY orden, id",
+          args: [row.id],
+        }),
+        client.execute({
+          sql: "SELECT * FROM product_print_item_images WHERE print_item_id = ?1 ORDER BY orden, id",
+          args: [row.id],
+        }),
+      ]);
+      const checks = (
+        checkResult.rows as unknown as (Omit<PrintItemCheck, "marcado"> & {
+          marcado: number;
+        })[]
+      ).map((check) => ({ ...check, marcado: Boolean(check.marcado) }));
+      const extras = extraResult.rows as unknown as PrintItemExtra[];
+      const images = (imageResult.rows as unknown as PrintItemImageRow[]).map(rowToPrintItemImage);
+      return {
+        id: row.id,
+        product_id: row.product_id,
+        nombre: row.nombre,
+        tamano_extendido: row.extendido ?? "",
+        tamano_final: row.tamano ?? "",
+        tintas: row.tintas ?? "",
+        tipo_papel: row.tipo_papel ?? "",
+        gramos_puntos: row.gramos_puntos ?? "",
+        pliego: row.pliego ?? "",
+        cortes_tamano: row.corte_cm ?? "",
+        maquina: row.maquina ?? "",
+        formacion: row.formacion ?? "",
+        numero_pliegos: row.numero_pliegos ?? "",
+        numero_placas: row.numero_placas ?? "",
+        placas_existentes: (row.placas_existentes as PlacasExistentes | null) ?? "",
+        checks: normalizeChecks(checks),
+        extras,
+        images,
+        acabados: row.acabados ?? "",
+        notas: row.notas ?? "",
+        orden: row.orden,
+      };
+    }),
+  );
 }
 
 export async function savePrintItems(
@@ -3160,9 +3555,14 @@ function computeRemisionTotales(
 // "documento fantasma" con folio quemado y ninguna remisión real. Ahora todo
 // se confirma o se revierte junto, así que un fallo nunca deja un folio sin
 // su remisión ni una remisión sin (todos) sus renglones.
+// El segundo parámetro se llama `bodega` (no `sku`, a diferencia de
+// createFolio/createRequisicionConFolio): a pedido del negocio, el folio de
+// remisión lleva el nombre de la bodega destino en el segmento donde los
+// otros tres tipos (Requisición/Producción/Compra) llevan el SKU del
+// producto — RemisionForm le pasa `pedido_bodegas`, no un SKU.
 export async function createRemisionConFolio(
   actor: Actor,
-  sku: string,
+  bodega: string,
   input: Omit<RemisionInput, "folio" | "subtotal" | "descuento" | "iva" | "total" | "precio_texto" | "usuario">,
   renglones: RemisionRenglonInput[],
 ): Promise<RemisionConRenglones> {
@@ -3170,7 +3570,7 @@ export async function createRemisionConFolio(
   const totales = computeRemisionTotales(renglones, input.descuento_pct);
   const tx = await client.transaction("write");
   try {
-    const folio = await insertFolioRow(tx, "remision", sku);
+    const folio = await insertFolioRow(tx, "remision", bodega);
 
     const headerResult = await tx.execute({
       sql: `INSERT INTO remisiones
@@ -3310,8 +3710,11 @@ export async function deleteRemision(actor: Actor, id: number): Promise<void> {
   await logEvent("WARNING", `Remisión #${id} eliminada`, username);
 }
 
-export async function listRemisionRenglonesParaHistorial(actor: Actor): Promise<RemisionHistorialRow[]> {
-  await assertActorAuthorized(actor, "backups_ver");
+// Sin chequeo de Actor a propósito — es un helper interno, cada exportado
+// que la llama (listRemisionRenglonesParaHistorial, getSkuMasterExportData)
+// hace su propio assertActorAuthorized con el permiso de su propia pantalla
+// antes de invocarla, mismo criterio que el resto de queries de soporte.
+async function fetchRemisionRenglonesHistorial(): Promise<RemisionHistorialRow[]> {
   const result = await client.execute(`
     SELECT
       r.fecha AS fecha, r.folio AS folio, r.pedido_bodegas AS pedido_bodegas, r.cancelada AS cancelada,
@@ -3332,4 +3735,75 @@ export async function listRemisionRenglonesParaHistorial(actor: Actor): Promise<
     pedido_bodegas: row.pedido_bodegas ?? "",
     cancelada: !!row.cancelada,
   }));
+}
+
+export async function listRemisionRenglonesParaHistorial(actor: Actor): Promise<RemisionHistorialRow[]> {
+  await assertActorAuthorized(actor, "backups_ver");
+  return fetchRemisionRenglonesHistorial();
+}
+
+// --- Exportación completa de SKU Master (Objetivo: Excel con todo lo
+// relacionado a cada SKU) ---
+
+// Una fila por vínculo ficha↔pieza (product_plastic_items), vía LEFT JOIN
+// desde plastic_products — así una pieza sin ninguna ficha vinculada también
+// aparece (con producto_codigo/producto_nombre en null) en vez de perderse,
+// y una pieza reutilizada en varias fichas aparece una vez por ficha. Sin
+// columnas de imagen, mismo criterio que PLASTIC_PRODUCT_LIST_COLUMNS.
+export interface PiezaDesgloseExportRow {
+  producto_codigo: string | null;
+  producto_nombre: string | null;
+  orden: number | null;
+  pieza_id: number;
+  sku: string;
+  nombre: string;
+  descripcion: string;
+  material: string;
+  color: string;
+  origen: string;
+  dimension: string;
+  peso: string;
+  tipo_empaque: string;
+  maquila: string;
+  coste: string;
+  componentes_fabricacion: string;
+  dimensiones_empaque: string;
+}
+
+async function fetchPiezasDesgloseParaExport(): Promise<PiezaDesgloseExportRow[]> {
+  const result = await client.execute(`
+    SELECT
+      p.codigo AS producto_codigo, p.nombre AS producto_nombre, ppi.orden AS orden,
+      pp.id AS pieza_id, pp.sku AS sku, pp.nombre AS nombre, pp.descripcion AS descripcion,
+      pp.armado AS material, pp.color AS color, pp.origen AS origen, pp.dimension AS dimension,
+      pp.peso AS peso, pp.tipo_empaque AS tipo_empaque, pp.maquila AS maquila, pp.coste AS coste,
+      pp.componentes_fabricacion AS componentes_fabricacion, pp.dimensiones_empaque AS dimensiones_empaque
+    FROM plastic_products pp
+    LEFT JOIN product_plastic_items ppi ON ppi.plastic_product_id = pp.id
+    LEFT JOIN products p ON p.id = ppi.product_id
+    ORDER BY (p.codigo IS NULL), p.codigo, pp.nombre
+  `);
+  return result.rows as unknown as PiezaDesgloseExportRow[];
+}
+
+export interface SkuMasterExportData {
+  productos: Product[];
+  piezas: PiezaDesgloseExportRow[];
+  precios: Precio[];
+  remisiones: RemisionHistorialRow[];
+}
+
+// Único punto de entrada para el export de SKU Master: un solo chequeo de
+// permiso (sku_master, el mismo que ya gatea toda esa pantalla) y las 4
+// consultas en paralelo, en vez de que el componente llame 4 funciones
+// exportadas por separado (cada una repitiendo su propio assertActor).
+export async function getSkuMasterExportData(actor: Actor): Promise<SkuMasterExportData> {
+  await assertActorAuthorized(actor, "sku_master");
+  const [productos, piezas, precios, remisiones] = await Promise.all([
+    searchProducts(""),
+    fetchPiezasDesgloseParaExport(),
+    getPreciosList(actor),
+    fetchRemisionRenglonesHistorial(),
+  ]);
+  return { productos, piezas, precios, remisiones };
 }

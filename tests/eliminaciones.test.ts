@@ -32,6 +32,15 @@ async function seedFullProduct(): Promise<number> {
     args: [productId, plasticId],
   });
 
+  const woodResult = await client.execute(
+    "INSERT INTO wood_products (nombre, sku) VALUES ('Madera', 'MD-1')",
+  );
+  const woodId = Number(woodResult.lastInsertRowid);
+  await client.execute({
+    sql: "INSERT INTO product_wood_items (product_id, wood_product_id, orden) VALUES (?1, ?2, 1)",
+    args: [productId, woodId],
+  });
+
   const printItemResult = await client.execute({
     sql: "INSERT INTO product_print_items (product_id, nombre, orden) VALUES (?1, 'Item', 1)",
     args: [productId],
@@ -77,6 +86,7 @@ describe("deleteProduct — cascada transaccional", () => {
     expect(await countRows("product_specs")).toBe(0);
     expect(await countRows("product_descriptions")).toBe(0);
     expect(await countRows("product_plastic_items")).toBe(0);
+    expect(await countRows("product_wood_items")).toBe(0);
     expect(await countRows("product_print_items")).toBe(0);
     expect(await countRows("product_print_item_checks")).toBe(0);
     expect(await countRows("product_print_item_extras")).toBe(0);
@@ -86,6 +96,8 @@ describe("deleteProduct — cascada transaccional", () => {
     // La pieza del catálogo maestro (plastic_products) NO se borra —
     // deleteProduct solo quita el vínculo (product_plastic_items).
     expect(await countRows("plastic_products")).toBe(1);
+    // Mismo criterio para el catálogo maestro de Maderas.
+    expect(await countRows("wood_products")).toBe(1);
   });
 
   it("si un paso de la cascada falla, no deja nada a medias (rollback completo)", async () => {
@@ -111,6 +123,7 @@ describe("deleteProduct — cascada transaccional", () => {
     expect(await countRows("product_specs", "product_id = ?1", [productId])).toBe(1);
     expect(await countRows("product_descriptions", "product_id = ?1", [productId])).toBe(1);
     expect(await countRows("product_plastic_items", "product_id = ?1", [productId])).toBe(1);
+    expect(await countRows("product_wood_items", "product_id = ?1", [productId])).toBe(1);
     expect(await countRows("product_print_items", "product_id = ?1", [productId])).toBe(1);
     expect(await countRows("product_print_item_purchases")).toBe(1);
 

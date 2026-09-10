@@ -62,6 +62,14 @@ describe("createRemisionConFolio", () => {
     expect(await countRows("remision_renglones", "remision_id = ?1", [created.id])).toBe(1);
   });
 
+  it("el folio lleva el nombre de la bodega, no el SKU del renglón — a pedido del negocio", async () => {
+    const a = await actor(["remisiones_crear"]);
+    const created = await createRemisionConFolio(a, baseInput.pedido_bodegas, baseInput, [renglon]);
+
+    expect(created.folio).toContain("JALISCO");
+    expect(created.folio).not.toContain(renglon.sku);
+  });
+
   it("recalcula importe/subtotal/iva/total server-side aunque el cliente mande esos campos manipulados", async () => {
     const a = await actor(["remisiones_crear"]);
     const renglonManipulado = { ...renglon, importe: 999999 };

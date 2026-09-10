@@ -278,7 +278,7 @@ export default function RemisionForm({ onCreated }: Props) {
         pedido_bodegas: pedidoBodegas.trim(),
         descuento_pct: descuentoPctNum,
       };
-      created = await createRemisionConFolio(actor, parsedRows[0].sku || "GRAL", remisionInput, renglonesInput);
+      created = await createRemisionConFolio(actor, remisionInput.pedido_bodegas, remisionInput, renglonesInput);
     } catch (err) {
       setError(`No se pudo generar la remisión: ${String(err)}`);
       setGenerating(false);

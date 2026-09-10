@@ -1697,6 +1697,39 @@ body,
   min-width: 0;
 }
 
+/* Foto de un producto de Maderas — mismo estilo que .print-item-images
+   (Imprenta, "Imágenes de armado"), pero como caja fija de una sola imagen,
+   sin carrusel. Al ir después de los campos en el layout flex, queda del
+   lado derecho de la tarjeta (mismo criterio de Imprenta). */
+.wood-item-image-box {
+  flex: 0 0 260px;
+  max-width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  background-color: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0.9rem;
+}
+
+.wood-item-image-frame {
+  aspect-ratio: 4 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background-color: var(--media-bg);
+}
+
+.wood-item-image-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 .plastic-item-fields {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));

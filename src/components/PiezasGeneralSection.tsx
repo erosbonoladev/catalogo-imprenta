@@ -3,9 +3,10 @@ import {
   createPlasticProduct,
   deletePlasticProduct,
   getImageSrc,
+  getPlasticProduct,
+  listPlasticProductsSummary,
   logEventAsActor,
   pickImage,
-  searchPlasticProducts,
   updatePlasticProduct,
 } from "../db";
 import type { PlasticProduct, PlasticProductInput } from "../types";
@@ -37,7 +38,7 @@ export default function PiezasGeneralSection({ onBack, onVerPieza }: Props) {
     setLoading(true);
     setLoadError(null);
     try {
-      const list = await searchPlasticProducts("");
+      const list = await listPlasticProductsSummary();
       setPiezas(list);
     } catch (err) {
       setLoadError(`No se pudo cargar la lista de piezas: ${String(err)}`);
@@ -238,6 +239,27 @@ export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalPro
   useRevokeObjectUrl(imageSrc);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // `existing` viene de una lista liviana sin imagen (listPlasticProductsSummary,
+  // ver db.ts) — se pide la pieza completa aparte para no perder la imagen al
+  // guardar: updatePlasticProduct sobrescribe imagen/imagen_mime sin
+  // condicionarlo, así que guardar con data.imagen todavía en null la borraría.
+  const [loadingImage, setLoadingImage] = useState(!!existing);
+
+  useEffect(() => {
+    if (!existing) return;
+    let cancelled = false;
+    getPlasticProduct(existing.id)
+      .then((fresh) => {
+        if (!cancelled) update({ imagen: fresh?.imagen ?? null });
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingImage(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existing?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -312,7 +334,12 @@ export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalPro
         {error && <p className="form-error">{error}</p>}
 
         <div className="form-actions">
-          <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleSave}
+            disabled={saving || loadingImage}
+          >
             {saving ? "Guardando…" : existing ? "Guardar cambios" : "Guardar pieza"}
           </button>
           <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>

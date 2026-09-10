@@ -6,7 +6,7 @@ Fuente de verdad: `src/auth.tsx` + `PERMISOS`/`PERMISO_LABELS` en `src/types.ts`
 
 ```ts
 PERMISOS = [
-  "plasticos", "imprenta", "configuraciones", "requisiciones",
+  "plasticos", "imprenta", "maderas", "configuraciones", "requisiciones",
   "backups_ver", "backups_crear", "backups_descargar", "backups_restaurar",
   "backups_configurar", "backups_eliminar",
   "precios_ver", "precios_modificar",
@@ -19,6 +19,7 @@ PERMISOS = [
 |---|---|---|
 | `plasticos` | **Piezas** | `PlasticosSection` y `PiezasGeneralSection` (mismo permiso para ambas, no hay uno separado para el catálogo general) |
 | `imprenta` | Imprenta | `ImprentaSection` (incluye historial de órdenes) |
+| `maderas` | Maderas | `MaderasSection` (botón "Maderas" en `ProductDetail`) y `MaderaImportPanel` (pestaña "Maderas" en Captura masiva) — permiso propio, no reutiliza `plasticos` aunque la subsección de solo lectura de piezas Madera/MDF dentro de `MaderasSection` lea datos de Piezas (ver nota abajo) |
 | `configuraciones` | Configuraciones | `Configuraciones` (tabs Usuarios/Conectados/Registro/Captura masiva) |
 | `requisiciones` | Requisiciones | Botón "Requisición" por spec en `ProductDetail` |
 | `backups_ver` | Backups: ver | Ver el tab "Backups" dentro de Configuraciones y su historial; también gatea los botones "Lista de precios" e "Historial de remisiones" (viven ahí por pedido del negocio, no porque sean parte del sistema de backups) |
@@ -32,9 +33,13 @@ PERMISOS = [
 | `remisiones_acceso` | Remisiones: acceso | Botón "Remisiones" en `Sidebar` (fila ícono+texto debajo de "Modo oscuro", separada por un divisor) + `RemisionesSection` (re-chequea al entrar) |
 | `remisiones_crear` | Remisiones: crear | Muestra/oculta `RemisionForm` dentro de `RemisionesSection`; también gatea el botón "Editar" dentro de `RemisionDetalleModal` (mismo permiso que crear, no uno nuevo) |
 | `remisiones_cancelar` | Remisiones: borrar | Botón "Borrar" por fila en la lista de remisiones recientes (borrado real vía `deleteRemision`, con confirmación — la etiqueta cambió de "cancelar" a "borrar" cuando se reemplazó ese botón, pero el string interno del permiso no cambió para no invalidar asignaciones existentes) |
-| `sku_master` | SKU Master | Botón "SKU Master" en `Sidebar` (fila ícono+texto debajo de "Remisiones", mismo bloque que "Piezas General") + `SkuMasterSection` (re-chequea al entrar). También habilita, dentro de esa pantalla, guardar el SKU de una pieza sin abrir `PiezasGeneralSection` — ver nota de `updatePlasticProduct` abajo |
+| `sku_master` | SKU Master | Botón "SKU Master" en `Sidebar` (fila ícono+texto debajo de "Remisiones", mismo bloque que "Piezas General") + `SkuMasterSection` (re-chequea al entrar). También habilita, dentro de esa pantalla, guardar el SKU de una pieza sin abrir `PiezasGeneralSection` — ver nota de `updatePlasticProduct` abajo — y el botón "Exportar a Excel" (`getSkuMasterExportData`, mismo permiso, sin exigir además `remisiones_acceso`/`precios_ver` aunque el archivo incluya esos datos: mismo criterio que `backups_ver` sobre "Historial de remisiones", cada exportación exige el permiso de la pantalla que la ofrece, no el de la pantalla original de esos datos) |
 
 El string interno `plasticos` no cambió (ni el nombre de tabla `plastic_products`) aunque la UI diga "Piezas" — no renombrar uno sin el otro.
+
+**`MaderasSection` sigue el mismo criterio que `SkuMasterSection`** para su subsección de solo lectura "Piezas de madera/MDF ya registradas en Piezas" (piezas existentes cuyo nombre/material sugiere que son madera, mostradas también aquí sin duplicar el registro — ver [DATABASE.md](DATABASE.md)): esa lectura se gatea con el permiso de la pantalla contenedora (`maderas`), no con `plasticos`, aunque el dato venga de `getPlasticItems` (Piezas). Mismo precedente ya usado por `getSkuMasterExportData` (gatea con `sku_master`, no con `remisiones_acceso`/`precios_ver`, para los datos de remisiones/precios que incluye) — cada pantalla que ofrece una lectura de soporte la gatea con su propio permiso, no con el permiso "dueño" del dato original.
+
+Por la misma razón, esa subsección es de **solo lectura**, sin editar `plastic_products` desde ahí: hacerlo exigiría que alguien con solo `maderas` pudiera escribir en el catálogo maestro de Piezas, expandiendo esa autorización sin que el usuario lo pidiera. En vez de eso, el botón "Agregar datos de madera" crea un producto de Maderas **nuevo** (`createWoodProduct`, mismo permiso `maderas`) precargado con nombre/SKU/imagen de la pieza (si ya tenía foto en Piezas, se reutiliza en vez de partir sin imagen) — decisión confirmada con el usuario (2026-09-10): la pieza original en Piezas no se toca ni se duplica su información, quedan como dos registros independientes con propósitos distintos. Es idempotente por nombre+SKU (no crea un segundo producto si ya se agregó uno desde la misma pieza) y, en cuanto una pieza tiene su producto de Maderas correspondiente, deja de listarse en esta subsección — mostrar ambas tarjetas a la vez se veía como una duplicación en pantalla, aunque nunca hubo una fila duplicada real en la BD (bug reportado y corregido el mismo día).
 
 Fichas técnicas (catálogo base) **no tiene gate**: cualquier usuario autenticado y activo entra.
 
@@ -68,9 +73,11 @@ Como defensa en profundidad — no como sustituto real de un backend — toda fu
   - `createUser`, `updateUser`, `deleteBackupRecord`, `updateBackupSettings` (sin permiso → exige admin).
   - `executeRestoreSql` (`backups_restaurar`).
   - `createPlasticProduct`, `deletePlasticProduct`, `savePlasticItems` (`plasticos`); `updatePlasticProduct` (`plasticos` **o** `sku_master` — también se llama desde `SkuMasterSection` para asignar el SKU a una pieza que no lo tenía, sin exigir el permiso general de Piezas para esa acción puntual).
+  - `createWoodProduct`, `updateWoodProduct`, `saveWoodItems`, `importWoodRow`, `recordMaderaImportBatch`, `undoLastMaderaImportBatch` (`maderas`) — mismo criterio que Piezas, permiso propio en vez de `isAdmin`.
   - `savePrintItems`, `createPrintItemOrder`, `createPrintItemPurchase`, `deletePrintItemOrder`, `deletePrintItemPurchase` (`imprenta`).
   - `updatePrecio` (`precios_modificar`); `upsertPrecio` (`precios_modificar` **o** `remisiones_crear` — se llama tanto desde `PreciosModal` como desde "Guardar producto" en `RemisionForm`, así que exige cualquiera de los dos para no restringir ese segundo flujo).
   - `createRemisionConFolio`, `updateRemisionConRenglones` (`remisiones_crear`); `deleteRemision` (`remisiones_cancelar`); `clearLogs` (sin permiso → exige admin, no expuesta desde `LogsPanel`, que es de solo lectura).
+  - `getSkuMasterExportData` (`sku_master`) — junta productos/piezas/precios/remisiones para el Excel de SKU Master; internamente llama a `getPreciosList` (que ya acepta `sku_master`) y reusa el mismo join que `listRemisionRenglonesParaHistorial` pero gateado por `sku_master` en vez de `backups_ver`.
   - `setPresentacionOriginal`, `updateProductImage` (sin permiso → exige admin — solo las usan `FichaImportPanel`/`ImageImportPanel`, captura masiva exclusiva de admin).
   - `recordRestoreResult` (`backups_restaurar`), `recordBackupSettingsChange` (`backups_configurar`) — envoltorios de la función privada `createBackupRecord` (no exportada: exportarla permitiría fabricar/alterar filas de `backup_history` llamándola directo, sin pasar por el permiso correspondiente). La usa también `runBackupNow` internamente, sin Actor, para los backups automáticos.
 

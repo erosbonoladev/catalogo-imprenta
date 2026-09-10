@@ -89,6 +89,44 @@ export const SCHEMA_STATEMENTS: string[] = [
     total INTEGER NOT NULL,
     deshecho_en TEXT
   )`,
+  `CREATE TABLE wood_products (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL,
+    sku TEXT,
+    tamano TEXT,
+    capas TEXT,
+    largo TEXT,
+    ancho TEXT,
+    espesor TEXT,
+    caben_hoja_mdf TEXT,
+    minutos_laser TEXT,
+    importe_madera REAL,
+    pintura REAL,
+    importe_corte_laser REAL,
+    etiqueta_adhesiva REAL,
+    otro_importe REAL,
+    otro_concepto TEXT,
+    etiqueta_empaque REAL,
+    costo_total REAL,
+    precio_venta REAL,
+    imagen BLOB,
+    imagen_mime TEXT,
+    creado_en TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE product_wood_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL,
+    wood_product_id INTEGER NOT NULL,
+    orden INTEGER NOT NULL DEFAULT 1
+  )`,
+  `CREATE TABLE madera_import_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    creado_en TEXT NOT NULL DEFAULT (datetime('now')),
+    creado_por TEXT,
+    wood_product_ids TEXT NOT NULL,
+    total INTEGER NOT NULL,
+    deshecho_en TEXT
+  )`,
   `CREATE TABLE product_print_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     product_id INTEGER NOT NULL,

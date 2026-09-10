@@ -118,6 +118,7 @@ export default function RemisionesSection({ onBack }: Props) {
                     <tr key={r.id}>
                       <td>{r.folio}</td>
                       <td>{formatFechaCorta(r.fecha)}</td>
+                      <td>{r.pedido_bodegas || "Sin bodega"}</td>
                       <td>{formatMoney(r.total)}</td>
                       <td>{r.cancelada ? "Cancelada" : "Activa"}</td>
                       <td className="backups-history-actions">

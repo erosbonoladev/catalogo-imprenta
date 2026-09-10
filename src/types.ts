@@ -100,6 +100,66 @@ export interface PlasticItem {
   data: PlasticProductInput;
 }
 
+// --- Maderas (catálogo reutilizable, mismo patrón que Piezas) ---
+
+export interface WoodProduct {
+  id: number;
+  nombre: string;
+  sku: string;
+  tamano: string;
+  capas: string;
+  largo: string;
+  ancho: string;
+  espesor: string;
+  caben_hoja_mdf: string;
+  minutos_laser: string;
+  importe_madera: number | null;
+  pintura: number | null;
+  importe_corte_laser: number | null;
+  etiqueta_adhesiva: number | null;
+  // Importe y concepto de "Otro" son independientes entre sí — el Excel
+  // real trae una columna de importe ("Otro") y una columna de descripción
+  // separada ("QUE ES OTRO"), y cualquiera de las dos puede venir vacía sin
+  // la otra (ej. un concepto anotado sin costo, o un costo sin descripción).
+  otro_importe: number | null;
+  otro_concepto: string;
+  etiqueta_empaque: number | null;
+  costo_total: number | null;
+  precio_venta: number | null;
+  imagen: ImageBlob | null;
+  creado_en: string;
+}
+
+export interface WoodProductInput {
+  nombre: string;
+  sku: string;
+  tamano: string;
+  capas: string;
+  largo: string;
+  ancho: string;
+  espesor: string;
+  caben_hoja_mdf: string;
+  minutos_laser: string;
+  importe_madera: number | null;
+  pintura: number | null;
+  importe_corte_laser: number | null;
+  etiqueta_adhesiva: number | null;
+  otro_importe: number | null;
+  otro_concepto: string;
+  etiqueta_empaque: number | null;
+  costo_total: number | null;
+  precio_venta: number | null;
+  imagen: ImageBlob | null;
+}
+
+export interface WoodItem {
+  id?: number;
+  product_id?: number;
+  wood_product_id: number | null;
+  orden: number;
+  data: WoodProductInput;
+}
+
 export interface PrintItemCheck {
   id?: number;
   print_item_id?: number;
@@ -190,6 +250,7 @@ export type SearchFilter = "todo" | "nombre" | "sku" | "material";
 export const PERMISOS = [
   "plasticos",
   "imprenta",
+  "maderas",
   "configuraciones",
   "requisiciones",
   "backups_ver",
@@ -210,6 +271,7 @@ export type Permiso = (typeof PERMISOS)[number];
 export const PERMISO_LABELS: Record<Permiso, string> = {
   plasticos: "Piezas",
   imprenta: "Imprenta",
+  maderas: "Maderas",
   configuraciones: "Configuraciones",
   requisiciones: "Requisiciones",
   backups_ver: "Backups: ver",

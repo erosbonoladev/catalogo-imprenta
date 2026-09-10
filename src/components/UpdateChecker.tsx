@@ -1,64 +1,39 @@
-import { useEffect, useState } from "react";
-import { getVersion } from "@tauri-apps/api/app";
-import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
+import { useEffect, useRef, useState } from "react";
+import { useUpdate } from "../updateContext";
 import Toast from "./Toast";
 import girarIcon from "../../Assets/girar.svg";
 
-type Status = "idle" | "checking" | "uptodate" | "available" | "downloading" | "error";
-
 export default function UpdateChecker() {
-  const [version, setVersion] = useState("");
-  const [status, setStatus] = useState<Status>("idle");
-  const [update, setUpdate] = useState<Update | null>(null);
-  const [progress, setProgress] = useState(0);
+  const { version, status, update, progress, checkNow, install } = useUpdate();
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const notifiedVersionRef = useRef<string | null>(null);
 
+  // Aviso automático al entrar a la pantalla principal: este componente solo
+  // se monta con el Sidebar, es decir ya logueado. Si el chequeo silencioso
+  // que arrancó en la pantalla de login (ver UpdateProvider) ya encontró una
+  // actualización, "status" llega en "available" desde el primer render y el
+  // toast sale de inmediato; si todavía estaba en curso, sale apenas termine.
   useEffect(() => {
-    getVersion()
-      .then(setVersion)
-      .catch(() => {});
-  }, []);
+    if (status === "available" && update && notifiedVersionRef.current !== update.version) {
+      notifiedVersionRef.current = update.version;
+      setToastMessage(`Actualización disponible: v${update.version}`);
+    }
+  }, [status, update]);
 
   async function handleCheck() {
-    setStatus("checking");
-    try {
-      const found = await check();
-      if (found) {
-        setUpdate(found);
-        setStatus("available");
-        setToastMessage(`Actualización disponible: v${found.version}`);
-      } else {
-        setStatus("uptodate");
-        setToastMessage("Ya tienes la última versión");
-        setTimeout(() => setStatus("idle"), 3000);
-      }
-    } catch (err) {
-      setStatus("error");
-      setToastMessage(`No se pudo buscar actualizaciones: ${String(err)}`);
-      setTimeout(() => setStatus("idle"), 3000);
+    const result = await checkNow();
+    if (result.status === "uptodate") {
+      setToastMessage("Ya tienes la última versión");
+    } else if (result.status === "error") {
+      setToastMessage(`No se pudo buscar actualizaciones: ${result.message}`);
     }
+    // El caso "available" ya se avisa solo por el efecto de arriba.
   }
 
   async function handleInstall() {
-    if (!update) return;
-    setStatus("downloading");
-    let downloaded = 0;
-    let total = 0;
-    try {
-      await update.downloadAndInstall((event) => {
-        if (event.event === "Started") {
-          total = event.data.contentLength ?? 0;
-        } else if (event.event === "Progress") {
-          downloaded += event.data.chunkLength;
-          setProgress(total ? Math.min(100, Math.round((downloaded / total) * 100)) : 0);
-        }
-      });
-      await relaunch();
-    } catch (err) {
-      setStatus("error");
-      setToastMessage(`No se pudo instalar la actualización: ${String(err)}`);
-      setTimeout(() => setStatus("idle"), 3000);
+    const result = await install();
+    if (!result.ok) {
+      setToastMessage(`No se pudo instalar la actualización: ${result.message}`);
     }
   }
 

@@ -7,6 +7,7 @@ import PlasticosSection from "./components/PlasticosSection";
 import PiezasGeneralSection from "./components/PiezasGeneralSection";
 import PiezaDetalleScreen from "./components/PiezaDetalleScreen";
 import ImprentaSection from "./components/ImprentaSection";
+import MaderasSection from "./components/MaderasSection";
 import Configuraciones from "./components/Configuraciones";
 import LoginScreen from "./components/LoginScreen";
 import Sidebar from "./components/Sidebar";
@@ -22,6 +23,7 @@ type View =
   | { name: "piezasGeneral" }
   | { name: "piezaDetalle"; plasticProductId: number }
   | { name: "imprenta"; productId: number }
+  | { name: "maderas"; productId: number }
   | { name: "configuraciones" }
   | { name: "remisiones" }
   | { name: "skuMaster" };
@@ -78,6 +80,7 @@ function App() {
             onDeleted={() => setView({ name: "search" })}
             onOpenPlasticos={(id) => setView({ name: "plasticos", productId: id })}
             onOpenImprenta={(id) => setView({ name: "imprenta", productId: id })}
+            onOpenMaderas={(id) => setView({ name: "maderas", productId: id })}
           />
         )}
 
@@ -121,6 +124,14 @@ function App() {
           <ImprentaSection
             productId={view.productId}
             onBack={() => setView({ name: "detail", productId: view.productId })}
+          />
+        )}
+
+        {view.name === "maderas" && (
+          <MaderasSection
+            productId={view.productId}
+            onBack={() => setView({ name: "detail", productId: view.productId })}
+            onOpenPiezas={() => setView({ name: "plasticos", productId: view.productId })}
           />
         )}
 

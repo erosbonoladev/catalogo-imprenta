@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   getPreciosList,
+  getSkuMasterExportData,
+  listPlasticProductsSummary,
   logEventAsActor,
-  searchPlasticProducts,
+  saveBackupFileAs,
   searchProducts,
   updatePlasticProductSku,
 } from "../db";
 import type { PlasticProduct, Precio, Product } from "../types";
 import { computeSkuPrincipal } from "../precios";
+import { buildSkuMasterWorkbook } from "../excelExport";
 import { hasPermission, useAuth } from "../auth";
 import Pagination from "./Pagination";
 import Toast from "./Toast";
@@ -45,18 +48,38 @@ export default function SkuMasterSection({ onBack, onOpenProduct, onOpenPieza }:
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const [savingId, setSavingId] = useState<number | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   async function refresh() {
     if (!user || !token) return;
     const [productList, piezaList, precioList] = await Promise.all([
       searchProducts(""),
-      searchPlasticProducts(""),
+      listPlasticProductsSummary(),
       getPreciosList({ id: user.id, token }),
     ]);
     setProductos(productList);
     setPiezas(piezaList);
     setPrecios(precioList);
     setLoading(false);
+  }
+
+  async function handleExportar() {
+    if (!user || !token || exporting) return;
+    const actor = { id: user.id, token };
+    setExporting(true);
+    try {
+      const data = await getSkuMasterExportData(actor);
+      const bytes = buildSkuMasterWorkbook(data);
+      const saved = await saveBackupFileAs("SKU Master.xlsx", bytes);
+      if (saved) {
+        await logEventAsActor(actor, "INFO", "SKU Master exportado a Excel.");
+        setToastMessage("Excel de SKU Master generado.");
+      }
+    } catch (err) {
+      setToastMessage(`No se pudo exportar: ${String(err)}`);
+    } finally {
+      setExporting(false);
+    }
   }
 
   useEffect(() => {
@@ -189,6 +212,12 @@ export default function SkuMasterSection({ onBack, onOpenProduct, onOpenPieza }:
         Todos los elementos del catálogo (fichas técnicas, piezas y precios) con su SKU y, cuando
         siguen la misma nomenclatura, el vínculo entre ellos.
       </p>
+
+      <div className="form-actions">
+        <button type="button" className="btn btn-secondary" onClick={handleExportar} disabled={exporting}>
+          {exporting ? "Generando…" : "Exportar a Excel"}
+        </button>
+      </div>
 
       <div className="search-filters" role="group" aria-label="Sección de SKU Master">
         <button
