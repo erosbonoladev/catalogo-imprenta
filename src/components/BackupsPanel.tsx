@@ -20,7 +20,8 @@ import {
   updateBackupSettings,
   verifyRestoreCounts,
 } from "../db";
-import { gunzipToText, isGzip, sha256Hex, validateBackupSql, type BackupValidation } from "../backup";
+import type { BackupValidation } from "../backup";
+import { validateRestoreFile } from "../backupWorkerClient";
 import { buildPreciosListWorkbook, buildRemisionesHistorialWorkbook } from "../excelExport";
 import type { BackupFrecuencia, BackupRecord, BackupSettings, BackupTipo } from "../types";
 import Toast from "./Toast";
@@ -313,8 +314,13 @@ export default function BackupsPanel() {
     });
 
     let sql: string;
+    let validation: BackupValidation;
+    let checksum: string | null;
     try {
-      sql = isGzip(rawBytes) ? await gunzipToText(rawBytes) : new TextDecoder().decode(rawBytes);
+      const result = await validateRestoreFile(rawBytes);
+      sql = result.sql;
+      validation = result.validation;
+      checksum = result.checksum;
     } catch (err) {
       setRestoreFlow({
         status: "invalid",
@@ -330,10 +336,8 @@ export default function BackupsPanel() {
       return;
     }
 
-    const validation = validateBackupSql(sql);
     let resolvedMatch = matchedRecordId;
-    if (validation.ok && resolvedMatch === null) {
-      const checksum = await sha256Hex(sql);
+    if (validation.ok && resolvedMatch === null && checksum) {
       const match = history.find((h) => h.estado === "EXITOSO" && h.checksum_sha256 === checksum);
       resolvedMatch = match?.id ?? null;
     }

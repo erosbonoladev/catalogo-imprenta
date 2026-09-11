@@ -63,11 +63,9 @@ import {
   backupFileName,
   buildBackupSql,
   extractRestoreStatements,
-  gzipText,
-  sha256Hex,
-  validateBackupSql,
   validateRestoreStatements,
 } from "./backup";
+import { buildBackupArchive } from "./backupWorkerClient";
 
 const client = createClient({
   url: import.meta.env.VITE_TURSO_URL,
@@ -2735,17 +2733,14 @@ export async function createRequisicionConFolio(
 
 // --- Backups ---
 
-/**
- * Lee toda la BD (todas las tablas reales, incluidas las marcadas como
- * muertas en docs/DATABASE.md — un backup es una foto completa, no un
- * recorte a lo que la app usa hoy) y arma el dump SQL. Usado tanto por el
- * botón "Crear backup ahora" como por el hook previo a importaciones.
- */
-export async function createBackupSql(): Promise<{ sql: string; manifest: import("./types").BackupManifest }> {
-  // Transacción de solo-lectura: todas las tablas (y los índices) se leen
-  // desde la misma foto consistente de la BD, para que un backup nunca mezcle
-  // el estado de una tabla con escrituras concurrentes de otra mientras el
-  // dump está en progreso.
+// Lee toda la BD (todas las tablas reales, incluidas las marcadas como
+// muertas en docs/DATABASE.md — un backup es una foto completa, no un
+// recorte a lo que la app usa hoy) dentro de una transacción de solo-lectura,
+// así el dump nunca mezcla el estado de una tabla con escrituras concurrentes
+// de otra mientras está en progreso. Separada de buildBackupSql (armado del
+// texto SQL) para que runBackupNow pueda mandar las tablas ya leídas a un Web
+// Worker en vez de armar el dump en el hilo de UI — ver backupWorkerClient.ts.
+async function readBackupTables(): Promise<{ tables: DumpTable[]; indexes: DumpIndex[] }> {
   const tx = await client.transaction("read");
   try {
     const tablesResult = await tx.execute(
@@ -2776,13 +2771,19 @@ export async function createBackupSql(): Promise<{ sql: string; manifest: import
     ).map((row) => ({ name: row.name, tableName: row.tbl_name, createSql: row.sql }));
 
     await tx.commit();
-    return buildBackupSql(tables, indexes);
+    return { tables, indexes };
   } catch (err) {
     await tx.rollback();
     throw err;
   } finally {
     tx.close();
   }
+}
+
+/** Arma el dump SQL completo en el hilo actual — usada solo por los tests de integridad (corren en Node, no en el webview). `runBackupNow` (el camino real de la app) no la usa: arma el dump en un Web Worker en vez del hilo de UI — ver buildBackupArchive. */
+export async function createBackupSql(): Promise<{ sql: string; manifest: import("./types").BackupManifest }> {
+  const { tables, indexes } = await readBackupTables();
+  return buildBackupSql(tables, indexes);
 }
 
 /**
@@ -2889,11 +2890,9 @@ export async function runBackupNow(
     estado: "EN_PROCESO",
   });
   try {
-    const { sql } = await createBackupSql();
-    const validation = validateBackupSql(sql);
+    const { tables, indexes } = await readBackupTables();
     const fileName = backupFileName();
-    const gz = await gzipText(sql);
-    const checksum = await sha256Hex(sql);
+    const { gz, checksum, validation } = await buildBackupArchive(tables, indexes);
     const path = await saveLocalBackupFile(fileName, gz);
     await client.execute({
       sql: "UPDATE backup_history SET archivo = ?1, ubicacion = ?2 WHERE id = ?3",

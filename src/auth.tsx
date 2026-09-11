@@ -19,6 +19,7 @@ import {
   verifyLogin,
 } from "./db";
 import type { Permiso, User } from "./types";
+import Toast from "./components/Toast";
 
 const STORAGE_KEY = "catalogo-imprenta:session";
 const LAST_LOCAL_BACKUP_KEY_PREFIX = "catalogo-imprenta:last-local-backup:";
@@ -55,6 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -105,7 +107,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (localStorage.getItem(storageKey) === today) return;
     runBackupNow("BACKUP_LOCAL_DIARIO", "Entrada a la app", user.username)
       .then(async (result) => {
-        if (!result.ok) return;
+        if (!result.ok) {
+          setBackupNotice("No se pudo hacer el backup automático de hoy — revisa Configuraciones → Backups.");
+          return;
+        }
         localStorage.setItem(storageKey, today);
         try {
           const bytes = await readLocalBackupFile(result.record.ubicacion);
@@ -115,7 +120,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // ya quedó guardado y registrado en backup_history de todas formas.
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setBackupNotice("No se pudo hacer el backup automático de hoy — revisa Configuraciones → Backups.");
+      });
   }, [user?.id]);
 
   useEffect(() => {
@@ -217,6 +224,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={{ user, token, loading, login, logout }}>
       {children}
+      <Toast message={backupNotice ?? ""} show={!!backupNotice} onHide={() => setBackupNotice(null)} />
     </AuthContext.Provider>
   );
 }

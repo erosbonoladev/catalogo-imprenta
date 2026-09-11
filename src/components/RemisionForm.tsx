@@ -48,6 +48,8 @@ export default function RemisionForm({ onCreated }: Props) {
   const [rows, setRows] = useState<RenglonDraft[]>([]);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Precio[]>([]);
+  const [buscando, setBuscando] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resultado, setResultado] = useState<RemisionConRenglones | null>(null);
@@ -66,14 +68,27 @@ export default function RemisionForm({ onCreated }: Props) {
   useEffect(() => {
     if (!query.trim()) {
       setResults([]);
+      setSearchError(null);
+      setBuscando(false);
       return;
     }
     if (!user || !token) return;
     const actor = { id: user.id, token };
     let cancelled = false;
+    setBuscando(true);
+    setSearchError(null);
     const timer = setTimeout(async () => {
-      const precios = await searchPrecios(actor, query);
-      if (!cancelled) setResults(precios.slice(0, 8));
+      try {
+        const precios = await searchPrecios(actor, query);
+        if (!cancelled) setResults(precios.slice(0, 8));
+      } catch (err) {
+        if (!cancelled) {
+          setResults([]);
+          setSearchError(`No se pudo buscar: ${String(err)}`);
+        }
+      } finally {
+        if (!cancelled) setBuscando(false);
+      }
     }, 150);
     return () => {
       cancelled = true;
@@ -349,6 +364,8 @@ export default function RemisionForm({ onCreated }: Props) {
             disabled={generating}
           />
         </label>
+        {buscando && <p className="hint">Buscando…</p>}
+        {searchError && <p className="form-error">{searchError}</p>}
         {results.length > 0 && (
           <ul className="remision-search-results">
             {results.map((p) => (
