@@ -798,7 +798,6 @@ interface UserRow {
   password_hash: string;
   activo: number;
   rol: string;
-  backup_local_diario: number;
   creado_en: string;
 }
 
@@ -816,7 +815,6 @@ async function rowToUser(row: UserRow): Promise<User> {
     activo: Boolean(row.activo),
     rol: row.rol as Rol,
     permisos,
-    backup_local_diario: Boolean(row.backup_local_diario),
     creado_en: row.creado_en,
   };
 }
@@ -1000,8 +998,8 @@ export async function createUser(actor: Actor, input: UserInput): Promise<number
   const tx = await client.transaction("write");
   try {
     const result = await tx.execute({
-      sql: `INSERT INTO users (username, password_hash, activo, rol, backup_local_diario) VALUES (?1, ?2, ?3, ?4, ?5)`,
-      args: [input.username.trim(), hash, input.activo ? 1 : 0, input.rol, input.backup_local_diario ? 1 : 0],
+      sql: `INSERT INTO users (username, password_hash, activo, rol) VALUES (?1, ?2, ?3, ?4)`,
+      args: [input.username.trim(), hash, input.activo ? 1 : 0, input.rol],
     });
     const userId = Number(result.lastInsertRowid);
     await savePermissions(userId, input.permisos, tx);
@@ -1045,13 +1043,13 @@ export async function updateUser(actor: Actor, id: number, input: UserInput): Pr
 
     if (hash) {
       await tx.execute({
-        sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, backup_local_diario = ?4, password_hash = ?5, session_token = NULL, session_expires_at = NULL WHERE id = ?6`,
-        args: [input.username.trim(), input.activo ? 1 : 0, input.rol, input.backup_local_diario ? 1 : 0, hash, id],
+        sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, password_hash = ?4, session_token = NULL, session_expires_at = NULL WHERE id = ?5`,
+        args: [input.username.trim(), input.activo ? 1 : 0, input.rol, hash, id],
       });
     } else {
       await tx.execute({
-        sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, backup_local_diario = ?4 WHERE id = ?5`,
-        args: [input.username.trim(), input.activo ? 1 : 0, input.rol, input.backup_local_diario ? 1 : 0, id],
+        sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3 WHERE id = ?4`,
+        args: [input.username.trim(), input.activo ? 1 : 0, input.rol, id],
       });
     }
     await savePermissions(id, input.permisos, tx);

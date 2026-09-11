@@ -13,6 +13,7 @@ import LoginScreen from "./components/LoginScreen";
 import Sidebar from "./components/Sidebar";
 import RemisionesSection from "./components/RemisionesSection";
 import SkuMasterSection from "./components/SkuMasterSection";
+import DailyBackupPrompt from "./components/DailyBackupPrompt";
 import { useAuth } from "./auth";
 
 type View =
@@ -55,6 +56,7 @@ function App() {
 
   return (
     <div className="app-shell">
+      <DailyBackupPrompt />
       <Sidebar
         open={sidebarOpen}
         onToggle={() => setSidebarOpen((o) => !o)}

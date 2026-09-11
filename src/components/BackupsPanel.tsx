@@ -29,7 +29,7 @@ import basuraIcon from "../../Assets/basura.svg";
 
 const TIPO_LABELS: Record<BackupTipo, string> = {
   BACKUP_AUTOMATICO: "Automático",
-  BACKUP_LOCAL_DIARIO: "Automático diario (local)",
+  BACKUP_LOCAL_DIARIO: "Diario (local)",
   BACKUP_MANUAL: "Manual",
   BACKUP_PRE_IMPORTACION: "Pre-importación",
   BACKUP_PRE_RESTAURACION: "Pre-restauración",

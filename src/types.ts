@@ -357,7 +357,6 @@ export interface User {
   activo: boolean;
   rol: Rol;
   permisos: Permiso[];
-  backup_local_diario: boolean;
   creado_en: string;
 }
 
@@ -367,7 +366,6 @@ export interface UserInput {
   activo: boolean;
   rol: Rol;
   permisos: Permiso[];
-  backup_local_diario: boolean;
 }
 
 export type LogLevel = "INFO" | "WARNING" | "ERROR";

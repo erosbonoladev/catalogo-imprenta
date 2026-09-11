@@ -29,7 +29,7 @@ import { countRows, createFixtureUser, rawClient, resetDb } from "./helpers";
 // hash_password (invoke), que no existe fuera del runtime real de la app —
 // se usa updateUser() sin password para poder ejercer la rama "requiere
 // admin" de assertActorAuthorized sin necesitar ese puente nativo.
-const noopPermUpdate = { activo: true, rol: "usuario" as const, permisos: [], backup_local_diario: false };
+const noopPermUpdate = { activo: true, rol: "usuario" as const, permisos: [] };
 
 const emptyProduct = {
   codigo: "SKU-AUTH",
@@ -155,7 +155,7 @@ describe("updateUser — protección server-side del último administrador activ
   it("rechaza degradar de rol al único admin activo, y no deja ningún cambio aplicado (transaccional)", async () => {
     const unico = await createFixtureUser({ username: "unico_admin", rol: "admin" });
     await expect(
-      updateUser(unico, unico.id, { username: "unico_admin", activo: true, rol: "usuario", permisos: [], backup_local_diario: false }),
+      updateUser(unico, unico.id, { username: "unico_admin", activo: true, rol: "usuario", permisos: [] }),
     ).rejects.toThrow(/al menos un administrador activo/i);
 
     const row = await rawClient().execute({ sql: "SELECT rol, activo FROM users WHERE id = ?1", args: [unico.id] });
@@ -165,7 +165,7 @@ describe("updateUser — protección server-side del último administrador activ
   it("rechaza desactivar (activo=false) al único admin activo, aunque el rol siga siendo admin", async () => {
     const unico = await createFixtureUser({ username: "unico_admin2", rol: "admin" });
     await expect(
-      updateUser(unico, unico.id, { username: "unico_admin2", activo: false, rol: "admin", permisos: [], backup_local_diario: false }),
+      updateUser(unico, unico.id, { username: "unico_admin2", activo: false, rol: "admin", permisos: [] }),
     ).rejects.toThrow(/al menos un administrador activo/i);
   });
 
@@ -173,7 +173,7 @@ describe("updateUser — protección server-side del último administrador activ
     const admin1 = await createFixtureUser({ username: "admin_a", rol: "admin" });
     const admin2 = await createFixtureUser({ username: "admin_b", rol: "admin" });
     await expect(
-      updateUser(admin1, admin2.id, { username: "admin_b", activo: true, rol: "usuario", permisos: [], backup_local_diario: false }),
+      updateUser(admin1, admin2.id, { username: "admin_b", activo: true, rol: "usuario", permisos: [] }),
     ).resolves.toBeUndefined();
 
     const row = await rawClient().execute({ sql: "SELECT rol FROM users WHERE id = ?1", args: [admin2.id] });
@@ -184,7 +184,7 @@ describe("updateUser — protección server-side del último administrador activ
     const activo = await createFixtureUser({ username: "admin_activo", rol: "admin" });
     await createFixtureUser({ username: "admin_inactivo", rol: "admin", activo: false });
     await expect(
-      updateUser(activo, activo.id, { username: "admin_activo", activo: true, rol: "usuario", permisos: [], backup_local_diario: false }),
+      updateUser(activo, activo.id, { username: "admin_activo", activo: true, rol: "usuario", permisos: [] }),
     ).rejects.toThrow(/al menos un administrador activo/i);
   });
 });
