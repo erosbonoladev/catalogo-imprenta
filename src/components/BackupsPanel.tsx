@@ -201,10 +201,10 @@ export default function BackupsPanel() {
     try {
       const precios = await getPreciosList(actor);
       const bytes = buildPreciosListWorkbook(precios);
-      const saved = await saveBackupFileAs("Lista de precios.xlsx", bytes);
+      const saved = await saveBackupFileAs("Lista de precios imprenta.xlsx", bytes);
       if (saved) {
-        await logEventAsActor(actor, "INFO", "Lista de precios exportada.");
-        setToastMessage("Lista de precios exportada.");
+        await logEventAsActor(actor, "INFO", "Lista de precios imprenta exportada.");
+        setToastMessage("Lista de precios imprenta exportada.");
       }
     } finally {
       setExportingPrecios(false);
@@ -573,7 +573,7 @@ export default function BackupsPanel() {
               onClick={handleExportPreciosList}
               disabled={exportingPrecios}
             >
-              {exportingPrecios ? "Generando…" : "Lista de precios"}
+              {exportingPrecios ? "Generando…" : "Lista de precios imprenta"}
             </button>
           )}
           {canVer && (

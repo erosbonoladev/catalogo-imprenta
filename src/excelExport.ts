@@ -219,7 +219,7 @@ export function buildSkuMasterWorkbook(data: SkuMasterExportData): Uint8Array {
   return buildMultiSheetWorkbookBytes([
     { name: "Productos", aoa: productosSheetRows(data.productos) },
     { name: "Desglose", aoa: desgloseSheetRows(data.piezas) },
-    { name: "Precios", aoa: preciosExportSheetRows(data.precios) },
+    { name: "Precios Imprenta", aoa: preciosExportSheetRows(data.precios) },
     { name: "Remisiones", aoa: remisionesExportSheetRows(data.remisiones) },
   ]);
 }

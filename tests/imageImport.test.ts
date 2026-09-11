@@ -123,6 +123,8 @@ describe("Imágenes pendientes: upsertPendingProductImage + applyPendingProductI
         descripcion: "",
         imagen: null,
         imagen_codigo_barras: null,
+        tipo_producto: "",
+        codigo_barras_texto: "",
       },
       [],
     );
@@ -159,6 +161,8 @@ describe("Imágenes pendientes: upsertPendingProductImage + applyPendingProductI
         descripcion: "",
         imagen: { data: new Uint8Array([5, 5, 5]), mime: "image/jpeg" },
         imagen_codigo_barras: null,
+        tipo_producto: "",
+        codigo_barras_texto: "",
       },
       [],
     );

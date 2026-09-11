@@ -11,6 +11,7 @@ import {
   updateProduct,
 } from "../db";
 import type { ProductDescription, ProductInput, ProductSpec } from "../types";
+import { TIPOS_PRODUCTO } from "../types";
 import { DESCRIPCIONES_FIJAS, DESCRIPCION_CATALOGO, ensureFixedDescriptions } from "../descriptions";
 import { useAuth } from "../auth";
 import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
@@ -31,6 +32,8 @@ const emptyProduct: ProductInput = {
   descripcion: "",
   imagen: null,
   imagen_codigo_barras: null,
+  tipo_producto: "",
+  codigo_barras_texto: "",
 };
 
 export default function ProductForm({ productId, onDone, onCancel }: Props) {
@@ -75,6 +78,8 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
           descripcion: existing.descripcion,
           imagen: existing.imagen,
           imagen_codigo_barras: existing.imagen_codigo_barras,
+          tipo_producto: existing.tipo_producto,
+          codigo_barras_texto: existing.codigo_barras_texto,
         });
         setSpecs(existingSpecs);
         setDescriptions(ensureFixedDescriptions(existingDescriptions));
@@ -285,6 +290,23 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
           </label>
         </div>
 
+        <div className="form-row">
+          <label>
+            Tipo de producto
+            <select
+              value={product.tipo_producto}
+              onChange={(e) => updateField("tipo_producto", e.target.value)}
+            >
+              <option value="">Sin asignar</option>
+              {TIPOS_PRODUCTO.map((tipo) => (
+                <option key={tipo} value={tipo}>
+                  {tipo}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
         <div className="descriptions-editor">
           <h2>Descripciones</h2>
           <div className="descriptions-tabs" role="tablist" aria-label="Tipo de descripción">
@@ -390,6 +412,17 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
           <button type="button" className="btn btn-secondary" onClick={handlePickBarcode}>
             {barcodeSrc ? "Cambiar código de barras" : "Agregar código de barras"}
           </button>
+        </div>
+
+        <div className="form-row">
+          <label>
+            Código de barras (texto)
+            <AutoGrowInput
+              value={product.codigo_barras_texto}
+              onChange={(v) => updateField("codigo_barras_texto", v)}
+              placeholder="ej. 0075678901234"
+            />
+          </label>
         </div>
 
         <div className="specs-editor">

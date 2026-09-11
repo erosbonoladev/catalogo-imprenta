@@ -24,6 +24,8 @@ import type {
   PlasticProductInput,
   Precio,
   PrecioInput,
+  PrecioVenta,
+  PrecioVentaEntradaInput,
   PrintItem,
   PrintItemCheck,
   PrintItemExtra,
@@ -52,7 +54,7 @@ import type {
   WoodProduct,
   WoodProductInput,
 } from "./types";
-import { PROCESOS_IMPRENTA } from "./types";
+import { PROCESOS_IMPRENTA, PRECIOS_VENTA_CATEGORIAS, TIPOS_PRODUCTO } from "./types";
 import { buildRequisicionMessage } from "./requisiciones";
 import { FOLIO_PREFIJOS, buildFolioString, fechaLocalDeHoy, formatFechaFolioLocal } from "./folios";
 import { computeSkuPrincipal } from "./precios";
@@ -96,6 +98,8 @@ interface ProductRow {
   imagen_mime: string | null;
   imagen_codigo_barras: ArrayBuffer | null;
   imagen_codigo_barras_mime: string | null;
+  tipo_producto: string | null;
+  codigo_barras_texto: string | null;
   presentacion_original: string | null;
   creado_en: string;
   actualizado_en: string | null;
@@ -111,10 +115,23 @@ function rowToProduct(row: ProductRow): Product {
     descripcion: row.descripcion,
     imagen: toImageBlob(row.imagen, row.imagen_mime),
     imagen_codigo_barras: toImageBlob(row.imagen_codigo_barras, row.imagen_codigo_barras_mime),
+    tipo_producto: row.tipo_producto ?? "",
+    codigo_barras_texto: row.codigo_barras_texto ?? "",
     presentacion_original: row.presentacion_original ?? "",
     creado_en: row.creado_en,
     actualizado_en: row.actualizado_en ?? row.creado_en,
   };
+}
+
+// TIPOS_PRODUCTO es un valor controlado (ver types.ts) — el selector en
+// ProductForm ya restringe la UI, pero createProduct/updateProduct son la
+// puerta real de escritura, así que validan también aquí: nunca confiar en
+// que el llamador (front, o alguien llamando estas funciones a mano desde
+// devtools) mande un valor fuera de la lista.
+function assertTipoProductoValido(tipoProducto: string): void {
+  if (tipoProducto && !(TIPOS_PRODUCTO as readonly string[]).includes(tipoProducto)) {
+    throw new Error(`Tipo de producto inválido: "${tipoProducto}".`);
+  }
 }
 
 // Búsqueda insensible a mayúsculas/minúsculas y a acentos: SQLite folda
@@ -231,6 +248,7 @@ export async function createProduct(
   descriptions: ProductDescription[] = [],
 ): Promise<number> {
   await assertActorSession(actor);
+  assertTipoProductoValido(product.tipo_producto);
   // Header + specs + descriptions en una sola transacción interactiva: antes
   // eran client.execute() sueltos, así que una falla a medias (ej. conexión
   // caída justo después del INSERT del producto) dejaba una ficha sin sus
@@ -239,8 +257,8 @@ export async function createProduct(
   const tx = await client.transaction("write");
   try {
     const result = await tx.execute({
-      sql: `INSERT INTO products (codigo, nombre, categoria, material, descripcion, imagen, imagen_mime, imagen_codigo_barras, imagen_codigo_barras_mime, actualizado_en)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))`,
+      sql: `INSERT INTO products (codigo, nombre, categoria, material, descripcion, imagen, imagen_mime, imagen_codigo_barras, imagen_codigo_barras_mime, tipo_producto, codigo_barras_texto, actualizado_en)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, datetime('now'))`,
       args: [
         product.codigo,
         product.nombre,
@@ -251,6 +269,8 @@ export async function createProduct(
         product.imagen?.mime ?? null,
         product.imagen_codigo_barras?.data ?? null,
         product.imagen_codigo_barras?.mime ?? null,
+        product.tipo_producto || null,
+        product.codigo_barras_texto || null,
       ],
     });
     const productId = Number(result.lastInsertRowid);
@@ -280,14 +300,16 @@ export async function updateProduct(
   descriptions: ProductDescription[] = [],
 ): Promise<void> {
   await assertActorSession(actor);
+  assertTipoProductoValido(product.tipo_producto);
   const tx = await client.transaction("write");
   try {
     await tx.execute({
       sql: `UPDATE products
             SET codigo = ?1, nombre = ?2, categoria = ?3, material = ?4, descripcion = ?5, imagen = ?6, imagen_mime = ?7,
                 imagen_codigo_barras = ?8, imagen_codigo_barras_mime = ?9,
+                tipo_producto = ?10, codigo_barras_texto = ?11,
                 actualizado_en = datetime('now')
-            WHERE id = ?10`,
+            WHERE id = ?12`,
       args: [
         product.codigo,
         product.nombre,
@@ -298,6 +320,8 @@ export async function updateProduct(
         product.imagen?.mime ?? null,
         product.imagen_codigo_barras?.data ?? null,
         product.imagen_codigo_barras?.mime ?? null,
+        product.tipo_producto || null,
+        product.codigo_barras_texto || null,
         id,
       ],
     });
@@ -3483,6 +3507,93 @@ export async function searchPrecios(actor: Actor, query: string): Promise<Precio
     args: [`%${normalizeSearchTerm(trimmed)}%`],
   });
   return (result.rows as unknown as PrecioRow[]).map(rowToPrecio);
+}
+
+// --- Precios Venta (independiente de Precios Imprenta arriba — no se
+// mezcla con `precios`/`precios_historial`, ver docs/DATABASE.md) ---
+
+interface PrecioVentaRow {
+  id: number;
+  product_id: number;
+  categoria: string;
+  precio: number | null;
+  actualizado_en: string;
+  actualizado_por: string | null;
+}
+
+function assertCategoriaPrecioVentaValida(categoria: string): void {
+  if (!(PRECIOS_VENTA_CATEGORIAS as readonly string[]).includes(categoria)) {
+    throw new Error(`Categoría de Precios Venta inválida: "${categoria}".`);
+  }
+}
+
+function assertPrecioVentaValido(precio: number | null): void {
+  if (precio !== null && (!Number.isFinite(precio) || precio < 0)) {
+    throw new Error("Ingresa un precio válido (mayor o igual a 0) o déjalo en blanco.");
+  }
+}
+
+const PRECIO_VENTA_LECTURA_PERMISOS: Permiso[] = ["precios_venta_ver", "precios_venta_modificar"];
+
+// Siempre devuelve las 5 categorías fijas, en el orden de
+// PRECIOS_VENTA_CATEGORIAS, aunque el producto todavía no tenga ninguna fila
+// en precios_venta (ficha nueva) — mismo criterio de normalización que
+// getPrintItems con PROCESOS_IMPRENTA.
+export async function getPreciosVenta(actor: Actor, productId: number): Promise<PrecioVenta[]> {
+  await assertActorAuthorized(actor, PRECIO_VENTA_LECTURA_PERMISOS);
+  const result = await client.execute({
+    sql: "SELECT * FROM precios_venta WHERE product_id = ?1",
+    args: [productId],
+  });
+  const rows = result.rows as unknown as PrecioVentaRow[];
+  return PRECIOS_VENTA_CATEGORIAS.map((categoria) => {
+    const row = rows.find((r) => r.categoria === categoria);
+    return row
+      ? {
+          id: row.id,
+          product_id: row.product_id,
+          categoria,
+          precio: row.precio,
+          actualizado_en: row.actualizado_en,
+          actualizado_por: row.actualizado_por,
+        }
+      : { id: null, product_id: productId, categoria, precio: null, actualizado_en: null, actualizado_por: null };
+  });
+}
+
+// Guarda las 5 categorías como una sola unidad lógica (transacción) — no
+// tiene sentido dejar 3 de 5 categorías guardadas si la cuarta falla la
+// validación, así que primero se valida todo y recién después se escribe.
+export async function savePreciosVenta(
+  actor: Actor,
+  productId: number,
+  entradas: PrecioVentaEntradaInput[],
+): Promise<PrecioVenta[]> {
+  const username = await assertActorAuthorized(actor, "precios_venta_modificar");
+  for (const entrada of entradas) {
+    assertCategoriaPrecioVentaValida(entrada.categoria);
+    assertPrecioVentaValido(entrada.precio);
+  }
+
+  const tx = await client.transaction("write");
+  try {
+    for (const entrada of entradas) {
+      await tx.execute({
+        sql: `INSERT INTO precios_venta (product_id, categoria, precio, actualizado_en, actualizado_por)
+              VALUES (?1, ?2, ?3, datetime('now'), ?4)
+              ON CONFLICT(product_id, categoria) DO UPDATE SET
+                precio = ?3, actualizado_en = datetime('now'), actualizado_por = ?4`,
+        args: [productId, entrada.categoria, entrada.precio, username],
+      });
+    }
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
+  return getPreciosVenta(actor, productId);
 }
 
 // --- Remisiones ---

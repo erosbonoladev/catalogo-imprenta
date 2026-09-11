@@ -10,7 +10,7 @@ type SubTab = "fichas" | "imagenes" | "precios" | "piezas" | "maderas";
 const SUB_TABS: { value: SubTab; label: string }[] = [
   { value: "fichas", label: "Fichas técnicas" },
   { value: "imagenes", label: "Imágenes" },
-  { value: "precios", label: "Precios" },
+  { value: "precios", label: "Precios Imprenta" },
   { value: "piezas", label: "Piezas" },
   { value: "maderas", label: "Maderas" },
 ];

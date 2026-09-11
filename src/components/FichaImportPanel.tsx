@@ -202,6 +202,8 @@ export default function FichaImportPanel() {
               descripcion: row.descripcion,
               imagen: null,
               imagen_codigo_barras: null,
+              tipo_producto: "",
+              codigo_barras_texto: "",
             },
             specs,
           );
@@ -237,6 +239,8 @@ export default function FichaImportPanel() {
             descripcion: row.descripcion,
             imagen: existing.imagen,
             imagen_codigo_barras: existing.imagen_codigo_barras,
+            tipo_producto: existing.tipo_producto,
+            codigo_barras_texto: existing.codigo_barras_texto,
           },
           specs,
         );

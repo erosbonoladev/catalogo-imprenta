@@ -200,7 +200,7 @@ export default function PreciosImportPanel() {
 
   return (
     <div>
-      <h2>Captura masiva de precios</h2>
+      <h2>Captura masiva de precios imprenta</h2>
       <p className="hint" style={{ marginTop: "0.4rem" }}>
         Carga un archivo Excel (.xlsx) con las columnas SKU, Nombre, Precio y Fecha de
         actualización. Los SKU con letras adicionales (ej. 8059C) se relacionan automáticamente

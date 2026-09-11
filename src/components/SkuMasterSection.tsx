@@ -261,7 +261,7 @@ export default function SkuMasterSection({ onBack, onOpenProduct, onOpenPieza }:
                     <th>Vínculo</th>
                     <th>Ficha técnica</th>
                     <th>Piezas</th>
-                    <th>Precios</th>
+                    <th>Precios Imprenta</th>
                   </tr>
                 </thead>
                 <tbody>

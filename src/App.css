@@ -699,6 +699,12 @@ h3 {
   margin-bottom: 1.25rem;
 }
 
+.product-detail-meta {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
 .description-viewer {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -765,6 +771,11 @@ h3 {
 }
 
 .btn-requisicion {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.82rem;
+}
+
+.btn-ficha-precios {
   padding: 0.35rem 0.7rem;
   font-size: 0.82rem;
 }
@@ -856,6 +867,16 @@ input[type="text"]:disabled,
 textarea:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+.product-form select {
+  font-family: inherit;
+  font-size: 1rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  background-color: var(--surface);
 }
 
 .image-picker {

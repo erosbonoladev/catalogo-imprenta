@@ -24,6 +24,7 @@ export default function PreciosModal({ product, onClose }: Props) {
   const canModificar = hasPermission(user, "precios_modificar");
 
   const [precios, setPrecios] = useState<Precio[] | null>(null);
+  const [mode, setMode] = useState<"view" | "edit">("view");
   const [drafts, setDrafts] = useState<Map<number, { sku?: string; nombre?: string; precio?: string }>>(new Map());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +62,7 @@ export default function PreciosModal({ product, onClose }: Props) {
     return (
       <div className="modal-overlay" role="dialog" aria-modal="true">
         <div className="modal-card">
-          <h2>Precios</h2>
+          <h2>Precios Imprenta</h2>
           <p className="hint">No tienes permiso para ver precios.</p>
           <div className="form-actions">
             <button type="button" className="btn btn-primary" onClick={onClose}>
@@ -153,12 +154,19 @@ export default function PreciosModal({ product, onClose }: Props) {
       const refreshed = await getPreciosBySkuPrincipal(actor, skuPrincipal);
       setPrecios(refreshed);
       setDrafts(new Map());
+      setMode("view");
       setToastMessage("Precios actualizados.");
     } catch (err) {
       setError(`No se pudieron guardar los cambios: ${String(err)}`);
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleCancelarEdicion() {
+    setDrafts(new Map());
+    setError(null);
+    setMode("view");
   }
 
   function resetNewForm() {
@@ -235,7 +243,7 @@ export default function PreciosModal({ product, onClose }: Props) {
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true">
       <div className="modal-card">
-        <h2>Precios — {product.nombre}</h2>
+        <h2>Precios Imprenta — {product.nombre}</h2>
 
         {precios === null ? (
           <p className="hint">Cargando…</p>
@@ -256,7 +264,7 @@ export default function PreciosModal({ product, onClose }: Props) {
                 {precios.map((p) => (
                   <tr key={p.id}>
                     <td>
-                      {canModificar ? (
+                      {mode === "edit" && canModificar ? (
                         <input
                           type="text"
                           value={drafts.get(p.id)?.sku ?? p.sku}
@@ -269,7 +277,7 @@ export default function PreciosModal({ product, onClose }: Props) {
                       )}
                     </td>
                     <td>
-                      {canModificar ? (
+                      {mode === "edit" && canModificar ? (
                         <input
                           type="text"
                           value={drafts.get(p.id)?.nombre ?? p.nombre}
@@ -281,7 +289,7 @@ export default function PreciosModal({ product, onClose }: Props) {
                       )}
                     </td>
                     <td>
-                      {canModificar ? (
+                      {mode === "edit" && canModificar ? (
                         <input
                           type="text"
                           inputMode="decimal"
@@ -388,15 +396,35 @@ export default function PreciosModal({ product, onClose }: Props) {
         )}
 
         <div className="form-actions">
-          {canModificar && (
+          {canModificar && mode === "view" && (
             <button
               type="button"
               className="btn btn-primary"
-              disabled={saving || dirtyIds.length === 0}
-              onClick={handleGuardar}
+              onClick={() => setMode("edit")}
+              disabled={!precios || precios.length === 0}
             >
-              {saving ? "Guardando…" : "Guardar cambios"}
+              Editar
             </button>
+          )}
+          {canModificar && mode === "edit" && (
+            <>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={saving || dirtyIds.length === 0}
+                onClick={handleGuardar}
+              >
+                {saving ? "Guardando…" : "Guardar cambios"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleCancelarEdicion}
+                disabled={saving}
+              >
+                Cancelar edición
+              </button>
+            </>
           )}
           <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>
             Cerrar

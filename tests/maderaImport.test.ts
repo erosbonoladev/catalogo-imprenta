@@ -59,6 +59,8 @@ function makeJuego(overrides: Partial<Product> = {}): Product {
     descripcion: "",
     imagen: null,
     imagen_codigo_barras: null,
+    tipo_producto: "",
+    codigo_barras_texto: "",
     presentacion_original: "",
     creado_en: "",
     actualizado_en: "",

@@ -12,6 +12,7 @@ import { hasPermission, useAuth } from "../auth";
 import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
 import RequisicionModal from "./RequisicionModal";
 import PreciosModal from "./PreciosModal";
+import PreciosVentaModal from "./PreciosVentaModal";
 import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
@@ -51,6 +52,7 @@ export default function ProductDetail({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [requisicionSpec, setRequisicionSpec] = useState<ProductSpec | null>(null);
   const [showPrecios, setShowPrecios] = useState(false);
+  const [showPreciosVenta, setShowPreciosVenta] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -139,14 +141,28 @@ export default function ProductDetail({
               <span className="product-card-placeholder">Sin código de barras</span>
             )}
           </div>
+          <p className="product-detail-meta">Código de barras: {product.codigo_barras_texto || "—"}</p>
         </div>
 
         <div className="product-detail-info">
-          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
             <span className="product-card-code">#{product.codigo}</span>
             {hasPermission(user, "precios_ver") && (
-              <button type="button" className="btn-link" onClick={() => setShowPrecios(true)}>
-                Precios
+              <button
+                type="button"
+                className="btn btn-secondary btn-ficha-precios"
+                onClick={() => setShowPrecios(true)}
+              >
+                Precios Imprenta
+              </button>
+            )}
+            {hasPermission(user, "precios_venta_ver") && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-ficha-precios"
+                onClick={() => setShowPreciosVenta(true)}
+              >
+                Precios Venta
               </button>
             )}
           </div>
@@ -155,6 +171,7 @@ export default function ProductDetail({
             {product.categoria && <span className="tag">{product.categoria}</span>}
             {product.material && <span className="tag">{product.material}</span>}
           </p>
+          <p className="product-detail-meta">Tipo de producto: {product.tipo_producto || "Sin asignar"}</p>
 
           {activeDescSlot && (
             <div className="description-viewer">
@@ -277,6 +294,10 @@ export default function ProductDetail({
       )}
 
       {showPrecios && <PreciosModal product={product} onClose={() => setShowPrecios(false)} />}
+
+      {showPreciosVenta && (
+        <PreciosVentaModal product={product} onClose={() => setShowPreciosVenta(false)} />
+      )}
 
       <p className="last-modified">
         Última modificación: {formatFechaCorta(product.actualizado_en)}

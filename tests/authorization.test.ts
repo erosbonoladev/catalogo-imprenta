@@ -39,6 +39,8 @@ const emptyProduct = {
   descripcion: "",
   imagen: null,
   imagen_codigo_barras: null,
+  tipo_producto: "",
+  codigo_barras_texto: "",
 };
 
 beforeEach(async () => {

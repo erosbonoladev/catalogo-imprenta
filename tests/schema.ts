@@ -18,6 +18,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     imagen_mime TEXT,
     imagen_codigo_barras BLOB,
     imagen_codigo_barras_mime TEXT,
+    tipo_producto TEXT,
+    codigo_barras_texto TEXT,
     presentacion_original TEXT,
     creado_en TEXT NOT NULL DEFAULT (datetime('now')),
     actualizado_en TEXT
@@ -309,6 +311,16 @@ export const SCHEMA_STATEMENTS: string[] = [
     precio_texto TEXT,
     usuario TEXT,
     creado_en TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE precios_venta (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL,
+    categoria TEXT NOT NULL,
+    precio REAL,
+    actualizado_en TEXT NOT NULL DEFAULT (datetime('now')),
+    actualizado_por TEXT,
+    creado_en TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(product_id, categoria)
   )`,
   `CREATE TABLE remision_renglones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

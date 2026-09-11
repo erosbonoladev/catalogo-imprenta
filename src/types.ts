@@ -12,6 +12,13 @@ export interface Product {
   descripcion: string;
   imagen: ImageBlob | null;
   imagen_codigo_barras: ImageBlob | null;
+  // Valor controlado (ver TIPOS_PRODUCTO) — "" cuando la ficha todavía no lo
+  // tiene asignado (fichas creadas antes de este campo).
+  tipo_producto: string;
+  // Texto/numérico del código de barras (distinto de imagen_codigo_barras,
+  // que es la imagen escaneable) — se guarda como string para no perder
+  // ceros iniciales. "" cuando no se ha capturado.
+  codigo_barras_texto: string;
   presentacion_original: string;
   creado_en: string;
   actualizado_en: string;
@@ -42,7 +49,66 @@ export interface ProductInput {
   descripcion: string;
   imagen: ImageBlob | null;
   imagen_codigo_barras: ImageBlob | null;
+  tipo_producto: string;
+  codigo_barras_texto: string;
 }
+
+// Lista cerrada de valores para "Tipo de producto" — controlada a propósito
+// (pedido del negocio, 2026-09-11): el selector en ProductForm y la
+// validación server-side en db.ts (createProduct/updateProduct) son las
+// únicas dos puertas de escritura, ninguna acepta texto libre.
+export const TIPOS_PRODUCTO = [
+  "Ábacos",
+  "Accesibilidad y apoyos",
+  "Albercas y túneles",
+  "Alimentos y figuras realistas",
+  "Arte y manualidades",
+  "Bloques y construcción",
+  "Boliches y juegos de puntería",
+  "Circuitos equilibrio y tepra",
+  "Clasificación y Apilamiento",
+  "Colchonetas cojines y módulos",
+  "Cubos y dados",
+  "Disfraces y vestuarios",
+  "Dominós",
+  "Ensartes y motricidad fina",
+  "Estimulación sensorial",
+  "Experimentos y ciencia",
+  "Figuras de animales",
+  "Fracciones",
+  "Geometría y medición",
+  "Instrumentos músicales",
+  "Juegos de mesa y estrategia",
+  "Juegos de roles y oficios",
+  "Juegos de vestir",
+  "Kit y conjuntos",
+  "Laberintos",
+  "Láminas carteles y mapas",
+  "Letras alfabetos y sílabas",
+  "Libros cuadernos y métodos",
+  "Loterías",
+  "Memoria y asociación",
+  "Mobiliario y Organización",
+  "Modelos anatómicos y salud",
+  "Muñecos",
+  "Números conteo y operaciones",
+  "Pelotas aros y deportes",
+  "Pizarras y trazos",
+  "Por clasificar",
+  "Regletas",
+  "Relojes y calendarios",
+  "Rompecabezas y resaques",
+  "Ruletas y juegos de giro",
+  "Sellos",
+  "Señalización y apoyos docentes",
+  "Tableros y actividades de mesa",
+  "Tangrams",
+  "Tapetes y paracaídas",
+  "Tarjetas y flash cards",
+  "Títeres teatros y máscaras",
+  "Vehículos y montables",
+] as const;
+export type TipoProducto = (typeof TIPOS_PRODUCTO)[number];
 
 export interface PlasticPiece {
   id?: number;
@@ -261,6 +327,8 @@ export const PERMISOS = [
   "backups_eliminar",
   "precios_ver",
   "precios_modificar",
+  "precios_venta_ver",
+  "precios_venta_modificar",
   "remisiones_acceso",
   "remisiones_crear",
   "remisiones_cancelar",
@@ -280,8 +348,13 @@ export const PERMISO_LABELS: Record<Permiso, string> = {
   backups_restaurar: "Backups: restaurar",
   backups_configurar: "Backups: configurar programación",
   backups_eliminar: "Backups: eliminar",
-  precios_ver: "Precios: ver",
-  precios_modificar: "Precios: modificar",
+  // El identificador interno se conserva (no invalida asignaciones ya
+  // otorgadas) aunque la UI diga "Precios Imprenta" — mismo precedente que
+  // plasticos/"Piezas" en PERMISSIONS.md.
+  precios_ver: "Precios Imprenta: ver",
+  precios_modificar: "Precios Imprenta: modificar",
+  precios_venta_ver: "Precios Venta: ver",
+  precios_venta_modificar: "Precios Venta: modificar",
   remisiones_acceso: "Remisiones: acceso",
   remisiones_crear: "Remisiones: crear",
   remisiones_cancelar: "Remisiones: borrar",
@@ -464,6 +537,35 @@ export interface PrecioHistorialEntry {
   precio_nuevo: number;
   usuario: string | null;
   creado_en: string;
+}
+
+// --- Precios Venta (independiente de Precios Imprenta/remisiones arriba) ---
+
+// Nombres fijos y no editables (pedido del negocio, 2026-09-11) — mismo
+// criterio que PROCESOS_IMPRENTA: getPreciosVenta siempre normaliza a esta
+// lista/orden exactos, sin permitir agregar/renombrar categorías desde la UI.
+export const PRECIOS_VENTA_CATEGORIAS = [
+  "Gobierno",
+  "Representante",
+  "Mayoreo",
+  "Medio mayoreo",
+  "Publico sugerido",
+] as const;
+export type PrecioVentaCategoria = (typeof PRECIOS_VENTA_CATEGORIAS)[number];
+
+export interface PrecioVenta {
+  id: number | null;
+  product_id: number;
+  categoria: PrecioVentaCategoria;
+  // null = categoría sin precio asignado todavía — se muestra vacía, no 0.
+  precio: number | null;
+  actualizado_en: string | null;
+  actualizado_por: string | null;
+}
+
+export interface PrecioVentaEntradaInput {
+  categoria: PrecioVentaCategoria;
+  precio: number | null;
 }
 
 // --- Remisiones ---

@@ -21,6 +21,8 @@ function productInput(codigo: string, nombre: string) {
     descripcion: "",
     imagen: null,
     imagen_codigo_barras: null,
+    tipo_producto: "",
+    codigo_barras_texto: "",
   };
 }
 
