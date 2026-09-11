@@ -2731,30 +2731,69 @@ export async function createRequisicionConFolio(
 
 // --- Backups ---
 
+interface SqlExecutor {
+  execute(sql: string): Promise<{ rows: unknown[] }>;
+}
+
+async function readTableDump(executor: SqlExecutor, name: string, createSql: string): Promise<DumpTable> {
+  const columnsResult = await executor.execute(`PRAGMA table_info(${name})`);
+  const columns = (columnsResult.rows as unknown as { name: string }[]).map((c) => c.name);
+  const rowsResult = await executor.execute(`SELECT * FROM ${name}`);
+  return {
+    name,
+    createSql,
+    columns,
+    rows: rowsResult.rows as unknown as Record<string, unknown>[],
+  };
+}
+
+// products/plastic_products (imágenes BLOB, ~150MB en conjunto — medido
+// contra Turso en producción) se leen aparte del resto, con una consulta
+// suelta en vez de dentro de la transacción de más abajo: confirmado en
+// producción que leer todas las tablas en una sola transacción tarda ~20s
+// (más de la mitad solo estas dos), y en una red más lenta que la de
+// oficina esa transacción interactiva se cierra sola del lado de Turso
+// antes de llegar al commit — el rollback posterior falla con "cannot
+// rollback - no transaction is active" porque ya no hay nada que deshacer.
+// Una consulta suelta no arrastra ese límite de sesión. A cambio, estas dos
+// tablas pueden quedar unos segundos más viejas/nuevas que el resto del
+// dump en backups disparados desde la app — el automático programado
+// (clio-backups, corre contra una red rápida) no tiene este problema y
+// sigue leyendo todo con la misma consistencia de siempre.
+const BACKUP_TABLES_FUERA_DE_TRANSACCION = ["products", "plastic_products"];
+
 // Lee toda la BD (todas las tablas reales, incluidas las marcadas como
 // muertas en docs/DATABASE.md — un backup es una foto completa, no un
-// recorte a lo que la app usa hoy) dentro de una transacción de solo-lectura,
-// así el dump nunca mezcla el estado de una tabla con escrituras concurrentes
-// de otra mientras está en progreso. Separada de buildBackupSql (armado del
-// texto SQL) para que runBackupNow pueda mandar las tablas ya leídas a un Web
+// recorte a lo que la app usa hoy) — la mayoría dentro de una transacción de
+// solo-lectura, así el dump no mezcla el estado de una tabla con escrituras
+// concurrentes de otra mientras está en progreso (ver excepción arriba para
+// las dos tablas con imágenes). Separada de buildBackupSql (armado del texto
+// SQL) para que runBackupNow pueda mandar las tablas ya leídas a un Web
 // Worker en vez de armar el dump en el hilo de UI — ver backupWorkerClient.ts.
 async function readBackupTables(): Promise<{ tables: DumpTable[]; indexes: DumpIndex[] }> {
+  const heavyPlaceholders = BACKUP_TABLES_FUERA_DE_TRANSACCION.map((_, i) => `?${i + 1}`).join(", ");
+  const heavyMetaResult = await client.execute({
+    sql: `SELECT name, sql FROM sqlite_master WHERE type='table' AND name IN (${heavyPlaceholders})`,
+    args: BACKUP_TABLES_FUERA_DE_TRANSACCION,
+  });
+  const heavyMeta = new Map(
+    (heavyMetaResult.rows as unknown as { name: string; sql: string }[]).map((r) => [r.name, r.sql]),
+  );
+  const heavyTables: DumpTable[] = [];
+  for (const name of BACKUP_TABLES_FUERA_DE_TRANSACCION) {
+    const createSql = heavyMeta.get(name);
+    if (createSql) heavyTables.push(await readTableDump(client, name, createSql));
+  }
+
   const tx = await client.transaction("read");
   try {
-    const tablesResult = await tx.execute(
-      "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-    );
+    const tablesResult = await tx.execute({
+      sql: `SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN (${heavyPlaceholders}) ORDER BY name`,
+      args: BACKUP_TABLES_FUERA_DE_TRANSACCION,
+    });
     const tables: DumpTable[] = [];
     for (const row of tablesResult.rows as unknown as { name: string; sql: string }[]) {
-      const columnsResult = await tx.execute(`PRAGMA table_info(${row.name})`);
-      const columns = (columnsResult.rows as unknown as { name: string }[]).map((c) => c.name);
-      const rowsResult = await tx.execute(`SELECT * FROM ${row.name}`);
-      tables.push({
-        name: row.name,
-        createSql: row.sql,
-        columns,
-        rows: rowsResult.rows as unknown as Record<string, unknown>[],
-      });
+      tables.push(await readTableDump(tx, row.name, row.sql));
     }
 
     // Índices creados aparte de la definición de la tabla (sql IS NOT NULL
@@ -2769,7 +2808,7 @@ async function readBackupTables(): Promise<{ tables: DumpTable[]; indexes: DumpI
     ).map((row) => ({ name: row.name, tableName: row.tbl_name, createSql: row.sql }));
 
     await tx.commit();
-    return { tables, indexes };
+    return { tables: [...tables, ...heavyTables], indexes };
   } catch (err) {
     await tx.rollback();
     throw err;

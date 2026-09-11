@@ -39,7 +39,7 @@ export default function DailyBackupPrompt() {
     try {
       const result = await runBackupNow("BACKUP_LOCAL_DIARIO", "Notificación diaria", user.username);
       if (!result.ok) {
-        setError(`No se pudo crear el backup: ${result.errors.join("; ")}`);
+        setError(result.errors.join("; "));
         return;
       }
       localStorage.setItem(`${DAILY_BACKUP_KEY_PREFIX}${user.id}`, today());
