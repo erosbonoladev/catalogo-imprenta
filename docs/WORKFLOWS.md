@@ -35,7 +35,7 @@ Desde `ImprentaSection` (modo vista), "Crear orden general" o un botón por íte
 
 - **Producción** (`ProduccionForm.tsx`): captura merma, cantidad de arte, número de tiros por ítem → `total_pliegos = ceil((cantidad_arte / formacion + merma) * pliegos)` → genera folio `produccion` + PDF (`buildOrderPdf`) → inserta fila en `product_print_item_orders`.
 - **Compra** (`CompraForm.tsx`, también disparable en lote desde `OrderModal`): elige una orden de producción base → `cantidad = ceil(orden.total_pliegos / cortes)` → genera folio `compra` + PDF (`buildPurchasePdf`) → inserta fila en `product_print_item_purchases` ligada a esa orden.
-- Historial browsable/borrable por ítem en "Historia de órdenes y compras" dentro de `ImprentaSection`.
+- Historial browsable/borrable por ítem en "Historia de órdenes y compras" dentro de `ImprentaSection`. Cada fila del historial también tiene "Editar" (`EditPrintOrderModal.tsx`/`EditPrintPurchaseModal.tsx`, mismo permiso `imprenta`): edita la fila existente in-place vía `updatePrintItemOrder`/`updatePrintItemPurchase` — nunca genera folio nuevo ni fila nueva, conserva folio/print_item_id (o print_item_order_id)/usuario/creado_en. Campos editables: en una orden de producción, merma/cantidad de arte/número de tiros (igual que al crear), con formación/pliegos usados tomados de la ficha técnica actual del ítem (o su override si no son numéricos, igual que `ProduccionForm`) — el total se recalcula con la misma fórmula; en una orden de compra, solo cortes (igual que al crear: papel/pliego/máquina no son inputs editables en `CompraForm`, así que tampoco se tocan al editar, quedan tal como se guardaron originalmente) — cantidad/total de tamaños se recalculan, la orden de producción base ligada no cambia. Al guardar los cambios, el modal ofrece "Guardar PDF": regenera el PDF (`buildOrderPdf`/`buildPurchasePdf`) con los datos actualizados, el folio sin cambios y la fecha original de la orden (no la de hoy), para volver a guardarlo vía el mismo diálogo nativo — la app no guarda el archivo ni su ruta en ningún lado (ver "PDF" abajo), así que "reemplazar el PDF anterior" significa ofrecer uno nuevo para guardar, igual que ya hace "Guardar PDF" en `RemisionDetalleModal`; si el diálogo se cancela o falla, los datos ya quedaron guardados en la BD de todas formas (mismo patrón `pdfPending`/best-effort que la compra general de `OrderModal`).
 
 ## Importación de fichas (Excel)
 
@@ -111,10 +111,12 @@ Requiere permiso `maderas` (no admin-only, mismo criterio que Piezas), pestaña 
 
 | Builder | Se dispara desde |
 |---|---|
-| `buildOrderPdf` | `ProduccionForm` |
-| `buildPurchasePdf` | `CompraForm` / `OrderModal` |
+| `buildOrderPdf` | `ProduccionForm` / `EditPrintOrderModal` |
+| `buildPurchasePdf` | `CompraForm` / `OrderModal` / `EditPrintPurchaseModal` |
 | `buildRequisicionPdf` | `RequisicionModal` |
 | `buildRemisionPdf` | `RemisionForm` |
+
+`buildOrderPdf`/`buildPurchasePdf` aceptan un cuarto parámetro opcional `fecha?: Date` — sin él, escriben la fecha de hoy (comportamiento original, usado al crear); `EditPrintOrderModal`/`EditPrintPurchaseModal` lo pasan con la `creado_en` real de la orden/compra al regenerar el PDF tras una edición, para que el documento reimpreso no mienta la fecha.
 
 Los tres primeros dibujan sobre un lienzo en blanco (`new jsPDF({format:"letter"})`) con encabezado de logo corporativo (`Assets/perspectiva.jpeg`). `buildRemisionPdf` es distinto: en vez de lienzo en blanco usa `Assets/remision-template.png` (rasterizado una sola vez de `Assets/remision.pdf`, la plantilla oficial de Perspectiva Gráfica, tamaño A4 real — `format: [595.5, 842.25]`, no `"letter"`) como fondo de cada página vía `doc.addImage`, con texto dinámico encima en coordenadas medidas a mano sobre esa imagen. Folio/fecha/pedido bodegas se tapan primero con un rectángulo blanco (los valores de ejemplo `XXXXXX`/`DD/MM/AA`/`JALISCO` vienen horneados en la plantilla original) antes de escribir el valor real — igual con "Precio en texto" por seguridad, aunque ahí la plantilla no trae ningún ejemplo. Se repiten en cada página, no solo la primera. Nombres de producto muy largos se truncan con "…" (`truncateToWidth`) en vez de perderse sin aviso en un documento impreso. Multi-página: 15 renglones por página (medido contra la plantilla); los totales y el precio en texto solo se escriben en la última página.
 

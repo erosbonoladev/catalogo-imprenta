@@ -24,6 +24,8 @@ import { hasPermission, useAuth } from "../auth";
 import AutoGrowInput from "./AutoGrowInput";
 import Toast from "./Toast";
 import OrderModal from "./OrderModal";
+import EditPrintOrderModal from "./EditPrintOrderModal";
+import EditPrintPurchaseModal from "./EditPrintPurchaseModal";
 import PrintItemImagesCarousel from "./PrintItemImagesCarousel";
 import basuraIcon from "../../Assets/basura.svg";
 
@@ -112,6 +114,14 @@ export default function ImprentaSection({ productId, onBack }: Props) {
   const [ordersByItem, setOrdersByItem] = useState<Record<number, PrintItemOrder[]>>({});
   const [purchasesByOrder, setPurchasesByOrder] = useState<Record<number, PrintItemPurchase[]>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [editOrderTarget, setEditOrderTarget] = useState<{ item: PrintItem; order: PrintItemOrder } | null>(
+    null,
+  );
+  const [editPurchaseTarget, setEditPurchaseTarget] = useState<{
+    item: PrintItem;
+    order: PrintItemOrder;
+    purchase: PrintItemPurchase;
+  } | null>(null);
 
   function loadItems() {
     setLoading(true);
@@ -319,6 +329,20 @@ export default function ImprentaSection({ productId, onBack }: Props) {
       [order.id]: (prev[order.id] ?? []).filter((p) => p.id !== purchase.id),
     }));
     logEventAsActor(actor, "INFO", `Compra #${purchase.id} eliminada por ${user.username}`);
+  }
+
+  function handleOrderUpdated(itemId: number, updated: PrintItemOrder) {
+    setOrdersByItem((prev) => ({
+      ...prev,
+      [itemId]: (prev[itemId] ?? []).map((o) => (o.id === updated.id ? updated : o)),
+    }));
+  }
+
+  function handlePurchaseUpdated(orderId: number, updated: PrintItemPurchase) {
+    setPurchasesByOrder((prev) => ({
+      ...prev,
+      [orderId]: (prev[orderId] ?? []).map((p) => (p.id === updated.id ? updated : p)),
+    }));
   }
 
   function handleCancel() {
@@ -712,15 +736,24 @@ export default function ImprentaSection({ productId, onBack }: Props) {
                                 <span className="print-item-checks-label">
                                   Orden de producción
                                 </span>
-                                <button
-                                  type="button"
-                                  className="icon-btn icon-btn-remove"
-                                  onClick={() => handleDeleteOrder(item.id!, order)}
-                                  title="Borrar orden de producción"
-                                  aria-label="Borrar orden de producción"
-                                >
-                                  <img src={basuraIcon} alt="" aria-hidden="true" />
-                                </button>
+                                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                                  <button
+                                    type="button"
+                                    className="btn-link"
+                                    onClick={() => setEditOrderTarget({ item, order })}
+                                  >
+                                    Editar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="icon-btn icon-btn-remove"
+                                    onClick={() => handleDeleteOrder(item.id!, order)}
+                                    title="Borrar orden de producción"
+                                    aria-label="Borrar orden de producción"
+                                  >
+                                    <img src={basuraIcon} alt="" aria-hidden="true" />
+                                  </button>
+                                </div>
                               </div>
                               <div className="print-item-view-fields">
                                 <div className="print-item-view-field">
@@ -796,15 +829,26 @@ export default function ImprentaSection({ productId, onBack }: Props) {
                               <div className="print-item-history-order" key={p.id}>
                                 <div className="print-item-card-header">
                                   <span className="print-item-checks-label">Orden compra</span>
-                                  <button
-                                    type="button"
-                                    className="icon-btn icon-btn-remove"
-                                    onClick={() => handleDeletePurchase(p.order, p)}
-                                    title="Borrar orden de compra"
-                                    aria-label="Borrar orden de compra"
-                                  >
-                                    <img src={basuraIcon} alt="" aria-hidden="true" />
-                                  </button>
+                                  <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                                    <button
+                                      type="button"
+                                      className="btn-link"
+                                      onClick={() =>
+                                        setEditPurchaseTarget({ item, order: p.order, purchase: p })
+                                      }
+                                    >
+                                      Editar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="icon-btn icon-btn-remove"
+                                      onClick={() => handleDeletePurchase(p.order, p)}
+                                      title="Borrar orden de compra"
+                                      aria-label="Borrar orden de compra"
+                                    >
+                                      <img src={basuraIcon} alt="" aria-hidden="true" />
+                                    </button>
+                                  </div>
                                 </div>
                                 <div className="print-item-view-fields">
                                   <div className="print-item-view-field">
@@ -882,6 +926,27 @@ export default function ImprentaSection({ productId, onBack }: Props) {
 
       {orderItems && product && (
         <OrderModal product={product} items={orderItems} onClose={() => setOrderItems(null)} />
+      )}
+
+      {editOrderTarget && product && (
+        <EditPrintOrderModal
+          product={product}
+          item={editOrderTarget.item}
+          order={editOrderTarget.order}
+          onClose={() => setEditOrderTarget(null)}
+          onUpdated={(updated) => handleOrderUpdated(editOrderTarget.item.id!, updated)}
+        />
+      )}
+
+      {editPurchaseTarget && product && (
+        <EditPrintPurchaseModal
+          product={product}
+          item={editPurchaseTarget.item}
+          order={editPurchaseTarget.order}
+          purchase={editPurchaseTarget.purchase}
+          onClose={() => setEditPurchaseTarget(null)}
+          onUpdated={(updated) => handlePurchaseUpdated(editPurchaseTarget.order.id, updated)}
+        />
       )}
     </div>
   );

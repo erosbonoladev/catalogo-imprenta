@@ -213,9 +213,10 @@ export default function RemisionForm({ onCreated }: Props) {
         return {
           ...r,
           // null (vacío o no numérico) se muestra como 0 en la vista previa,
-          // pero handleGenerar() valida sobre cantidadNum/precioNum > 0 más
-          // abajo — un campo vacío o con basura ("12abc") nunca pasa como
-          // válido solo porque acá se ve en 0, a diferencia de antes.
+          // pero handleGenerar() revalida cantidad (> 0) y precio (parseAmount
+          // sobre el string crudo, no sobre este 0 de relleno) más abajo — un
+          // campo vacío o con basura ("12abc") nunca pasa como válido solo
+          // porque acá se ve en 0, aunque precio 0 explícito sí es válido.
           cantidadNum: cantidadNum ?? 0,
           precioNum: precioNum ?? 0,
         };
@@ -253,7 +254,11 @@ export default function RemisionForm({ onCreated }: Props) {
         setError(`Cantidad inválida en el renglón de ${r.sku || "producto sin SKU"}.`);
         return;
       }
-      if (!(r.precioNum > 0)) {
+      // precio 0 es válido (producto sin costo/cortesía), pero un campo
+      // vacío o con basura ("12abc") no debe colarse como 0 — se revalida
+      // sobre el string crudo en vez de r.precioNum, que ya normalizó null a 0.
+      const precioParsed = parseAmount(r.precioUnitario);
+      if (precioParsed === null || precioParsed < 0) {
         setError(`Precio inválido en el renglón de ${r.sku || "producto sin SKU"}.`);
         return;
       }

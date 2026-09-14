@@ -102,6 +102,17 @@ describe("createRemisionConFolio", () => {
     ).rejects.toThrow(/precio inválido/i);
   });
 
+  it("acepta un renglón con precio_unitario 0 (cortesía/sin costo) — no debe rechazarse como si fuera inválido", async () => {
+    const a = await actor(["remisiones_crear"]);
+    const created = await createRemisionConFolio(a, "R1", baseInput, [
+      { ...renglon, precio_unitario: 0, importe: 0 },
+    ]);
+
+    expect(created.renglones[0].precio_unitario).toBe(0);
+    expect(created.subtotal).toBe(0);
+    expect(created.total).toBe(0);
+  });
+
   it("rechaza un descuento_pct fuera de 0-100", async () => {
     const a = await actor(["remisiones_crear"]);
     await expect(

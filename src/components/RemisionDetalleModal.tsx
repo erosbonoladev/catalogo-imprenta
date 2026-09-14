@@ -173,8 +173,10 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
         return {
           ...r,
           // null (vacío o no numérico) se muestra como 0 en la vista previa,
-          // pero la validación de guardado exige cantidadNum/precioNum > 0
-          // más abajo — un campo vacío o con basura nunca pasa como válido.
+          // pero la validación de guardado revalida cantidad (> 0) y precio
+          // (parseAmount sobre el string crudo, no sobre este 0 de relleno)
+          // más abajo — un campo vacío o con basura nunca pasa como válido,
+          // aunque precio 0 explícito sí es válido.
           cantidadNum: cantidadNum ?? 0,
           precioNum: precioNum ?? 0,
         };
@@ -206,7 +208,8 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
         setError(`Cantidad inválida en el renglón de ${r.sku || "producto sin SKU"}.`);
         return;
       }
-      if (!(r.precioNum > 0)) {
+      const precioParsed = parseAmount(r.precioUnitario);
+      if (precioParsed === null || precioParsed < 0) {
         setError(`Precio inválido en el renglón de ${r.sku || "producto sin SKU"}.`);
         return;
       }

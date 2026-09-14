@@ -2410,6 +2410,45 @@ export async function getPrintItemOrders(printItemId: number): Promise<PrintItem
   return result.rows as unknown as PrintItemOrderRow[] as PrintItemOrder[];
 }
 
+// Edita una orden de producción histórica in-place: conserva folio, print_item_id,
+// usuario (creador) y creado_en — solo actualiza los campos que ProduccionForm ya
+// deja capturar/derivar (merma, cantidad de arte, tiros, formación/pliegos usados
+// y el total recalculado con ellos). Nunca genera un folio nuevo ni una fila
+// nueva, mismo criterio que updateRemisionConRenglones.
+export async function updatePrintItemOrder(
+  actor: Actor,
+  orderId: number,
+  input: {
+    merma: number;
+    cantidadArte: number;
+    numeroTiros: number;
+    formacionUsada: number;
+    numeroPliegosUsado: number;
+    totalPliegos: number;
+  },
+): Promise<PrintItemOrder> {
+  await assertActorAuthorized(actor, "imprenta");
+  const result = await client.execute({
+    sql: `UPDATE product_print_item_orders
+            SET merma = ?1, cantidad_arte = ?2, numero_tiros = ?3, formacion_usada = ?4,
+                numero_pliegos_usado = ?5, total_pliegos = ?6
+          WHERE id = ?7
+          RETURNING *`,
+    args: [
+      input.merma,
+      input.cantidadArte,
+      input.numeroTiros,
+      input.formacionUsada,
+      input.numeroPliegosUsado,
+      input.totalPliegos,
+      orderId,
+    ],
+  });
+  const row = result.rows[0] as unknown as PrintItemOrderRow | undefined;
+  if (!row) throw new Error("Orden de producción no encontrada.");
+  return row as unknown as PrintItemOrder;
+}
+
 interface PrintItemPurchaseRow {
   id: number;
   print_item_order_id: number;
@@ -2541,6 +2580,33 @@ export async function getPrintItemPurchases(
     args: [printItemOrderId],
   });
   return result.rows as unknown as PrintItemPurchaseRow[] as PrintItemPurchase[];
+}
+
+// Edita una orden de compra histórica in-place: conserva folio,
+// print_item_order_id (la orden de producción base no cambia), papel/pliego/
+// máquina (no son campos editables en CompraForm hoy, así que tampoco lo son
+// aquí), usuario y creado_en — solo actualiza cortes y lo derivado de él
+// (cantidad/total_tamanos), mismo criterio que updatePrintItemOrder.
+export async function updatePrintItemPurchase(
+  actor: Actor,
+  purchaseId: number,
+  input: {
+    cortes: number;
+    cantidad: number;
+    totalTamanos: number;
+  },
+): Promise<PrintItemPurchase> {
+  await assertActorAuthorized(actor, "imprenta");
+  const result = await client.execute({
+    sql: `UPDATE product_print_item_purchases
+            SET cortes = ?1, cantidad = ?2, total_tamanos = ?3
+          WHERE id = ?4
+          RETURNING *`,
+    args: [input.cortes, input.cantidad, input.totalTamanos, purchaseId],
+  });
+  const row = result.rows[0] as unknown as PrintItemPurchaseRow | undefined;
+  if (!row) throw new Error("Orden de compra no encontrada.");
+  return row as unknown as PrintItemPurchase;
 }
 
 export async function deletePrintItemOrder(actor: Actor, orderId: number): Promise<void> {
@@ -2771,19 +2837,61 @@ async function readTableDump(executor: SqlExecutor, name: string, createSql: str
   };
 }
 
+// Filas por página al leer las tablas con imágenes (ver
+// BACKUP_TABLES_FUERA_DE_TRANSACCION más abajo) — un `SELECT * FROM` sin
+// límite sobre esas tablas le pide al cliente de libsql (conexión
+// `libsql://` vía WebSocket, protocolo Hrana) que reciba y decodifique todas
+// las filas de una sola respuesta. Confirmado en producción: con esas tablas
+// ya en varios cientos de MB, esa única respuesta gigante hace que el buffer
+// interno del cliente (que dobla de tamaño hasta que entra el mensaje
+// completo) supere el límite de ArrayBuffer del motor JS del webview y tire
+// "RangeError: Invalid array length" — no es un colgado (eso ya se resolvió
+// moviendo el armado del dump a un Web Worker, ver backupWorker.ts), es la
+// respuesta misma la que nunca llega a decodificarse. Paginar por `id` deja
+// cada respuesta acotada a este tamaño de página sin importar cuánto pese la
+// tabla en total.
+const BACKUP_HEAVY_TABLE_PAGE_SIZE = 200;
+
+async function readTableDumpPaged(
+  executor: SqlExecutor,
+  name: string,
+  createSql: string,
+  pageSize = BACKUP_HEAVY_TABLE_PAGE_SIZE,
+): Promise<DumpTable> {
+  const columnsResult = await executor.execute(`PRAGMA table_info(${name})`);
+  const columns = (columnsResult.rows as unknown as { name: string }[]).map((c) => c.name);
+
+  const rows: Record<string, unknown>[] = [];
+  let lastId = 0;
+  for (;;) {
+    const pageResult = await executor.execute(
+      `SELECT * FROM ${name} WHERE id > ${lastId} ORDER BY id LIMIT ${pageSize}`,
+    );
+    const pageRows = pageResult.rows as unknown as Record<string, unknown>[];
+    if (pageRows.length === 0) break;
+    rows.push(...pageRows);
+    lastId = Number((pageRows[pageRows.length - 1] as { id: number }).id);
+    if (pageRows.length < pageSize) break;
+  }
+
+  return { name, createSql, columns, rows };
+}
+
 // products/plastic_products (imágenes BLOB, ~150MB en conjunto — medido
-// contra Turso en producción) se leen aparte del resto, con una consulta
-// suelta en vez de dentro de la transacción de más abajo: confirmado en
-// producción que leer todas las tablas en una sola transacción tarda ~20s
-// (más de la mitad solo estas dos), y en una red más lenta que la de
-// oficina esa transacción interactiva se cierra sola del lado de Turso
-// antes de llegar al commit — el rollback posterior falla con "cannot
-// rollback - no transaction is active" porque ya no hay nada que deshacer.
-// Una consulta suelta no arrastra ese límite de sesión. A cambio, estas dos
-// tablas pueden quedar unos segundos más viejas/nuevas que el resto del
-// dump en backups disparados desde la app — el automático programado
-// (clio-backups, corre contra una red rápida) no tiene este problema y
-// sigue leyendo todo con la misma consistencia de siempre.
+// contra Turso en producción, y creciendo) se leen aparte del resto, con
+// consultas paginadas sueltas en vez de dentro de la transacción de más
+// abajo: confirmado en producción que leer todas las tablas en una sola
+// transacción tarda ~20s (más de la mitad solo estas dos), y en una red más
+// lenta que la de oficina esa transacción interactiva se cierra sola del
+// lado de Turso antes de llegar al commit — el rollback posterior falla con
+// "cannot rollback - no transaction is active" porque ya no hay nada que
+// deshacer. Consultas sueltas no arrastran ese límite de sesión, y paginarlas
+// (readTableDumpPaged) evita además el "RangeError: Invalid array length" de
+// un SELECT * sin límite sobre estas dos tablas (ver comentario ahí). A
+// cambio, estas dos tablas pueden quedar unos segundos más viejas/nuevas que
+// el resto del dump en backups disparados desde la app — el automático
+// programado (clio-backups, corre contra una red rápida) no tiene este
+// problema y sigue leyendo todo con la misma consistencia de siempre.
 const BACKUP_TABLES_FUERA_DE_TRANSACCION = ["products", "plastic_products"];
 
 // Lee toda la BD (todas las tablas reales, incluidas las marcadas como
@@ -2806,7 +2914,7 @@ async function readBackupTables(): Promise<{ tables: DumpTable[]; indexes: DumpI
   const heavyTables: DumpTable[] = [];
   for (const name of BACKUP_TABLES_FUERA_DE_TRANSACCION) {
     const createSql = heavyMeta.get(name);
-    if (createSql) heavyTables.push(await readTableDump(client, name, createSql));
+    if (createSql) heavyTables.push(await readTableDumpPaged(client, name, createSql));
   }
 
   const tx = await client.transaction("read");

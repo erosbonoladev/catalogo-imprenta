@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { hasPermission, useAuth } from "../auth";
-import { readLocalBackupFile, runBackupNow, saveBackupFileAs } from "../db";
+import { getLatestBackup, readLocalBackupFile, runBackupNow, saveBackupFileAs } from "../db";
 
 const DAILY_BACKUP_KEY_PREFIX = "catalogo-imprenta:daily-backup-done:";
 
@@ -13,7 +13,11 @@ function today(): string {
  * admin por usuario): ahora quien ya tiene backups_crear ve este aviso al
  * entrar por primera vez en el día y decide si crearlo — nunca corre solo.
  * Si lo pospone ("Ahora no"), no se guarda nada en localStorage, así que
- * vuelve a aparecer en la siguiente apertura de la app ese mismo día.
+ * vuelve a aparecer en la siguiente apertura de la app ese mismo día — salvo
+ * que mientras tanto se haya creado un backup manual desde Ajustes
+ * (BackupsPanel): localStorage no se entera de eso, así que al abrir la app
+ * de nuevo se confirma contra backup_history (getLatestBackup) antes de
+ * mostrar el aviso, para no pedir un segundo backup el mismo día.
  */
 export default function DailyBackupPrompt() {
   const { user, token } = useAuth();
@@ -29,7 +33,27 @@ export default function DailyBackupPrompt() {
       return;
     }
     const storageKey = `${DAILY_BACKUP_KEY_PREFIX}${user.id}`;
-    setVisible(localStorage.getItem(storageKey) !== today());
+    if (localStorage.getItem(storageKey) === today()) {
+      setVisible(false);
+      return;
+    }
+    let cancelled = false;
+    getLatestBackup("EXITOSO")
+      .then((latest) => {
+        if (cancelled) return;
+        if (latest && latest.creado_en.slice(0, 10) === today()) {
+          localStorage.setItem(storageKey, today());
+          setVisible(false);
+          return;
+        }
+        setVisible(true);
+      })
+      .catch(() => {
+        if (!cancelled) setVisible(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [user?.id, canCrear]);
 
   async function handleCreate() {

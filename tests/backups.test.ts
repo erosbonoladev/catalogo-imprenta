@@ -225,6 +225,39 @@ describe("índices — captura, dump y restauración (integridad de backup)", ()
     const { manifest } = await createBackupSql();
     expect(manifest.tablas.precios).toBe(before);
   });
+
+  it("createBackupSql pagina plastic_products (readTableDumpPaged) sin perder ni duplicar filas al superar el tamaño de página", async () => {
+    // Reproduce el escenario real: un SELECT * sin límite sobre esta tabla
+    // (con imágenes BLOB) tiraba "RangeError: Invalid array length" al
+    // superar cierto tamaño de respuesta — ver comentario junto a
+    // readTableDumpPaged en db.ts. Esta prueba usa muchas más filas que el
+    // tamaño de página interno para confirmar que la paginación por `id`
+    // reconstruye el set completo, sin huecos ni duplicados.
+    const raw = rawClient();
+    const total = 530;
+    await raw.batch(
+      Array.from({ length: total }, (_, i) => ({
+        sql: "INSERT INTO plastic_products (nombre) VALUES (?1)",
+        args: [`Pieza paginación ${i}`],
+      })),
+      "write",
+    );
+
+    const { sql, manifest } = await createBackupSql();
+    expect(manifest.tablas.plastic_products).toBe(total);
+
+    const expectedIds = (await raw.execute("SELECT id FROM plastic_products ORDER BY id")).rows.map((r) =>
+      Number((r as unknown as { id: number }).id),
+    );
+
+    const dumpedIds = [...sql.matchAll(/INSERT INTO plastic_products \(id, [^)]*\) VALUES \((\d+),/g)].map((m) =>
+      Number(m[1]),
+    );
+
+    expect(dumpedIds.length).toBe(total);
+    expect(new Set(dumpedIds).size).toBe(total);
+    expect(dumpedIds.slice().sort((a, b) => a - b)).toEqual(expectedIds);
+  });
 });
 
 describe("validateBackupSql / validateRestoreStatements — simetría ante palabras peligrosas en datos", () => {

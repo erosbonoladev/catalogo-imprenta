@@ -86,6 +86,7 @@ export async function buildOrderPdf(
   product: Product,
   entries: OrderEntry[],
   folio: string,
+  fecha?: Date,
 ): Promise<Uint8Array> {
   const doc = new jsPDF({ unit: "pt", format: "letter" });
   const marginX = 48;
@@ -122,7 +123,7 @@ export async function buildOrderPdf(
   y += 16;
   doc.text(`Producto: ${product.nombre} (${product.codigo})`, marginX, y);
   y += 16;
-  doc.text(`Fecha: ${new Date().toLocaleDateString("es-MX")}`, marginX, y);
+  doc.text(`Fecha: ${(fecha ?? new Date()).toLocaleDateString("es-MX")}`, marginX, y);
   y += 24;
 
   for (const entry of entries) {
@@ -176,6 +177,7 @@ export async function buildPurchasePdf(
   product: Product,
   entries: PurchaseEntry[],
   folio: string,
+  fecha?: Date,
 ): Promise<Uint8Array> {
   const doc = new jsPDF({ unit: "pt", format: "letter" });
   const marginX = 48;
@@ -202,7 +204,7 @@ export async function buildPurchasePdf(
   y += 16;
   doc.text(`Producto: ${product.nombre} (${product.codigo})`, marginX, y);
   y += 16;
-  doc.text(`Fecha: ${new Date().toLocaleDateString("es-MX")}`, marginX, y);
+  doc.text(`Fecha: ${(fecha ?? new Date()).toLocaleDateString("es-MX")}`, marginX, y);
   y += 24;
 
   for (const entry of entries) {
