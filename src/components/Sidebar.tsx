@@ -14,6 +14,7 @@ import skuMasterIcon from "../../Assets/sku-master.svg";
 interface Props {
   open: boolean;
   onToggle: () => void;
+  onCatalogo: () => void;
   onConfiguraciones: () => void;
   onRemisiones: () => void;
   onPiezasGeneral: () => void;
@@ -23,6 +24,7 @@ interface Props {
 export default function Sidebar({
   open,
   onToggle,
+  onCatalogo,
   onConfiguraciones,
   onRemisiones,
   onPiezasGeneral,
@@ -67,6 +69,25 @@ export default function Sidebar({
           >
             <img src={estrellasIcon} alt="" aria-hidden="true" className="sidebar-item-icon" />
             <span>{isDark ? "Modo oscuro" : "Modo claro"}</span>
+          </button>
+
+          <button type="button" className="sidebar-item" onClick={onCatalogo}>
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="sidebar-item-icon"
+              aria-hidden="true"
+            >
+              <circle cx="11" cy="11" r="7" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <span>Catálogo</span>
           </button>
 
           {(showRemisiones || showPiezasGeneral || showSkuMaster) && (

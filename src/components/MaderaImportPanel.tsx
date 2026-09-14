@@ -10,6 +10,7 @@ import {
   recordMaderaImportBatch,
   runBackupNow,
   undoLastMaderaImportBatch,
+  type BackupProgress,
   type MaderaImportBatch,
 } from "../db";
 import {
@@ -23,6 +24,7 @@ import {
 import { computeSkuPrincipal } from "../precios";
 import { hasPermission, useAuth } from "../auth";
 import type { Product } from "../types";
+import BackupProgressBar from "./BackupProgressBar";
 
 type Phase = "picking" | "validating" | "reviewing" | "backing-up" | "committing" | "done";
 
@@ -96,6 +98,7 @@ export default function MaderaImportPanel() {
   const [overwriteChoices, setOverwriteChoices] = useState<Map<number, boolean>>(new Map());
   const [validateProgress, setValidateProgress] = useState<Progress>({ done: 0, total: 0 });
   const [commitProgress, setCommitProgress] = useState<Progress>({ done: 0, total: 0 });
+  const [backupProgress, setBackupProgress] = useState<BackupProgress | null>(null);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [lastBatch, setLastBatch] = useState<MaderaImportBatch | null>(null);
   const [confirmUndo, setConfirmUndo] = useState(false);
@@ -225,7 +228,9 @@ export default function MaderaImportPanel() {
       "BACKUP_PRE_IMPORTACION",
       "Captura masiva de maderas",
       user?.username ?? null,
+      setBackupProgress,
     );
+    setBackupProgress(null);
     if (!backup.ok) {
       setPhase("reviewing");
       setError(
@@ -535,16 +540,7 @@ export default function MaderaImportPanel() {
         </div>
       )}
 
-      {phase === "backing-up" && (
-        <div className="import-progress">
-          <p className="hint" style={{ margin: 0 }}>
-            Creando backup previo — la importación no comenzará hasta que se verifique…
-          </p>
-          <div className="progress-bar">
-            <div className="progress-bar-fill" style={{ width: "100%" }} />
-          </div>
-        </div>
-      )}
+      {phase === "backing-up" && <BackupProgressBar progress={backupProgress} />}
 
       {phase === "committing" && (
         <div className="import-progress">

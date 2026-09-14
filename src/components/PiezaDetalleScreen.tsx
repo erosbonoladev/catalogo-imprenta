@@ -89,9 +89,6 @@ export default function PiezaDetalleScreen({ plasticProductId, onBack, onOpenPro
   if (!allowed) {
     return (
       <div className="private-section">
-        <button className="btn-link" onClick={onBack}>
-          ← Volver
-        </button>
         <h1>Acceso denegado</h1>
         <p className="hint">No tienes permiso para ver esta sección.</p>
       </div>
@@ -111,10 +108,6 @@ export default function PiezaDetalleScreen({ plasticProductId, onBack, onOpenPro
 
   return (
     <div className="private-section">
-      <button className="btn-link" onClick={onBack}>
-        ← Volver a Piezas General
-      </button>
-
       {loading ? (
         <p className="hint">Cargando…</p>
       ) : loadError ? (

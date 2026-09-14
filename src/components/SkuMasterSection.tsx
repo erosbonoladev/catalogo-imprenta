@@ -17,7 +17,6 @@ import Toast from "./Toast";
 import AutoGrowInput from "./AutoGrowInput";
 
 interface Props {
-  onBack: () => void;
   onOpenProduct: (productId: number) => void;
   onOpenPieza: (plasticProductId: number) => void;
 }
@@ -34,7 +33,7 @@ interface SkuGroup {
   precios: Precio[];
 }
 
-export default function SkuMasterSection({ onBack, onOpenProduct, onOpenPieza }: Props) {
+export default function SkuMasterSection({ onOpenProduct, onOpenPieza }: Props) {
   const { user, token } = useAuth();
   const allowed = hasPermission(user, "sku_master");
 
@@ -174,9 +173,6 @@ export default function SkuMasterSection({ onBack, onOpenProduct, onOpenPieza }:
   if (!allowed) {
     return (
       <div className="private-section">
-        <button className="btn-link" onClick={onBack}>
-          ← Volver
-        </button>
         <h1>Acceso denegado</h1>
         <p className="hint">No tienes permiso para ver esta sección.</p>
       </div>
@@ -204,9 +200,6 @@ export default function SkuMasterSection({ onBack, onOpenProduct, onOpenPieza }:
 
   return (
     <div className="private-section">
-      <button className="btn-link" onClick={onBack}>
-        ← Volver al menú principal
-      </button>
       <h1>SKU Master</h1>
       <p className="hint">
         Todos los elementos del catálogo (fichas técnicas, piezas y precios) con su SKU y, cuando

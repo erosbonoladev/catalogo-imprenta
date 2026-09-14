@@ -7,7 +7,7 @@ import {
   type DumpIndex,
   type DumpTable,
 } from "../src/backup";
-import { createBackupSql, executeRestoreSql, verifyRestoreCounts } from "../src/db";
+import { BACKUP_PHASE_WEIGHTS, createBackupSql, executeRestoreSql, verifyRestoreCounts } from "../src/db";
 import { countRows, createFixtureUser, rawClient, resetDb } from "./helpers";
 
 beforeEach(async () => {
@@ -257,6 +257,25 @@ describe("índices — captura, dump y restauración (integridad de backup)", ()
     expect(dumpedIds.length).toBe(total);
     expect(new Set(dumpedIds).size).toBe(total);
     expect(dumpedIds.slice().sort((a, b) => a - b)).toEqual(expectedIds);
+  });
+});
+
+describe("progreso de backup", () => {
+  it("createBackupSql reporta progreso creciente por tabla al leer el backup", async () => {
+    const calls: { tablesDone: number; tablesTotal: number }[] = [];
+    await createBackupSql((tablesDone, tablesTotal) => {
+      calls.push({ tablesDone, tablesTotal });
+    });
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls[calls.length - 1].tablesDone).toBe(calls[calls.length - 1].tablesTotal);
+    for (let i = 1; i < calls.length; i++) {
+      expect(calls[i].tablesDone).toBeGreaterThanOrEqual(calls[i - 1].tablesDone);
+    }
+  });
+
+  it("los pesos de fase de backup suman 100", () => {
+    const total = Object.values(BACKUP_PHASE_WEIGHTS).reduce((a, b) => a + b, 0);
+    expect(total).toBe(100);
   });
 });
 

@@ -2857,9 +2857,12 @@ async function readTableDumpPaged(
   name: string,
   createSql: string,
   pageSize = BACKUP_HEAVY_TABLE_PAGE_SIZE,
+  onBatch?: (rowsDone: number, rowsTotal: number) => void,
 ): Promise<DumpTable> {
   const columnsResult = await executor.execute(`PRAGMA table_info(${name})`);
   const columns = (columnsResult.rows as unknown as { name: string }[]).map((c) => c.name);
+  const countResult = await executor.execute(`SELECT COUNT(*) as n FROM ${name}`);
+  const rowsTotal = Number((countResult.rows[0] as unknown as { n: number }).n);
 
   const rows: Record<string, unknown>[] = [];
   let lastId = 0;
@@ -2871,6 +2874,7 @@ async function readTableDumpPaged(
     if (pageRows.length === 0) break;
     rows.push(...pageRows);
     lastId = Number((pageRows[pageRows.length - 1] as { id: number }).id);
+    onBatch?.(rows.length, rowsTotal);
     if (pageRows.length < pageSize) break;
   }
 
@@ -2902,7 +2906,21 @@ const BACKUP_TABLES_FUERA_DE_TRANSACCION = ["products", "plastic_products"];
 // las dos tablas con imágenes). Separada de buildBackupSql (armado del texto
 // SQL) para que runBackupNow pueda mandar las tablas ya leídas a un Web
 // Worker en vez de armar el dump en el hilo de UI — ver backupWorkerClient.ts.
-async function readBackupTables(): Promise<{ tables: DumpTable[]; indexes: DumpIndex[] }> {
+async function readBackupTables(
+  onTableProgress?: (
+    tablesDone: number,
+    tablesTotal: number,
+    currentTable: string,
+    rowsDone?: number,
+    rowsTotal?: number,
+  ) => void,
+): Promise<{ tables: DumpTable[]; indexes: DumpIndex[] }> {
+  const totalTablesResult = await client.execute(
+    "SELECT COUNT(*) as n FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+  );
+  const tablesTotal = Number((totalTablesResult.rows[0] as unknown as { n: number }).n);
+  let tablesDone = 0;
+
   const heavyPlaceholders = BACKUP_TABLES_FUERA_DE_TRANSACCION.map((_, i) => `?${i + 1}`).join(", ");
   const heavyMetaResult = await client.execute({
     sql: `SELECT name, sql FROM sqlite_master WHERE type='table' AND name IN (${heavyPlaceholders})`,
@@ -2914,7 +2932,14 @@ async function readBackupTables(): Promise<{ tables: DumpTable[]; indexes: DumpI
   const heavyTables: DumpTable[] = [];
   for (const name of BACKUP_TABLES_FUERA_DE_TRANSACCION) {
     const createSql = heavyMeta.get(name);
-    if (createSql) heavyTables.push(await readTableDumpPaged(client, name, createSql));
+    if (!createSql) continue;
+    heavyTables.push(
+      await readTableDumpPaged(client, name, createSql, BACKUP_HEAVY_TABLE_PAGE_SIZE, (rowsDone, rowsTotal) => {
+        onTableProgress?.(tablesDone + 1, tablesTotal, name, rowsDone, rowsTotal);
+      }),
+    );
+    tablesDone++;
+    onTableProgress?.(tablesDone, tablesTotal, name);
   }
 
   const tx = await client.transaction("read");
@@ -2926,6 +2951,8 @@ async function readBackupTables(): Promise<{ tables: DumpTable[]; indexes: DumpI
     const tables: DumpTable[] = [];
     for (const row of tablesResult.rows as unknown as { name: string; sql: string }[]) {
       tables.push(await readTableDump(tx, row.name, row.sql));
+      tablesDone++;
+      onTableProgress?.(tablesDone, tablesTotal, row.name);
     }
 
     // Índices creados aparte de la definición de la tabla (sql IS NOT NULL
@@ -2950,8 +2977,10 @@ async function readBackupTables(): Promise<{ tables: DumpTable[]; indexes: DumpI
 }
 
 /** Arma el dump SQL completo en el hilo actual — usada solo por los tests de integridad (corren en Node, no en el webview). `runBackupNow` (el camino real de la app) no la usa: arma el dump en un Web Worker en vez del hilo de UI — ver buildBackupArchive. */
-export async function createBackupSql(): Promise<{ sql: string; manifest: import("./types").BackupManifest }> {
-  const { tables, indexes } = await readBackupTables();
+export async function createBackupSql(
+  onTableProgress?: Parameters<typeof readBackupTables>[0],
+): Promise<{ sql: string; manifest: import("./types").BackupManifest }> {
+  const { tables, indexes } = await readBackupTables(onTableProgress);
   return buildBackupSql(tables, indexes);
 }
 
@@ -3039,16 +3068,54 @@ export interface RunBackupResult {
   errors: string[];
 }
 
+export type BackupPhase = "reading" | "compression" | "validation" | "saving";
+
+export interface BackupProgress {
+  phase: BackupPhase;
+  percent: number; // 0-100 acumulado sobre el total del backup
+  detail: string;
+}
+
+export type BackupProgressCallback = (progress: BackupProgress) => void;
+
+// Pesos heurísticos por fase, basados en los tiempos medidos en producción
+// (ver comentario de readBackupTables más arriba: leer domina el tiempo
+// total). Un solo lugar para ajustarlos sin tocar ningún llamador.
+export const BACKUP_PHASE_WEIGHTS: Record<BackupPhase, number> = {
+  reading: 65,
+  compression: 20,
+  validation: 5,
+  saving: 10,
+};
+
+const BACKUP_PHASE_ORDER: BackupPhase[] = ["reading", "compression", "validation", "saving"];
+const BACKUP_PHASE_OFFSET: Record<BackupPhase, number> = (() => {
+  let acc = 0;
+  const offsets = {} as Record<BackupPhase, number>;
+  for (const phase of BACKUP_PHASE_ORDER) {
+    offsets[phase] = acc;
+    acc += BACKUP_PHASE_WEIGHTS[phase];
+  }
+  return offsets;
+})();
+
+function weightedPercent(phase: BackupPhase, fraction: number): number {
+  return BACKUP_PHASE_OFFSET[phase] + Math.min(1, Math.max(0, fraction)) * BACKUP_PHASE_WEIGHTS[phase];
+}
+
 /**
  * Orquesta un backup completo (dump → verificar → guardar local → registrar)
  * — usado tanto por "Crear backup ahora" como por el hook obligatorio antes
  * de capturas masivas y antes de restaurar. Un solo lugar, no triplicado por
- * cada llamador.
+ * cada llamador. `onProgress` es opcional: informa qué tan avanzado va el
+ * backup (0-100) para que la UI muestre una barra real en vez de un spinner
+ * ciego mientras corre — ver BackupProgress.
  */
 export async function runBackupNow(
   tipo: BackupTipo,
   origen: string,
   usuario: string | null,
+  onProgress?: BackupProgressCallback,
 ): Promise<RunBackupResult> {
   const record = await createBackupRecord({
     tipo,
@@ -3059,9 +3126,26 @@ export async function runBackupNow(
     estado: "EN_PROCESO",
   });
   try {
-    const { tables, indexes } = await readBackupTables();
+    const { tables, indexes } = await readBackupTables((tablesDone, tablesTotal, currentTable, rowsDone, rowsTotal) => {
+      const tableFraction = rowsTotal ? (rowsDone ?? 0) / rowsTotal : 1;
+      const fraction = (tablesDone - 1 + tableFraction) / tablesTotal;
+      onProgress?.({
+        phase: "reading",
+        percent: weightedPercent("reading", fraction),
+        detail: `Leyendo ${currentTable} (${tablesDone} de ${tablesTotal})`,
+      });
+    });
+
     const fileName = backupFileName();
-    const { gz, checksum, validation } = await buildBackupArchive(tables, indexes);
+    const { gz, checksum, validation } = await buildBackupArchive(tables, indexes, (phase, fraction) => {
+      onProgress?.({
+        phase,
+        percent: weightedPercent(phase, fraction),
+        detail: phase === "compression" ? "Comprimiendo el archivo…" : "Validando el archivo…",
+      });
+    });
+
+    onProgress?.({ phase: "saving", percent: weightedPercent("saving", 0), detail: "Guardando archivo…" });
     const path = await saveLocalBackupFile(fileName, gz);
     await client.execute({
       sql: "UPDATE backup_history SET archivo = ?1, ubicacion = ?2 WHERE id = ?3",
@@ -3080,6 +3164,7 @@ export async function runBackupNow(
       `Backup ${tipo} (${origen}): ${validation.ok ? "exitoso" : `falló verificación — ${detalle}`} — ${fileName}`,
       usuario,
     );
+    onProgress?.({ phase: "saving", percent: 100, detail: "Backup completo" });
     return {
       ok: validation.ok,
       record: { ...record, estado, archivo: fileName, ubicacion: path, tamano_bytes: gz.length, checksum_sha256: checksum, detalle },

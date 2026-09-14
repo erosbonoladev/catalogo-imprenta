@@ -22,6 +22,7 @@ interface Props {
   productId?: number;
   onDone: (id: number) => void;
   onCancel: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 const emptyProduct: ProductInput = {
@@ -36,7 +37,7 @@ const emptyProduct: ProductInput = {
   codigo_barras_texto: "",
 };
 
-export default function ProductForm({ productId, onDone, onCancel }: Props) {
+export default function ProductForm({ productId, onDone, onCancel, onDirtyChange }: Props) {
   const { user, token } = useAuth();
   const [product, setProduct] = useState<ProductInput>(emptyProduct);
   const [specs, setSpecs] = useState<ProductSpec[]>([]);
@@ -94,6 +95,10 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
       cancelled = true;
     };
   }, [productId, reloadKey]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   function updateField<K extends keyof ProductInput>(key: K, value: ProductInput[K]) {
     setDirty(true);
@@ -223,17 +228,8 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
     }
   }
 
-  function handleCancelClick() {
-    if (dirty && !confirm("Hay cambios sin guardar. ¿Salir de todas formas?")) return;
-    onCancel();
-  }
-
   return (
     <div className="product-form">
-      <button className="btn-link" onClick={handleCancelClick}>
-        ← Cancelar
-      </button>
-
       <h1>{productId ? "Editar ficha técnica" : "Nuevo producto"}</h1>
 
       {loadError && (
@@ -469,7 +465,7 @@ export default function ProductForm({ productId, onDone, onCancel }: Props) {
           <button type="submit" className="btn btn-primary" disabled={saving || !dirty}>
             {saving ? "Guardando…" : "Guardar"}
           </button>
-          <button type="button" className="btn btn-secondary" onClick={handleCancelClick}>
+          <button type="button" className="btn btn-secondary" onClick={onCancel}>
             Cancelar
           </button>
         </div>

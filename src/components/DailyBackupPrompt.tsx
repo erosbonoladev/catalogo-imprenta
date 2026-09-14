@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { hasPermission, useAuth } from "../auth";
-import { getLatestBackup, readLocalBackupFile, runBackupNow, saveBackupFileAs } from "../db";
+import { getLatestBackup, readLocalBackupFile, runBackupNow, saveBackupFileAs, type BackupProgress } from "../db";
+import BackupProgressBar from "./BackupProgressBar";
 
 const DAILY_BACKUP_KEY_PREFIX = "catalogo-imprenta:daily-backup-done:";
 
@@ -25,6 +26,7 @@ export default function DailyBackupPrompt() {
   const [visible, setVisible] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<BackupProgress | null>(null);
 
   useEffect(() => {
     setError(null);
@@ -61,7 +63,12 @@ export default function DailyBackupPrompt() {
     setCreating(true);
     setError(null);
     try {
-      const result = await runBackupNow("BACKUP_LOCAL_DIARIO", "Notificación diaria", user.username);
+      const result = await runBackupNow(
+        "BACKUP_LOCAL_DIARIO",
+        "Notificación diaria",
+        user.username,
+        setProgress,
+      );
       if (!result.ok) {
         setError(result.errors.join("; "));
         return;
@@ -79,6 +86,7 @@ export default function DailyBackupPrompt() {
       setError(`No se pudo crear el backup: ${String(err)}`);
     } finally {
       setCreating(false);
+      setProgress(null);
     }
   }
 
@@ -94,6 +102,7 @@ export default function DailyBackupPrompt() {
           etc.
         </p>
         {error && <p className="form-error">{error}</p>}
+        <BackupProgressBar progress={progress} />
         <div className="form-actions">
           <button type="button" className="btn btn-primary" onClick={handleCreate} disabled={creating}>
             {creating ? "Creando…" : "Crear backup"}

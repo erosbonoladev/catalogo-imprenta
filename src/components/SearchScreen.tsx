@@ -5,6 +5,12 @@ import ProductCard from "./ProductCard";
 import Pagination from "./Pagination";
 
 interface Props {
+  query: string;
+  filter: SearchFilter;
+  page: number;
+  onQueryChange: (query: string) => void;
+  onFilterChange: (filter: SearchFilter) => void;
+  onPageChange: (page: number) => void;
   onSelect: (id: number) => void;
   onNew: () => void;
 }
@@ -18,13 +24,19 @@ const FILTROS: { value: SearchFilter; label: string }[] = [
 
 const PAGE_SIZE = 20; // 5 filas x 4 columnas por página
 
-export default function SearchScreen({ onSelect, onNew }: Props) {
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<SearchFilter>("todo");
+export default function SearchScreen({
+  query,
+  filter,
+  page,
+  onQueryChange,
+  onFilterChange,
+  onPageChange,
+  onSelect,
+  onNew,
+}: Props) {
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,7 +47,7 @@ export default function SearchScreen({ onSelect, onNew }: Props) {
         const products = await searchProducts(query, filter);
         if (!cancelled) {
           setResults(products);
-          setCurrentPage(1);
+          onPageChange(1);
         }
       } catch (err) {
         if (!cancelled) setLoadError(`No se pudo buscar: ${String(err)}`);
@@ -47,14 +59,17 @@ export default function SearchScreen({ onSelect, onNew }: Props) {
       cancelled = true;
       clearTimeout(timer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, filter]);
 
   const totalPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
 
   useEffect(() => {
-    setCurrentPage((page) => Math.min(page, totalPages));
+    if (page > totalPages) onPageChange(totalPages);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalPages]);
 
+  const currentPage = Math.min(page, totalPages);
   const pageResults = results.slice(
     (currentPage - 1) * PAGE_SIZE,
     currentPage * PAGE_SIZE,
@@ -76,7 +91,7 @@ export default function SearchScreen({ onSelect, onNew }: Props) {
         type="text"
         placeholder="Buscar por nombre o código (ej. tangram, 3072)…"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => onQueryChange(e.target.value)}
         autoFocus
       />
 
@@ -86,7 +101,7 @@ export default function SearchScreen({ onSelect, onNew }: Props) {
             key={f.value}
             type="button"
             className={`filter-chip${filter === f.value ? " filter-chip-active" : ""}`}
-            onClick={() => setFilter(f.value)}
+            onClick={() => onFilterChange(f.value)}
           >
             {f.label}
           </button>
@@ -118,7 +133,7 @@ export default function SearchScreen({ onSelect, onNew }: Props) {
             <Pagination
               currentPage={currentPage}
               totalPages={totalPages}
-              onChange={setCurrentPage}
+              onChange={onPageChange}
             />
           )}
         </>

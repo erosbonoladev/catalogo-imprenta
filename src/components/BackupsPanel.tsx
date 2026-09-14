@@ -19,12 +19,14 @@ import {
   saveBackupFileAs,
   updateBackupSettings,
   verifyRestoreCounts,
+  type BackupProgress,
 } from "../db";
 import type { BackupValidation } from "../backup";
 import { validateRestoreFile } from "../backupWorkerClient";
 import { buildPreciosListWorkbook, buildRemisionesHistorialWorkbook } from "../excelExport";
 import type { BackupFrecuencia, BackupRecord, BackupSettings, BackupTipo } from "../types";
 import Toast from "./Toast";
+import BackupProgressBar from "./BackupProgressBar";
 import basuraIcon from "../../Assets/basura.svg";
 
 const TIPO_LABELS: Record<BackupTipo, string> = {
@@ -125,6 +127,7 @@ export default function BackupsPanel() {
   const [loading, setLoading] = useState(true);
 
   const [creating, setCreating] = useState(false);
+  const [backupProgress, setBackupProgress] = useState<BackupProgress | null>(null);
   const [exportingPrecios, setExportingPrecios] = useState(false);
   const [exportingRemisiones, setExportingRemisiones] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -170,7 +173,7 @@ export default function BackupsPanel() {
     setCreating(true);
     setToastMessage(null);
     try {
-      const result = await runBackupNow("BACKUP_MANUAL", "Manual", user?.username ?? null);
+      const result = await runBackupNow("BACKUP_MANUAL", "Manual", user?.username ?? null, setBackupProgress);
       if (!result.ok) {
         setToastMessage(`El backup falló: ${result.errors.join("; ")}`);
         await refresh();
@@ -191,6 +194,7 @@ export default function BackupsPanel() {
       await refresh();
     } finally {
       setCreating(false);
+      setBackupProgress(null);
     }
   }
 
@@ -395,7 +399,9 @@ export default function BackupsPanel() {
       "BACKUP_PRE_RESTAURACION",
       `Antes de restaurar ${restoreFlow.fileName}`,
       username,
+      setBackupProgress,
     );
+    setBackupProgress(null);
     if (!preRestore.ok) {
       setRestoreFlow({
         ...restoreFlow,
@@ -587,6 +593,7 @@ export default function BackupsPanel() {
             </button>
           )}
         </div>
+        <BackupProgressBar progress={backupProgress} />
       </div>
 
       {canConfigurar && !settingsDraft && (
@@ -844,7 +851,12 @@ export default function BackupsPanel() {
               </>
             )}
 
-            {restoreFlow.status === "running" && <p className="hint">{restoreFlow.message}</p>}
+            {restoreFlow.status === "running" && (
+              <>
+                <p className="hint">{restoreFlow.message}</p>
+                <BackupProgressBar progress={backupProgress} />
+              </>
+            )}
 
             {(restoreFlow.status === "success" || restoreFlow.status === "error") && (
               <>

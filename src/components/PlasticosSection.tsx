@@ -17,7 +17,7 @@ import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   productId: number;
-  onBack: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 const CAMPOS_VISTA: { label: string; key: keyof PlasticProductInput }[] = [
@@ -34,7 +34,7 @@ const CAMPOS_VISTA: { label: string; key: keyof PlasticProductInput }[] = [
   { label: "Dimensiones de empaque", key: "dimensiones_empaque" },
 ];
 
-export default function PlasticosSection({ productId, onBack }: Props) {
+export default function PlasticosSection({ productId, onDirtyChange }: Props) {
   const { user, token } = useAuth();
   const allowed = hasPermission(user, "plasticos");
   const [items, setItems] = useState<PlasticItem[]>([]);
@@ -70,6 +70,10 @@ export default function PlasticosSection({ productId, onBack }: Props) {
     if (allowed || !user || !token) return;
     logEventAsActor({ id: user.id, token }, "WARNING", `Acceso denegado a Piezas para ${user.username}`);
   }, [allowed, user, token]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   function updateItemData(index: number, patch: Partial<PlasticProductInput>) {
     setDirty(true);
@@ -153,17 +157,9 @@ export default function PlasticosSection({ productId, onBack }: Props) {
     setEditMode(false);
   }
 
-  function handleBackClick() {
-    if (dirty && !confirm("Hay cambios sin guardar. ¿Salir de todas formas?")) return;
-    onBack();
-  }
-
   if (!allowed) {
     return (
       <div className="private-section">
-        <button className="btn-link" onClick={onBack}>
-          ← Volver a la ficha técnica
-        </button>
         <h1>Acceso denegado</h1>
         <p className="hint">No tienes permiso para ver esta sección.</p>
       </div>
@@ -173,9 +169,6 @@ export default function PlasticosSection({ productId, onBack }: Props) {
   if (loading) {
     return (
       <div className="private-section">
-        <button className="btn-link" onClick={onBack}>
-          ← Volver a la ficha técnica
-        </button>
         <p className="hint">Cargando…</p>
       </div>
     );
@@ -184,9 +177,6 @@ export default function PlasticosSection({ productId, onBack }: Props) {
   if (loadError) {
     return (
       <div className="private-section">
-        <button className="btn-link" onClick={onBack}>
-          ← Volver a la ficha técnica
-        </button>
         <p className="form-error">{loadError}</p>
         <button type="button" className="btn btn-secondary" onClick={loadItems}>
           Reintentar
@@ -201,9 +191,6 @@ export default function PlasticosSection({ productId, onBack }: Props) {
 
   return (
     <div className="private-section">
-      <button className="btn-link" onClick={handleBackClick}>
-        ← Volver a la ficha técnica
-      </button>
       <h1>Piezas</h1>
       <p className="hint">
         Piezas usadas en este juego. Cada una vive en el catálogo de Piezas y puede reutilizarse

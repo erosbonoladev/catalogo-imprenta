@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { findProductByCodigo, logEventAsActor, pickExcelFile, runBackupNow, upsertPrecio } from "../db";
+import {
+  findProductByCodigo,
+  logEventAsActor,
+  pickExcelFile,
+  runBackupNow,
+  upsertPrecio,
+  type BackupProgress,
+} from "../db";
 import {
   classifyPrecioRows,
   computeSkuPrincipal,
@@ -9,6 +16,7 @@ import {
 } from "../precios";
 import { isAdmin, useAuth } from "../auth";
 import { formatMoney } from "../excelExport";
+import BackupProgressBar from "./BackupProgressBar";
 
 type Phase = "picking" | "validating" | "reviewing" | "backing-up" | "committing" | "done";
 
@@ -65,6 +73,7 @@ export default function PreciosImportPanel() {
   const [rows, setRows] = useState<ClassifiedPrecioRow[]>([]);
   const [validateProgress, setValidateProgress] = useState<Progress>({ done: 0, total: 0 });
   const [commitProgress, setCommitProgress] = useState<Progress>({ done: 0, total: 0 });
+  const [backupProgress, setBackupProgress] = useState<BackupProgress | null>(null);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
 
   if (!isAdmin(user)) {
@@ -125,7 +134,9 @@ export default function PreciosImportPanel() {
       "BACKUP_PRE_IMPORTACION",
       "Captura masiva de precios",
       user?.username ?? null,
+      setBackupProgress,
     );
+    setBackupProgress(null);
     if (!backup.ok) {
       setPhase("reviewing");
       setError(
@@ -290,16 +301,7 @@ export default function PreciosImportPanel() {
         </div>
       )}
 
-      {phase === "backing-up" && (
-        <div className="import-progress">
-          <p className="hint" style={{ margin: 0 }}>
-            Creando backup previo — la importación no comenzará hasta que se verifique…
-          </p>
-          <div className="progress-bar">
-            <div className="progress-bar-fill" style={{ width: "100%" }} />
-          </div>
-        </div>
-      )}
+      {phase === "backing-up" && <BackupProgressBar progress={backupProgress} />}
 
       {phase === "committing" && (
         <div className="import-progress">

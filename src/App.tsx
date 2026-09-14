@@ -11,10 +11,12 @@ import MaderasSection from "./components/MaderasSection";
 import Configuraciones from "./components/Configuraciones";
 import LoginScreen from "./components/LoginScreen";
 import Sidebar from "./components/Sidebar";
+import NavigationBar from "./components/NavigationBar";
 import RemisionesSection from "./components/RemisionesSection";
 import SkuMasterSection from "./components/SkuMasterSection";
 import DailyBackupPrompt from "./components/DailyBackupPrompt";
 import { useAuth } from "./auth";
+import type { SearchFilter } from "./types";
 
 type View =
   | { name: "search" }
@@ -29,14 +31,97 @@ type View =
   | { name: "remisiones" }
   | { name: "skuMaster" };
 
+interface SearchState {
+  query: string;
+  filter: SearchFilter;
+  page: number;
+}
+
+const HOME_VIEW: View = { name: "search" };
+const BLANK_SEARCH: SearchState = { query: "", filter: "todo", page: 1 };
+
+function viewNoun(v: View): string {
+  switch (v.name) {
+    case "search":
+      return "el catálogo";
+    case "detail":
+      return "la ficha técnica";
+    case "form":
+      return "el formulario";
+    case "plasticos":
+      return "las piezas";
+    case "piezasGeneral":
+      return "Piezas General";
+    case "piezaDetalle":
+      return "la pieza";
+    case "imprenta":
+      return "Imprenta";
+    case "maderas":
+      return "Maderas";
+    case "configuraciones":
+      return "Configuraciones";
+    case "remisiones":
+      return "Remisiones";
+    case "skuMaster":
+      return "SKU Master";
+  }
+}
+
 function App() {
   const { user, loading } = useAuth();
-  const [view, setView] = useState<View>({ name: "search" });
+  const [history, setHistory] = useState<{ stack: View[]; index: number }>({
+    stack: [HOME_VIEW],
+    index: 0,
+  });
+  const [dirty, setDirty] = useState(false);
+  const [searchState, setSearchState] = useState<SearchState>(BLANK_SEARCH);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  const view = history.stack[history.index];
+  const prevView = history.index > 0 ? history.stack[history.index - 1] : null;
+  const nextView = history.index < history.stack.length - 1 ? history.stack[history.index + 1] : null;
+
   useEffect(() => {
-    setView({ name: "search" });
+    setHistory({ stack: [HOME_VIEW], index: 0 });
+    setDirty(false);
+    setSearchState(BLANK_SEARCH);
   }, [user?.id]);
+
+  function confirmLeave(): boolean {
+    return !dirty || confirm("Hay cambios sin guardar. ¿Salir de todas formas?");
+  }
+
+  function navigate(next: View) {
+    if (!confirmLeave()) return;
+    setDirty(false);
+    setHistory((h) => {
+      const stack = h.stack.slice(0, h.index + 1).concat(next);
+      return { stack, index: stack.length - 1 };
+    });
+  }
+
+  function goBack() {
+    if (history.index <= 0 || !confirmLeave()) return;
+    setDirty(false);
+    setHistory((h) => ({ ...h, index: h.index - 1 }));
+  }
+
+  function goForward() {
+    if (history.index >= history.stack.length - 1 || !confirmLeave()) return;
+    setDirty(false);
+    setHistory((h) => ({ ...h, index: h.index + 1 }));
+  }
+
+  function goToCatalogo() {
+    if (!confirmLeave()) return;
+    setDirty(false);
+    setSearchState(BLANK_SEARCH);
+    setHistory((h) => {
+      if (h.stack[h.index].name === "search") return h;
+      const stack = h.stack.slice(0, h.index + 1).concat(HOME_VIEW);
+      return { stack, index: stack.length - 1 };
+    });
+  }
 
   if (loading) {
     return (
@@ -54,102 +139,106 @@ function App() {
     );
   }
 
+  const backTitle = prevView
+    ? view.name === "form"
+      ? "Cancelar"
+      : `Volver a ${viewNoun(prevView)}`
+    : null;
+  const forwardTitle = nextView ? `Ir a ${viewNoun(nextView)}` : null;
+
   return (
     <div className="app-shell">
       <DailyBackupPrompt />
       <Sidebar
         open={sidebarOpen}
         onToggle={() => setSidebarOpen((o) => !o)}
-        onConfiguraciones={() => setView({ name: "configuraciones" })}
-        onRemisiones={() => setView({ name: "remisiones" })}
-        onPiezasGeneral={() => setView({ name: "piezasGeneral" })}
-        onSkuMaster={() => setView({ name: "skuMaster" })}
+        onCatalogo={goToCatalogo}
+        onConfiguraciones={() => navigate({ name: "configuraciones" })}
+        onRemisiones={() => navigate({ name: "remisiones" })}
+        onPiezasGeneral={() => navigate({ name: "piezasGeneral" })}
+        onSkuMaster={() => navigate({ name: "skuMaster" })}
+      />
+      <NavigationBar
+        canGoBack={history.index > 0}
+        canGoForward={history.index < history.stack.length - 1}
+        backTitle={backTitle}
+        forwardTitle={forwardTitle}
+        onBack={goBack}
+        onForward={goForward}
       />
 
       <main className="app app-content">
         {view.name === "search" && (
           <SearchScreen
-            onSelect={(id) => setView({ name: "detail", productId: id })}
-            onNew={() => setView({ name: "form" })}
+            query={searchState.query}
+            filter={searchState.filter}
+            page={searchState.page}
+            onQueryChange={(query) => setSearchState((s) => ({ ...s, query }))}
+            onFilterChange={(filter) => setSearchState((s) => ({ ...s, filter, page: 1 }))}
+            onPageChange={(page) => setSearchState((s) => ({ ...s, page }))}
+            onSelect={(id) => navigate({ name: "detail", productId: id })}
+            onNew={() => navigate({ name: "form" })}
           />
         )}
 
         {view.name === "detail" && (
           <ProductDetail
             productId={view.productId}
-            onBack={() => setView({ name: "search" })}
-            onEdit={(id) => setView({ name: "form", productId: id })}
-            onDeleted={() => setView({ name: "search" })}
-            onOpenPlasticos={(id) => setView({ name: "plasticos", productId: id })}
-            onOpenImprenta={(id) => setView({ name: "imprenta", productId: id })}
-            onOpenMaderas={(id) => setView({ name: "maderas", productId: id })}
+            onEdit={(id) => navigate({ name: "form", productId: id })}
+            onDeleted={() => navigate({ name: "search" })}
+            onOpenPlasticos={(id) => navigate({ name: "plasticos", productId: id })}
+            onOpenImprenta={(id) => navigate({ name: "imprenta", productId: id })}
+            onOpenMaderas={(id) => navigate({ name: "maderas", productId: id })}
           />
         )}
 
         {view.name === "form" && (
           <ProductForm
             productId={view.productId}
-            onDone={(id) => setView({ name: "detail", productId: id })}
-            onCancel={() =>
-              setView(
-                view.productId
-                  ? { name: "detail", productId: view.productId }
-                  : { name: "search" },
-              )
-            }
+            onDone={(id) => navigate({ name: "detail", productId: id })}
+            onCancel={goBack}
+            onDirtyChange={setDirty}
           />
         )}
 
         {view.name === "plasticos" && (
-          <PlasticosSection
-            productId={view.productId}
-            onBack={() => setView({ name: "detail", productId: view.productId })}
-          />
+          <PlasticosSection productId={view.productId} onDirtyChange={setDirty} />
         )}
 
         {view.name === "piezasGeneral" && (
           <PiezasGeneralSection
-            onBack={() => setView({ name: "search" })}
-            onVerPieza={(id) => setView({ name: "piezaDetalle", plasticProductId: id })}
+            onVerPieza={(id) => navigate({ name: "piezaDetalle", plasticProductId: id })}
           />
         )}
 
         {view.name === "piezaDetalle" && (
           <PiezaDetalleScreen
             plasticProductId={view.plasticProductId}
-            onBack={() => setView({ name: "piezasGeneral" })}
-            onOpenProduct={(productId) => setView({ name: "detail", productId })}
+            onBack={goBack}
+            onOpenProduct={(productId) => navigate({ name: "detail", productId })}
           />
         )}
 
         {view.name === "imprenta" && (
-          <ImprentaSection
-            productId={view.productId}
-            onBack={() => setView({ name: "detail", productId: view.productId })}
-          />
+          <ImprentaSection productId={view.productId} onDirtyChange={setDirty} />
         )}
 
         {view.name === "maderas" && (
           <MaderasSection
             productId={view.productId}
-            onBack={() => setView({ name: "detail", productId: view.productId })}
-            onOpenPiezas={() => setView({ name: "plasticos", productId: view.productId })}
+            onDirtyChange={setDirty}
+            onOpenPiezas={() => navigate({ name: "plasticos", productId: view.productId })}
           />
         )}
 
-        {view.name === "configuraciones" && (
-          <Configuraciones onBack={() => setView({ name: "search" })} />
-        )}
+        {view.name === "configuraciones" && <Configuraciones />}
 
-        {view.name === "remisiones" && (
-          <RemisionesSection onBack={() => setView({ name: "search" })} />
-        )}
+        {view.name === "remisiones" && <RemisionesSection />}
 
         {view.name === "skuMaster" && (
           <SkuMasterSection
-            onBack={() => setView({ name: "search" })}
-            onOpenProduct={(id) => setView({ name: "detail", productId: id })}
-            onOpenPieza={(id) => setView({ name: "piezaDetalle", plasticProductId: id })}
+            onOpenProduct={(id) => navigate({ name: "detail", productId: id })}
+            onOpenPieza={(id) => navigate({ name: "piezaDetalle", plasticProductId: id })}
           />
         )}
       </main>

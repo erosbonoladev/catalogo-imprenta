@@ -8,10 +8,6 @@ import RemisionForm from "./RemisionForm";
 import Toast from "./Toast";
 import basuraIcon from "../../Assets/basura.svg";
 
-interface Props {
-  onBack: () => void;
-}
-
 type TipoSel = "interna" | "externa";
 
 function formatFechaCorta(fechaIso: string): string {
@@ -20,7 +16,7 @@ function formatFechaCorta(fechaIso: string): string {
   return `${d}/${m}/${y}`;
 }
 
-export default function RemisionesSection({ onBack }: Props) {
+export default function RemisionesSection() {
   const { user, token } = useAuth();
   const allowed = hasPermission(user, "remisiones_acceso");
   const canCrear = hasPermission(user, "remisiones_crear");
@@ -54,9 +50,6 @@ export default function RemisionesSection({ onBack }: Props) {
   if (!allowed) {
     return (
       <div className="private-section">
-        <button className="btn-link" onClick={onBack}>
-          ← Volver al menú principal
-        </button>
         <h1>Acceso denegado</h1>
         <p className="hint">No tienes permiso para ver esta sección.</p>
       </div>
@@ -73,9 +66,6 @@ export default function RemisionesSection({ onBack }: Props) {
 
   return (
     <div className="private-section">
-      <button className="btn-link" onClick={onBack}>
-        ← Volver al menú principal
-      </button>
       <h1>Remisiones</h1>
 
       <div className="search-filters" role="group" aria-label="Tipo de remisión">

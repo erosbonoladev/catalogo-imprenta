@@ -17,7 +17,6 @@ import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   productId: number;
-  onBack: () => void;
   onEdit: (id: number) => void;
   onDeleted: () => void;
   onOpenPlasticos: (productId: number) => void;
@@ -33,7 +32,6 @@ function formatFechaCorta(fechaSql: string): string {
 
 export default function ProductDetail({
   productId,
-  onBack,
   onEdit,
   onDeleted,
   onOpenPlasticos,
@@ -85,9 +83,6 @@ export default function ProductDetail({
   if (loadError) {
     return (
       <div className="product-detail">
-        <button className="btn-link" onClick={onBack}>
-          ← Volver a la búsqueda
-        </button>
         <p className="form-error">{loadError}</p>
         <button type="button" className="btn btn-secondary" onClick={() => setReloadKey((k) => k + 1)}>
           Reintentar
@@ -99,9 +94,6 @@ export default function ProductDetail({
   if (!product) {
     return (
       <div className="product-detail">
-        <button className="btn-link" onClick={onBack}>
-          ← Volver a la búsqueda
-        </button>
         <p className="hint">Cargando…</p>
       </div>
     );
@@ -121,10 +113,6 @@ export default function ProductDetail({
 
   return (
     <div className="product-detail">
-      <button className="btn-link" onClick={onBack}>
-        ← Volver a la búsqueda
-      </button>
-
       <div className="product-detail-layout">
         <div className="product-detail-media">
           <div className="product-detail-image">

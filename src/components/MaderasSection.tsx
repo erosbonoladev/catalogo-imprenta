@@ -11,7 +11,7 @@ import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   productId: number;
-  onBack: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
   onOpenPiezas: () => void;
 }
 
@@ -55,7 +55,7 @@ function sameNombreSku(a: { nombre: string; sku: string }, b: { nombre: string; 
   );
 }
 
-export default function MaderasSection({ productId, onBack, onOpenPiezas }: Props) {
+export default function MaderasSection({ productId, onDirtyChange, onOpenPiezas }: Props) {
   const { user, token } = useAuth();
   const allowed = hasPermission(user, "maderas");
   const [items, setItems] = useState<WoodItem[]>([]);
@@ -93,6 +93,10 @@ export default function MaderasSection({ productId, onBack, onOpenPiezas }: Prop
     if (allowed || !user || !token) return;
     logEventAsActor({ id: user.id, token }, "WARNING", `Acceso denegado a Maderas para ${user.username}`);
   }, [allowed, user, token]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   function updateItemData(index: number, patch: Partial<WoodProductInput>) {
     setDirty(true);
@@ -215,17 +219,9 @@ export default function MaderasSection({ productId, onBack, onOpenPiezas }: Prop
     setEditMode(false);
   }
 
-  function handleBackClick() {
-    if (dirty && !confirm("Hay cambios sin guardar. ¿Salir de todas formas?")) return;
-    onBack();
-  }
-
   if (!allowed) {
     return (
       <div className="private-section">
-        <button className="btn-link" onClick={onBack}>
-          ← Volver a la ficha técnica
-        </button>
         <h1>Acceso denegado</h1>
         <p className="hint">No tienes permiso para ver esta sección.</p>
       </div>
@@ -235,9 +231,6 @@ export default function MaderasSection({ productId, onBack, onOpenPiezas }: Prop
   if (loading) {
     return (
       <div className="private-section">
-        <button className="btn-link" onClick={onBack}>
-          ← Volver a la ficha técnica
-        </button>
         <p className="hint">Cargando…</p>
       </div>
     );
@@ -246,9 +239,6 @@ export default function MaderasSection({ productId, onBack, onOpenPiezas }: Prop
   if (loadError) {
     return (
       <div className="private-section">
-        <button className="btn-link" onClick={onBack}>
-          ← Volver a la ficha técnica
-        </button>
         <p className="form-error">{loadError}</p>
         <button type="button" className="btn btn-secondary" onClick={loadItems}>
           Reintentar
@@ -274,9 +264,6 @@ export default function MaderasSection({ productId, onBack, onOpenPiezas }: Prop
 
   return (
     <div className="private-section">
-      <button className="btn-link" onClick={handleBackClick}>
-        ← Volver a la ficha técnica
-      </button>
       <h1>Maderas</h1>
       <p className="hint">
         Productos de madera usados en este juego. Cada uno vive en el catálogo de Maderas y puede

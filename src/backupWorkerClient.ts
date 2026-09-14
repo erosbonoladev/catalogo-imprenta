@@ -1,4 +1,5 @@
 import type { BackupValidation, DumpIndex, DumpTable } from "./backup";
+import type { BackupWorkerResponse } from "./backupWorker";
 
 export interface BackupArchiveResult {
   gz: Uint8Array;
@@ -11,14 +12,20 @@ export interface BackupArchiveResult {
  * del hilo de UI — ver backupWorker.ts sobre por qué (hacerlo en el hilo
  * principal colgaba la app con las imágenes de products/plastic_products).
  */
-export function buildBackupArchive(tables: DumpTable[], indexes: DumpIndex[]): Promise<BackupArchiveResult> {
+export function buildBackupArchive(
+  tables: DumpTable[],
+  indexes: DumpIndex[],
+  onProgress?: (phase: "compression" | "validation", fraction: number) => void,
+): Promise<BackupArchiveResult> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL("./backupWorker.ts", import.meta.url), { type: "module" });
-    worker.onmessage = (e: MessageEvent) => {
+    worker.onmessage = (e: MessageEvent<BackupWorkerResponse>) => {
+      const data = e.data;
+      if (data.kind === "progress") {
+        onProgress?.(data.phase, data.fraction);
+        return;
+      }
       worker.terminate();
-      const data = e.data as
-        | { ok: true; gz: ArrayBuffer; checksum: string; validation: BackupValidation }
-        | { ok: false; error: string };
       if (data.ok) {
         resolve({ gz: new Uint8Array(data.gz), checksum: data.checksum, validation: data.validation });
       } else {

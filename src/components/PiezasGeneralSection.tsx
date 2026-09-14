@@ -18,11 +18,10 @@ import PlasticProductFields, { EMPTY_PLASTIC_DATA } from "./PlasticProductFields
 import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
-  onBack: () => void;
   onVerPieza: (plasticProductId: number) => void;
 }
 
-export default function PiezasGeneralSection({ onBack, onVerPieza }: Props) {
+export default function PiezasGeneralSection({ onVerPieza }: Props) {
   const { user, token } = useAuth();
   const allowed = hasPermission(user, "plasticos");
   const [piezas, setPiezas] = useState<PlasticProduct[]>([]);
@@ -60,9 +59,6 @@ export default function PiezasGeneralSection({ onBack, onVerPieza }: Props) {
   if (!allowed) {
     return (
       <div className="private-section">
-        <button className="btn-link" onClick={onBack}>
-          ← Volver
-        </button>
         <h1>Acceso denegado</h1>
         <p className="hint">No tienes permiso para ver esta sección.</p>
       </div>
@@ -84,9 +80,6 @@ export default function PiezasGeneralSection({ onBack, onVerPieza }: Props) {
 
   return (
     <div className="private-section">
-      <button className="btn-link" onClick={onBack}>
-        ← Volver
-      </button>
       <h1>Piezas General</h1>
       <p className="hint">
         Catálogo completo de piezas registradas en la base de datos, estén o no vinculadas

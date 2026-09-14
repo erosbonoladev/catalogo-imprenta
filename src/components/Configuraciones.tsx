@@ -8,10 +8,6 @@ import LogsPanel from "./LogsPanel";
 import CapturaMasivaPanel from "./CapturaMasivaPanel";
 import BackupsPanel from "./BackupsPanel";
 
-interface Props {
-  onBack: () => void;
-}
-
 type Tab = "usuarios" | "conectados" | "registro" | "backups" | "captura-masiva";
 
 const BASE_TABS: { value: Tab; label: string }[] = [
@@ -24,7 +20,7 @@ const ADMIN_TABS: { value: Tab; label: string }[] = [
   { value: "captura-masiva", label: "Captura masiva" },
 ];
 
-export default function Configuraciones({ onBack }: Props) {
+export default function Configuraciones() {
   const { user, token } = useAuth();
   const allowedGeneral = hasPermission(user, "configuraciones");
   const allowedBackups = PERMISOS_BACKUPS.some((p) => hasPermission(user, p));
@@ -50,9 +46,6 @@ export default function Configuraciones({ onBack }: Props) {
   if (!allowed) {
     return (
       <div className="private-section">
-        <button className="btn-link" onClick={onBack}>
-          ← Volver al menú principal
-        </button>
         <h1>Acceso denegado</h1>
         <p className="hint">No tienes permiso para ver esta sección.</p>
       </div>
@@ -61,9 +54,6 @@ export default function Configuraciones({ onBack }: Props) {
 
   return (
     <div className="private-section">
-      <button className="btn-link" onClick={onBack}>
-        ← Volver al menú principal
-      </button>
       <h1>Configuraciones</h1>
 
       <div className="search-filters" role="group" aria-label="Sección de configuraciones">

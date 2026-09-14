@@ -20,9 +20,10 @@ interface BackupWorkerRequest {
   indexes: DumpIndex[];
 }
 
-type BackupWorkerResponse =
-  | { ok: true; gz: ArrayBuffer; checksum: string; validation: BackupValidation }
-  | { ok: false; error: string };
+export type BackupWorkerResponse =
+  | { kind: "progress"; phase: "compression" | "validation"; fraction: number }
+  | { kind: "done"; ok: true; gz: ArrayBuffer; checksum: string; validation: BackupValidation }
+  | { kind: "done"; ok: false; error: string };
 
 // self.postMessage/onmessage traen el tipado de Window por defecto (lib
 // "dom"); agregar lib "webworker" al proyecto entero chocaría con ese mismo
@@ -36,11 +37,15 @@ const ctx = self as unknown as {
 ctx.onmessage = async (e) => {
   try {
     const { tables, indexes } = e.data;
+    ctx.postMessage({ kind: "progress", phase: "compression", fraction: 0 });
     const { sql } = buildBackupSql(tables, indexes);
+    ctx.postMessage({ kind: "progress", phase: "compression", fraction: 0.5 });
     const validation = validateBackupSql(sql);
+    ctx.postMessage({ kind: "progress", phase: "validation", fraction: 0 });
     const [gz, checksum] = await Promise.all([gzipText(sql), sha256Hex(sql)]);
-    ctx.postMessage({ ok: true, gz: gz.buffer, checksum, validation }, [gz.buffer]);
+    ctx.postMessage({ kind: "progress", phase: "validation", fraction: 1 });
+    ctx.postMessage({ kind: "done", ok: true, gz: gz.buffer, checksum, validation }, [gz.buffer]);
   } catch (err) {
-    ctx.postMessage({ ok: false, error: String(err) });
+    ctx.postMessage({ kind: "done", ok: false, error: String(err) });
   }
 };

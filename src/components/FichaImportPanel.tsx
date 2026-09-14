@@ -8,6 +8,7 @@ import {
   runBackupNow,
   setPresentacionOriginal,
   updateProduct,
+  type BackupProgress,
 } from "../db";
 import {
   buildSpecsForRow,
@@ -18,6 +19,7 @@ import {
   type RowLookup,
 } from "../fichaImport";
 import { isAdmin, useAuth } from "../auth";
+import BackupProgressBar from "./BackupProgressBar";
 
 type Phase = "picking" | "validating" | "reviewing" | "backing-up" | "committing" | "done";
 
@@ -72,6 +74,7 @@ export default function FichaImportPanel() {
   const [overwriteChoices, setOverwriteChoices] = useState<Map<number, boolean>>(new Map());
   const [validateProgress, setValidateProgress] = useState<Progress>({ done: 0, total: 0 });
   const [commitProgress, setCommitProgress] = useState<Progress>({ done: 0, total: 0 });
+  const [backupProgress, setBackupProgress] = useState<BackupProgress | null>(null);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
 
   if (!isAdmin(user)) {
@@ -156,7 +159,9 @@ export default function FichaImportPanel() {
       "BACKUP_PRE_IMPORTACION",
       "Captura masiva de fichas técnicas",
       user?.username ?? null,
+      setBackupProgress,
     );
+    setBackupProgress(null);
     if (!backup.ok) {
       setPhase("reviewing");
       setError(
@@ -411,16 +416,7 @@ export default function FichaImportPanel() {
         </div>
       )}
 
-      {phase === "backing-up" && (
-        <div className="import-progress">
-          <p className="hint" style={{ margin: 0 }}>
-            Creando backup previo — la importación no comenzará hasta que se verifique…
-          </p>
-          <div className="progress-bar">
-            <div className="progress-bar-fill" style={{ width: "100%" }} />
-          </div>
-        </div>
-      )}
+      {phase === "backing-up" && <BackupProgressBar progress={backupProgress} />}
 
       {phase === "committing" && (
         <div className="import-progress">
