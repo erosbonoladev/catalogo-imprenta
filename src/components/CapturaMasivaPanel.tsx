@@ -4,8 +4,9 @@ import ImageImportPanel from "./ImageImportPanel";
 import PreciosImportPanel from "./PreciosImportPanel";
 import PiezasImportPanel from "./PiezasImportPanel";
 import MaderaImportPanel from "./MaderaImportPanel";
+import CorreccionImportPanel from "./CorreccionImportPanel";
 
-type SubTab = "fichas" | "imagenes" | "precios" | "piezas" | "maderas";
+type SubTab = "fichas" | "imagenes" | "precios" | "piezas" | "maderas" | "correccion";
 
 const SUB_TABS: { value: SubTab; label: string }[] = [
   { value: "fichas", label: "Fichas técnicas" },
@@ -13,6 +14,7 @@ const SUB_TABS: { value: SubTab; label: string }[] = [
   { value: "precios", label: "Precios Imprenta" },
   { value: "piezas", label: "Piezas" },
   { value: "maderas", label: "Maderas" },
+  { value: "correccion", label: "Datos y Precios Venta" },
 ];
 
 export default function CapturaMasivaPanel() {
@@ -39,6 +41,7 @@ export default function CapturaMasivaPanel() {
       {subTab === "precios" && <PreciosImportPanel />}
       {subTab === "piezas" && <PiezasImportPanel />}
       {subTab === "maderas" && <MaderaImportPanel />}
+      {subTab === "correccion" && <CorreccionImportPanel />}
     </div>
   );
 }

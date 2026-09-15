@@ -125,6 +125,7 @@ export default function BackupsPanel() {
 
   const [history, setHistory] = useState<BackupRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [creating, setCreating] = useState(false);
   const [backupProgress, setBackupProgress] = useState<BackupProgress | null>(null);
@@ -154,11 +155,20 @@ export default function BackupsPanel() {
       return;
     }
     const actor = { id: user.id, token };
-    const [s, h] = await Promise.all([getBackupSettings(actor), listBackupHistory(actor, 50)]);
-    setSettingsDraft(s);
-    setSettingsDirty(false);
-    setHistory(h);
-    setLoading(false);
+    setLoadError(null);
+    try {
+      const [s, h] = await Promise.all([getBackupSettings(actor), listBackupHistory(actor, 50)]);
+      setSettingsDraft(s);
+      setSettingsDirty(false);
+      setHistory(h);
+    } catch (err) {
+      // Sin esto, un error acá (sesión vencida, blip de red) dejaba el
+      // spinner de "Cargando…" para siempre — Promise.all rechazado sin
+      // catch nunca llegaba a setLoading(false).
+      setLoadError(err instanceof Error ? err.message : "No se pudo cargar la información de backups.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   const ultimo = history[0] ?? null;
@@ -260,14 +270,19 @@ export default function BackupsPanel() {
       setConfirmDeleteId(null);
       return;
     }
-    await deleteBackupRecord({ id: user.id, token }, record.id);
-    await logEventAsActor(
-      { id: user.id, token },
-      "WARNING",
-      `Backup eliminado: ${record.archivo} (${record.tipo})`,
-    );
-    setConfirmDeleteId(null);
-    await refresh();
+    try {
+      await deleteBackupRecord({ id: user.id, token }, record.id);
+      await logEventAsActor(
+        { id: user.id, token },
+        "WARNING",
+        `Backup eliminado: ${record.archivo} (${record.tipo})`,
+      );
+      await refresh();
+    } catch (err) {
+      setToastMessage(err instanceof Error ? err.message : "No se pudo eliminar el backup.");
+    } finally {
+      setConfirmDeleteId(null);
+    }
   }
 
   async function loadRestoreCandidate(fileName: string, rawBytes: Uint8Array, matchedRecordId: number | null) {
@@ -528,6 +543,24 @@ export default function BackupsPanel() {
 
   if (loading) {
     return <p className="hint">Cargando…</p>;
+  }
+
+  if (loadError) {
+    return (
+      <div>
+        <p className="form-error">No se pudo cargar la información de backups: {loadError}</p>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() => {
+            setLoading(true);
+            refresh();
+          }}
+        >
+          Reintentar
+        </button>
+      </div>
+    );
   }
 
   const proximaEjecucion = settingsDraft ? computeNextRun(settingsDraft) : null;

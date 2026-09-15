@@ -1,6 +1,6 @@
 import { createClient, type Client, type Transaction } from "@libsql/client/web";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { exists, mkdir, readDir, readFile, remove, writeFile } from "@tauri-apps/plugin-fs";
+import { exists, mkdir, open as fsOpen, readDir, readFile, remove, writeFile } from "@tauri-apps/plugin-fs";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { invoke } from "@tauri-apps/api/core";
 import { appDataDir, join } from "@tauri-apps/api/path";
@@ -663,6 +663,37 @@ export async function allowFsPath(path: string, isDir = false): Promise<void> {
   await invoke("allow_fs_path", { path, isDir });
 }
 
+// readFile(path)/writeFile(path, bytes) cruzan el IPC de Tauri con el archivo
+// entero de una sola vez — en Windows (WebView2/V8) reconstruir ese payload
+// de punta a punta tira "RangeError: Invalid array length" para archivos de
+// varias decenas de MB en adelante; en macOS (WKWebView/JavaScriptCore) el
+// límite es más alto y nunca se ve. pickBackupFile/readLocalBackupFile
+// (restauración, hasta MAX_RESTORE_FILE_BYTES) y pickExcelFile (hasta
+// MAX_EXCEL_IMPORT_FILE_BYTES) aceptan archivos de hasta 200MB, así que caen
+// de lleno en ese límite. open()+file.read()/file.write() en pedazos chicos
+// lo evita en ambos sentidos — ver también toChunkedStream más abajo, para
+// el lado de escritura.
+const FS_IPC_CHUNK_BYTES = 4 * 1024 * 1024;
+
+async function readFileChunked(path: string): Promise<Uint8Array> {
+  const file = await fsOpen(path, { read: true });
+  try {
+    const info = await file.stat();
+    const result = new Uint8Array(info.size);
+    const buffer = new Uint8Array(FS_IPC_CHUNK_BYTES);
+    let offset = 0;
+    for (;;) {
+      const n = await file.read(buffer);
+      if (n === null) break;
+      result.set(buffer.subarray(0, n), offset);
+      offset += n;
+    }
+    return result;
+  } finally {
+    await file.close();
+  }
+}
+
 export async function pickImage(): Promise<ImageBlob | null> {
   const selected = await open({
     multiple: false,
@@ -690,7 +721,7 @@ export async function pickExcelFile(): Promise<Uint8Array | null> {
     throw new Error("El archivo debe tener extensión .xlsx.");
   }
   await allowFsPath(selected);
-  const data = await readFile(selected);
+  const data = await readFileChunked(selected);
   if (data.length === 0) {
     throw new Error("El archivo está vacío.");
   }
@@ -3057,7 +3088,7 @@ export async function pickBackupFile(): Promise<PickedFile | null> {
   });
   if (!selected || Array.isArray(selected)) return null;
   await allowFsPath(selected);
-  const data = await readFile(selected);
+  const data = await readFileChunked(selected);
   const name = selected.split(/[/\\]/).pop() ?? selected;
   return { name, data };
 }
@@ -3339,7 +3370,16 @@ export async function deleteBackupRecord(actor: Actor, id: number): Promise<void
   });
   const row = result.rows[0] as unknown as BackupRecordRow | undefined;
   if (row && !row.ubicacion.startsWith("http")) {
-    await deleteLocalBackupFile(row.ubicacion);
+    // El archivo local solo existe en la máquina que generó ese backup — en
+    // otra máquina (Windows/macOS comparten la misma BD Turso) su ruta cae
+    // fuera de este appDataDir y assertWithinBackupsDir lanza. Eso no debe
+    // impedir borrar el registro del historial: la limpieza en disco es
+    // best-effort, el registro es lo que el usuario está pidiendo eliminar.
+    try {
+      await deleteLocalBackupFile(row.ubicacion);
+    } catch (err) {
+      console.warn("No se pudo borrar el archivo local del backup:", err);
+    }
   }
   await client.execute({ sql: "DELETE FROM backup_history WHERE id = ?1", args: [id] });
 }
@@ -3431,17 +3471,35 @@ async function assertWithinBackupsDir(path: string): Promise<void> {
   }
 }
 
+// writeFile sí acepta un ReadableStream (escribe en pedazos vía
+// open()+file.write() en vez de un invoke gigante) — mismo límite que
+// readFileChunked (ver el comentario ahí) pero en sentido inverso.
+function toChunkedStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  let offset = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (offset >= bytes.length) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(offset + FS_IPC_CHUNK_BYTES, bytes.length);
+      controller.enqueue(bytes.subarray(offset, end));
+      offset = end;
+    },
+  });
+}
+
 export async function saveLocalBackupFile(fileName: string, bytes: Uint8Array): Promise<string> {
   assertBareFileName(fileName);
   const dir = await getBackupsDir();
   const path = await join(dir, fileName);
-  await writeFile(path, bytes);
+  await writeFile(path, toChunkedStream(bytes));
   return path;
 }
 
 export async function readLocalBackupFile(path: string): Promise<Uint8Array> {
   await assertWithinBackupsDir(path);
-  return readFile(path);
+  return readFileChunked(path);
 }
 
 export async function localBackupFileExists(path: string): Promise<boolean> {
@@ -3464,7 +3522,7 @@ export async function saveBackupFileAs(defaultFileName: string, bytes: Uint8Arra
   const target = await save({ defaultPath: defaultFileName });
   if (!target) return false;
   await allowFsPath(target);
-  await writeFile(target, bytes);
+  await writeFile(target, toChunkedStream(bytes));
   return true;
 }
 

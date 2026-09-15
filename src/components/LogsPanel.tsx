@@ -9,16 +9,29 @@ export default function LogsPanel() {
   const { user, token } = useAuth();
   const [logs, setLogs] = useState<AppLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user || !token) return;
     const actor = { id: user.id, token };
     let cancelled = false;
     async function poll() {
-      const list = await getRecentLogs(actor, 200);
-      if (!cancelled) {
-        setLogs(list);
-        setLoading(false);
+      // Sin try/catch acá, un error (sesión vencida, blip de red) dejaba el
+      // spinner de "Cargando…" para siempre — nunca se llegaba a
+      // setLoading(false), y como el poll se repite cada 12s, tampoco había
+      // ningún mensaje visible mientras tanto.
+      try {
+        const list = await getRecentLogs(actor, 200);
+        if (!cancelled) {
+          setLogs(list);
+          setLoadError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setLoadError(err instanceof Error ? err.message : "No se pudieron cargar los registros.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }
     poll();
@@ -30,6 +43,7 @@ export default function LogsPanel() {
   }, [user, token]);
 
   if (loading) return <p className="hint">Cargando…</p>;
+  if (loadError) return <p className="form-error">No se pudieron cargar los registros: {loadError}</p>;
 
   return (
     <div className="logs-panel">

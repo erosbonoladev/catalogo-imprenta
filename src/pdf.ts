@@ -208,7 +208,7 @@ export async function buildPurchasePdf(
   y += 24;
 
   for (const entry of entries) {
-    ensureSpace(9);
+    ensureSpace(8);
     doc.setDrawColor(200);
     doc.line(marginX, y, pageWidth - marginX, y);
     y += 18;
@@ -220,12 +220,6 @@ export async function buildPurchasePdf(
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10.5);
-    doc.text(
-      `Total de tamaños a imprimir con merma (orden base): ${entry.baseOrder.total_pliegos}`,
-      marginX,
-      y,
-    );
-    y += 22;
 
     doc.setFont("helvetica", "bold");
     doc.text(`Cantidad: ${entry.cantidad}`, marginX, y);
