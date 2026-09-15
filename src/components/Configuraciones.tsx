@@ -20,11 +20,21 @@ const ADMIN_TABS: { value: Tab; label: string }[] = [
   { value: "captura-masiva", label: "Captura masiva" },
 ];
 
-export default function Configuraciones() {
+interface Props {
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
+export default function Configuraciones({ onDirtyChange }: Props) {
   const { user, token } = useAuth();
   const allowedGeneral = hasPermission(user, "configuraciones");
   const allowedBackups = PERMISOS_BACKUPS.some((p) => hasPermission(user, p));
   const allowed = allowedGeneral || allowedBackups;
+  const [importBusy, setImportBusy] = useState(false);
+
+  function handleImportBusyChange(busy: boolean) {
+    setImportBusy(busy);
+    onDirtyChange?.(busy);
+  }
 
   // Administrar usuarios/permisos y Captura masiva quedan detrás de isAdmin,
   // no solo del permiso general "configuraciones" — ver UsersPanel.tsx: ese
@@ -62,6 +72,7 @@ export default function Configuraciones() {
             key={t.value}
             type="button"
             className={`filter-chip${tab === t.value ? " filter-chip-active" : ""}`}
+            disabled={importBusy && tab !== t.value}
             onClick={() => setTab(t.value)}
           >
             {t.label}
@@ -69,11 +80,17 @@ export default function Configuraciones() {
         ))}
       </div>
 
+      {importBusy && (
+        <p className="hint" style={{ marginTop: "0.4rem" }}>
+          Hay una importación en curso — no se puede cambiar de pestaña hasta que termine.
+        </p>
+      )}
+
       {tab === "usuarios" && <UsersPanel />}
       {tab === "conectados" && <ConnectedUsersPanel />}
       {tab === "registro" && <LogsPanel />}
       {tab === "backups" && <BackupsPanel />}
-      {tab === "captura-masiva" && <CapturaMasivaPanel />}
+      {tab === "captura-masiva" && <CapturaMasivaPanel onDirtyChange={handleImportBusyChange} />}
     </div>
   );
 }

@@ -231,7 +231,7 @@ function App() {
           />
         )}
 
-        {view.name === "configuraciones" && <Configuraciones />}
+        {view.name === "configuraciones" && <Configuraciones onDirtyChange={setDirty} />}
 
         {view.name === "remisiones" && <RemisionesSection />}
 

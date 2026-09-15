@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  createProduct,
   findProductByCodigo,
   getProductDescriptions,
   getProductSpecs,
@@ -20,6 +21,7 @@ import { isAdmin, useAuth } from "../auth";
 import { formatMoney } from "../excelExport";
 import type { PrecioVentaCategoria, Product } from "../types";
 import BackupProgressBar from "./BackupProgressBar";
+import Toast from "./Toast";
 
 type Phase = "picking" | "validating" | "reviewing" | "backing-up" | "committing" | "done";
 
@@ -30,7 +32,7 @@ interface Progress {
 
 interface ImportSummary {
   actualizadas: number;
-  noEncontradas: number;
+  creadas: number;
   conErrores: number;
   conCambioNombre: number;
   total: number;
@@ -40,14 +42,14 @@ interface ImportSummary {
 const CHUNK_SIZE = 25;
 
 const STATUS_LABEL: Record<ClassifiedCorreccionRow["status"], string> = {
-  valida: "Se actualizará",
-  no_encontrado: "SKU no encontrado",
+  actualiza: "Se actualizará",
+  crea: "Ficha nueva (SKU no existe)",
   error: "Error",
 };
 
 const STATUS_BADGE_CLASS: Record<ClassifiedCorreccionRow["status"], string> = {
-  valida: "import-status-nueva",
-  no_encontrado: "import-status-no-encontrado",
+  actualiza: "import-status-actualizar",
+  crea: "import-status-nueva",
   error: "import-status-error",
 };
 
@@ -69,22 +71,60 @@ async function buildLookups(
   return lookups;
 }
 
-function formatPreciosVenta(precios: Partial<Record<PrecioVentaCategoria, number>> | undefined): string {
+function formatPreciosVenta(precios: Partial<Record<PrecioVentaCategoria, number | null>> | undefined): string {
   if (!precios) return "—";
-  const entries = Object.entries(precios) as [PrecioVentaCategoria, number][];
+  const entries = Object.entries(precios) as [PrecioVentaCategoria, number | null][];
   if (entries.length === 0) return "—";
-  return entries.map(([categoria, precio]) => `${categoria}: ${formatMoney(precio)}`).join(", ");
+  return entries
+    .map(([categoria, precio]) => `${categoria}: ${precio === null ? "Por definir" : formatMoney(precio)}`)
+    .join(", ");
 }
 
-export default function CorreccionImportPanel() {
+interface Props {
+  // Solo se dispara durante backing-up/committing (fases que escriben en la
+  // BD) — no durante picking/validating/reviewing, que son seguras de
+  // abandonar. Ver nota larga junto al useEffect que lo llama: sin esto, el
+  // padre (CapturaMasivaPanel/Configuraciones) deja cambiar de pestaña a
+  // mitad de una importación y el commit sigue corriendo solo en segundo
+  // plano, invisible, con riesgo real de que el usuario reintente y termine
+  // escribiendo la misma fila dos veces.
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
+export default function CorreccionImportPanel({ onDirtyChange }: Props) {
   const { user, token } = useAuth();
   const [phase, setPhase] = useState<Phase>("picking");
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<ClassifiedCorreccionRow[]>([]);
+  const [nameChangeChoices, setNameChangeChoices] = useState<Map<number, boolean>>(new Map());
+  const [onlyNameChanges, setOnlyNameChanges] = useState(false);
   const [validateProgress, setValidateProgress] = useState<Progress>({ done: 0, total: 0 });
   const [commitProgress, setCommitProgress] = useState<Progress>({ done: 0, total: 0 });
   const [backupProgress, setBackupProgress] = useState<BackupProgress | null>(null);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Si el componente se desmonta (usuario cambia de pestaña) a mitad de
+  // handleConfirm, el bucle de commit deja de arrancar filas nuevas en la
+  // siguiente vuelta — sin esto seguía escribiendo en la BD en segundo
+  // plano de forma invisible, y si el usuario volvía a intentar la misma
+  // importación (pensando que no había hecho nada) terminaba escribiendo
+  // las mismas filas dos veces.
+  const unmountedRef = useRef(false);
+  useEffect(() => {
+    // React.StrictMode monta los efectos dos veces en dev (mount → cleanup
+    // → mount) — sin este reset, la primera "desmontada" simulada dejaba
+    // unmountedRef.current en true para siempre y el commit no procesaba
+    // ninguna fila (ver mismo patrón/comentario en updateContext.tsx).
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    onDirtyChange?.(phase === "backing-up" || phase === "committing");
+  }, [phase, onDirtyChange]);
 
   if (!isAdmin(user)) {
     return (
@@ -99,6 +139,8 @@ export default function CorreccionImportPanel() {
     setPhase("picking");
     setError(null);
     setRows([]);
+    setNameChangeChoices(new Map());
+    setOnlyNameChanges(false);
     setSummary(null);
   }
 
@@ -131,8 +173,31 @@ export default function CorreccionImportPanel() {
       setValidateProgress({ done, total: result.rows.length }),
     );
     const classified = classifyCorreccionRows(result.rows, lookups);
+    const nameChanges = new Map<number, boolean>();
+    for (const row of classified) {
+      if (row.status === "actualiza" && row.nombreCambia) nameChanges.set(row.fila, false);
+    }
+    setNameChangeChoices(nameChanges);
     setRows(classified);
     setPhase("reviewing");
+  }
+
+  function setNameChange(fila: number, value: boolean) {
+    setNameChangeChoices((prev) => {
+      const next = new Map(prev);
+      next.set(fila, value);
+      return next;
+    });
+  }
+
+  function markAllNameChanges(value: boolean) {
+    setNameChangeChoices((prev) => {
+      const next = new Map(prev);
+      for (const row of rows) {
+        if (row.status === "actualiza" && row.nombreCambia) next.set(row.fila, value);
+      }
+      return next;
+    });
   }
 
   async function handleConfirm() {
@@ -159,101 +224,150 @@ export default function CorreccionImportPanel() {
     setCommitProgress({ done: 0, total: rows.length });
 
     let actualizadas = 0;
-    let noEncontradas = 0;
+    let creadas = 0;
     let conErrores = 0;
     let conCambioNombre = 0;
     const errorRows: { fila: number; motivo: string }[] = [];
 
-    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
-      const chunk = rows.slice(i, i + CHUNK_SIZE);
-      await Promise.all(
-        chunk.map(async (row) => {
-          if (row.status === "error") {
-            conErrores += 1;
-            errorRows.push({ fila: row.fila, motivo: row.reason ?? "Error desconocido." });
-            return;
-          }
-          if (row.status === "no_encontrado") {
-            noEncontradas += 1;
-            return;
-          }
-
-          const matched = row.matchedProduct;
-          if (!matched) {
-            conErrores += 1;
-            errorRows.push({ fila: row.fila, motivo: "No se encontró la ficha original para actualizar." });
-            return;
-          }
-
-          try {
-            const [specs, descriptions] = await Promise.all([
-              getProductSpecs(matched.id),
-              getProductDescriptions(matched.id),
-            ]);
-            await updateProduct(
-              actor,
-              matched.id,
-              {
-                codigo: matched.codigo,
-                nombre: row.producto.trim(),
-                categoria: row.categoria.trim(),
-                material: matched.material,
-                descripcion: matched.descripcion,
-                imagen: matched.imagen,
-                imagen_codigo_barras: matched.imagen_codigo_barras,
-                tipo_producto: row.tipoProductoNuevo ?? matched.tipo_producto,
-                codigo_barras_texto: row.codigoBarrasNuevo ?? matched.codigo_barras_texto,
-              },
-              specs,
-              descriptions,
-            );
-
-            const entradas = Object.entries(row.preciosVenta ?? {}) as [PrecioVentaCategoria, number][];
-            if (entradas.length > 0) {
-              await savePreciosVenta(
-                actor,
-                matched.id,
-                entradas.map(([categoria, precio]) => ({ categoria, precio })),
-              );
-            }
-
-            actualizadas += 1;
-            if (row.nombreCambia) conCambioNombre += 1;
-          } catch (err) {
-            conErrores += 1;
-            errorRows.push({ fila: row.fila, motivo: String(err) });
-            logEventAsActor(
-              actor,
-              "ERROR",
-              `Captura masiva de corrección: no se pudo actualizar la fila ${row.fila}: ${String(err)}`,
-            );
-          }
-        }),
+    async function applyPreciosVenta(productId: number, row: ClassifiedCorreccionRow) {
+      const entradas = Object.entries(row.preciosVenta ?? {}) as [PrecioVentaCategoria, number | null][];
+      if (entradas.length === 0) return;
+      await savePreciosVenta(
+        actor,
+        productId,
+        entradas.map(([categoria, precio]) => ({ categoria, precio })),
       );
-      setCommitProgress({ done: Math.min(i + CHUNK_SIZE, rows.length), total: rows.length });
     }
 
+    // Secuencial, no en chunks concurrentes como buildLookups: cada fila abre
+    // dos transacciones de escritura propias (updateProduct/createProduct y
+    // luego savePreciosVenta) — 25 filas en paralelo (CHUNK_SIZE) significa
+    // hasta 50 transacciones de escritura solapadas, lo que revienta con
+    // "SQLITE_BUSY: database is locked" y deja la fila sin aplicar sin que
+    // se note (queda contada como error, pero con cientos de filas en vuelo
+    // a la vez el usuario ve "no se aplicó nada"). Mismo patrón ya usado en
+    // FichaImportPanel/PiezasImportPanel para sus fases de commit.
+    for (let i = 0; i < rows.length && !unmountedRef.current; i++) {
+      const row = rows[i];
+      setCommitProgress({ done: i, total: rows.length });
+
+      if (row.status === "error") {
+        conErrores += 1;
+        errorRows.push({ fila: row.fila, motivo: row.reason ?? "Error desconocido." });
+        continue;
+      }
+
+      if (row.status === "crea") {
+        try {
+          const newId = await createProduct(
+            actor,
+            {
+              codigo: row.sku.trim(),
+              nombre: row.producto.trim(),
+              categoria: row.categoria.trim(),
+              material: "",
+              descripcion: "",
+              imagen: null,
+              imagen_codigo_barras: null,
+              tipo_producto: row.tipoProductoNuevo ?? "",
+              codigo_barras_texto: row.codigoBarrasNuevo ?? "",
+            },
+            [],
+            [],
+          );
+          await applyPreciosVenta(newId, row);
+          creadas += 1;
+        } catch (err) {
+          conErrores += 1;
+          errorRows.push({ fila: row.fila, motivo: String(err) });
+          logEventAsActor(
+            actor,
+            "ERROR",
+            `Captura masiva de corrección: no se pudo crear la ficha de la fila ${row.fila}: ${String(err)}`,
+          );
+        }
+        continue;
+      }
+
+      const matched = row.matchedProduct;
+      if (!matched) {
+        conErrores += 1;
+        errorRows.push({ fila: row.fila, motivo: "No se encontró la ficha original para actualizar." });
+        continue;
+      }
+
+      try {
+        const [specs, descriptions] = await Promise.all([
+          getProductSpecs(matched.id),
+          getProductDescriptions(matched.id),
+        ]);
+        const acceptaCambioNombre = !row.nombreCambia || (nameChangeChoices.get(row.fila) ?? false);
+        await updateProduct(
+          actor,
+          matched.id,
+          {
+            codigo: matched.codigo,
+            nombre: acceptaCambioNombre ? row.producto.trim() : matched.nombre,
+            categoria: row.categoria.trim(),
+            material: matched.material,
+            descripcion: matched.descripcion,
+            imagen: matched.imagen,
+            imagen_codigo_barras: matched.imagen_codigo_barras,
+            tipo_producto: row.tipoProductoNuevo ?? matched.tipo_producto,
+            codigo_barras_texto: row.codigoBarrasNuevo ?? matched.codigo_barras_texto,
+          },
+          specs,
+          descriptions,
+        );
+
+        await applyPreciosVenta(matched.id, row);
+
+        actualizadas += 1;
+        if (row.nombreCambia && acceptaCambioNombre) conCambioNombre += 1;
+      } catch (err) {
+        conErrores += 1;
+        errorRows.push({ fila: row.fila, motivo: String(err) });
+        logEventAsActor(
+          actor,
+          "ERROR",
+          `Captura masiva de corrección: no se pudo actualizar la fila ${row.fila}: ${String(err)}`,
+        );
+      }
+    }
+    setCommitProgress({ done: rows.length, total: rows.length });
+
     errorRows.sort((a, b) => a.fila - b.fila);
+    logEventAsActor(
+      actor,
+      "INFO",
+      `Captura masiva de corrección de fichas y Precios Venta: ${actualizadas} actualizadas (${conCambioNombre} con cambio de nombre), ${creadas} fichas nuevas creadas, ${conErrores} con errores (total ${rows.length}).`,
+    );
+    // Si se desmontó a mitad de camino (usuario cambió de pestaña pese al
+    // aviso de dirty), no queda nadie mirando el resumen/toast — el log de
+    // arriba ya deja constancia de hasta dónde llegó.
+    if (unmountedRef.current) return;
     setSummary({
       actualizadas,
-      noEncontradas,
+      creadas,
       conErrores,
       conCambioNombre,
       total: rows.length,
       errorRows,
     });
-    logEventAsActor(
-      actor,
-      "INFO",
-      `Captura masiva de corrección de fichas y Precios Venta: ${actualizadas} actualizadas (${conCambioNombre} con cambio de nombre), ${noEncontradas} SKU no encontrados, ${conErrores} con errores (total ${rows.length}).`,
+    setToastMessage(
+      `Importación completada: ${actualizadas} actualizadas, ${creadas} creadas, ${conErrores} con errores.`,
     );
     setPhase("done");
   }
 
-  const validasCount = rows.filter((r) => r.status === "valida").length;
-  const noEncontradasCount = rows.filter((r) => r.status === "no_encontrado").length;
+  const actualizaCount = rows.filter((r) => r.status === "actualiza").length;
+  const creaCount = rows.filter((r) => r.status === "crea").length;
   const erroresCount = rows.filter((r) => r.status === "error").length;
-  const cambioNombreCount = rows.filter((r) => r.status === "valida" && r.nombreCambia).length;
+  const cambioNombreCount = rows.filter((r) => r.status === "actualiza" && r.nombreCambia).length;
+  // Filtro de solo vista — no cambia qué filas se procesan al confirmar, solo cuáles se listan.
+  const displayedRows = onlyNameChanges
+    ? rows.filter((r) => r.status === "actualiza" && r.nombreCambia)
+    : rows;
 
   return (
     <div>
@@ -261,10 +375,15 @@ export default function CorreccionImportPanel() {
       <p className="hint" style={{ marginTop: "0.4rem" }}>
         Carga un archivo Excel (.xlsx) con las columnas SKU, Producto, Categoría, Tipo de
         producto, Código de barras, Gobierno, Representante, Mayoreo, Medio mayoreo y Público
-        sugerido. Solo corrige fichas que ya existen (por SKU) — no crea fichas nuevas. Nombre,
-        Categoría y Tipo de producto se sobrescriben con lo que traiga el Excel; Código de
-        barras y cada precio de venta solo se tocan si la celda trae un valor. No afecta specs,
-        imágenes, material ni descripción de Catálogo.
+        sugerido. Corrige fichas que ya existen (por SKU) y da de alta una ficha nueva cuando el
+        SKU no existe todavía (revisa bien las filas "Ficha nueva" antes de confirmar — un SKU mal
+        escrito crea una ficha fantasma en vez de quedar como error). Categoría y Tipo de
+        producto se sobrescriben con lo que traiga el Excel; Código de barras y cada precio de
+        venta solo se tocan si la celda trae un valor ("Por definir" es válido y deja el precio
+        explícitamente sin asignar). El cambio de Nombre en una ficha existente hay que aceptarlo
+        fila por fila (por defecto se mantiene el nombre actual). No afecta specs, imágenes,
+        material ni descripción de Catálogo de fichas existentes; en una ficha nueva esos campos
+        quedan vacíos.
       </p>
 
       {phase === "picking" && (
@@ -295,17 +414,45 @@ export default function CorreccionImportPanel() {
       {phase === "reviewing" && (
         <div className="import-review">
           <div className="import-review-summary">
-            <span className="tag">{validasCount} se actualizarán</span>
+            <span className="tag">{actualizaCount} se actualizarán</span>
+            <span className="tag">{creaCount} fichas nuevas</span>
             <span className="tag">{cambioNombreCount} con cambio de nombre</span>
-            <span className="tag">{noEncontradasCount} SKU no encontrado</span>
             <span className="tag">{erroresCount} con error</span>
             <span className="tag">{rows.length} fila(s) en total</span>
           </div>
 
           <p className="hint" style={{ margin: 0 }}>
-            Revisa especialmente las filas marcadas "El nombre cambiará" antes de confirmar — esta
-            importación no pide confirmación por fila, aplica todas las filas válidas de una vez.
+            Revisa especialmente las filas de "Ficha nueva" antes de confirmar — el resto de los
+            campos válidos se aplica de una vez al confirmar. Las filas marcadas "El nombre
+            cambiará" son la excepción: por defecto se mantiene el nombre actual, tenés que
+            aceptar el cambio fila por fila (o con "Marcar todos") para que se aplique.
           </p>
+
+          {cambioNombreCount > 0 && (
+            <div className="import-review-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => markAllNameChanges(true)}
+              >
+                Marcar todos: Aceptar cambio de nombre
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => markAllNameChanges(false)}
+              >
+                Marcar todos: Mantener nombre actual
+              </button>
+              <button
+                type="button"
+                className={`filter-chip${onlyNameChanges ? " filter-chip-active" : ""}`}
+                onClick={() => setOnlyNameChanges((v) => !v)}
+              >
+                Mostrar solo cambios de nombre ({cambioNombreCount})
+              </button>
+            </div>
+          )}
 
           <div className="import-review-table-wrap">
             <table className="import-review-table">
@@ -319,11 +466,12 @@ export default function CorreccionImportPanel() {
                   <th>Código de barras</th>
                   <th>Precios Venta</th>
                   <th>Estado</th>
+                  <th>Cambio de nombre</th>
                   <th>Motivo</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {displayedRows.map((row) => (
                   <tr key={row.fila}>
                     <td>{row.fila}</td>
                     <td>{row.sku || "—"}</td>
@@ -336,6 +484,35 @@ export default function CorreccionImportPanel() {
                       <span className={`import-status-badge ${STATUS_BADGE_CLASS[row.status]}`}>
                         {STATUS_LABEL[row.status]}
                       </span>
+                    </td>
+                    <td>
+                      {row.status === "actualiza" && row.nombreCambia ? (
+                        <div className="import-overwrite-cell">
+                          <div className="import-review-actions">
+                            <button
+                              type="button"
+                              className={`filter-chip${nameChangeChoices.get(row.fila) ? " filter-chip-active" : ""}`}
+                              onClick={() => setNameChange(row.fila, true)}
+                            >
+                              Aceptar cambio
+                            </button>
+                            <button
+                              type="button"
+                              className={`filter-chip${!nameChangeChoices.get(row.fila) ? " filter-chip-active" : ""}`}
+                              onClick={() => setNameChange(row.fila, false)}
+                            >
+                              Mantener actual
+                            </button>
+                          </div>
+                          <span className="import-overwrite-status">
+                            {nameChangeChoices.get(row.fila)
+                              ? "Se aplicará el nombre nuevo."
+                              : "Se mantiene el nombre actual."}
+                          </span>
+                        </div>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="import-review-motivo">{row.reason ?? "—"}</td>
                   </tr>
@@ -362,7 +539,9 @@ export default function CorreccionImportPanel() {
       {phase === "committing" && (
         <div className="import-progress">
           <p className="hint" style={{ margin: 0 }}>
-            Procesando fila {commitProgress.done} de {commitProgress.total}…
+            Procesando fila {commitProgress.done} de {commitProgress.total}… Fila por fila para no
+            saturar la base de datos — con archivos grandes puede tardar varios minutos. No
+            cierres ni cambies de pantalla hasta que termine.
           </p>
           <div className="progress-bar">
             <div
@@ -387,8 +566,8 @@ export default function CorreccionImportPanel() {
               <span>Con cambio de nombre</span>
             </div>
             <div className="import-summary-item">
-              <span>{summary.noEncontradas}</span>
-              <span>SKU no encontrado</span>
+              <span>{summary.creadas}</span>
+              <span>Fichas nuevas creadas</span>
             </div>
             <div className="import-summary-item">
               <span>{summary.conErrores}</span>
@@ -428,6 +607,12 @@ export default function CorreccionImportPanel() {
           </div>
         </div>
       )}
+
+      <Toast
+        message={toastMessage ?? ""}
+        show={!!toastMessage}
+        onHide={() => setToastMessage(null)}
+      />
     </div>
   );
 }

@@ -82,6 +82,56 @@ const client = createClient({
 // el mismo tx del llamador y quedar cubiertas por su commit/rollback.
 type Executor = Pick<Transaction, "execute">;
 
+// Cache en memoria para los listados completos de pantallas que no cambian
+// seguido (Catálogo, Remisiones recientes, SKU Master, Piezas General) — sin
+// esto, cada vez que se vuelve a una de esas pantallas (típicamente con la
+// píldora de regresar, después de solo ir a ver el detalle de algo) se
+// repetía el viaje de red completo a Turso aunque nada hubiera cambiado. Se
+// invalida por prefijo desde las funciones de escritura de la tabla
+// correspondiente (products/plastic_products/remisiones/precios) apenas
+// después de que su transacción hace commit, así que un back/forward sin
+// ediciones de por medio es instantáneo, pero cualquier alta/edición/borrado
+// real fuerza el refetch en la próxima visita. Vive acá y no en un módulo
+// aparte porque solo tiene sentido junto a las queries que cachea.
+//
+// Además de invalidarse por escritura, cada entrada expira sola a los pocos
+// minutos (LIST_CACHE_TTL_MS): la BD es compartida entre varias máquinas
+// (ver CLAUDE.md), así que una edición hecha en otra compu no dispara
+// ninguna invalidación local — el TTL es la red de seguridad para que esta
+// sesión no se quede mostrando datos obsoletos indefinidamente solo por no
+// haber escrito nada ella misma.
+const LIST_CACHE_TTL_MS = 3 * 60 * 1000;
+const listCache = new Map<string, { value: unknown; expiresAt: number }>();
+
+function cacheGet<T>(key: string): T | undefined {
+  const entry = listCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() >= entry.expiresAt) {
+    listCache.delete(key);
+    return undefined;
+  }
+  return entry.value as T;
+}
+
+function cacheSet<T>(key: string, value: T): T {
+  listCache.set(key, { value, expiresAt: Date.now() + LIST_CACHE_TTL_MS });
+  return value;
+}
+
+function cacheInvalidate(prefix: string): void {
+  for (const key of listCache.keys()) {
+    if (key.startsWith(prefix)) listCache.delete(key);
+  }
+}
+
+// Solo para tests: resetDb() (tests/helpers.ts) trunca las tablas por fuera
+// de db.ts (rawClient(), para sembrar fixtures sin pasar por assertActor*),
+// así que esta cache de módulo no se entera — sin esto, una prueba podía
+// heredar el listado cacheado por otra prueba anterior en el mismo archivo.
+export function __resetListCacheForTests(): void {
+  listCache.clear();
+}
+
 function toImageBlob(data: unknown, mime: unknown): ImageBlob | null {
   if (!(data instanceof ArrayBuffer) || typeof mime !== "string") return null;
   return { data: new Uint8Array(data), mime };
@@ -185,6 +235,9 @@ export async function searchProducts(
   filter: SearchFilter = "todo",
 ): Promise<Product[]> {
   const trimmed = query.trim();
+  const cacheKey = `products|${filter}|${normalizeSearchTerm(trimmed)}`;
+  const cached = cacheGet<Product[]>(cacheKey);
+  if (cached) return cached.slice();
   const result = trimmed
     ? await client.execute({
         sql: `SELECT ${PRODUCT_LIST_COLUMNS} FROM products WHERE ${SEARCH_FILTER_CLAUSES[filter]} ORDER BY nombre, material`,
@@ -193,7 +246,7 @@ export async function searchProducts(
     : await client.execute(
         `SELECT ${PRODUCT_LIST_COLUMNS} FROM products ORDER BY nombre, material`,
       );
-  return (result.rows as unknown as ProductRow[]).map(rowToProduct);
+  return cacheSet(cacheKey, (result.rows as unknown as ProductRow[]).map(rowToProduct));
 }
 
 export async function getProduct(id: number): Promise<Product | null> {
@@ -283,6 +336,7 @@ export async function createProduct(
     // en este mismo alta.
     await applyPendingProductImage(tx, productId, product.codigo);
     await tx.commit();
+    cacheInvalidate("products|");
     return productId;
   } catch (err) {
     await tx.rollback();
@@ -336,6 +390,7 @@ export async function updateProduct(
     });
     await insertDescriptions(tx, id, descriptions);
     await tx.commit();
+    cacheInvalidate("products|");
   } catch (err) {
     await tx.rollback();
     throw err;
@@ -462,6 +517,7 @@ export async function deleteProduct(actor: Actor, id: number): Promise<void> {
     });
     await tx.execute({ sql: "DELETE FROM products WHERE id = ?1", args: [id] });
     await tx.commit();
+    cacheInvalidate("products|");
   } catch (err) {
     await tx.rollback();
     throw err;
@@ -495,6 +551,7 @@ export async function setPresentacionOriginal(actor: Actor, productId: number, t
     sql: "UPDATE products SET presentacion_original = ?1 WHERE id = ?2",
     args: [text, productId],
   });
+  cacheInvalidate("products|");
 }
 
 export async function codigoEnUso(
@@ -1382,11 +1439,18 @@ export async function searchPlasticProducts(
 const PLASTIC_PRODUCT_LIST_COLUMNS =
   "id, nombre, sku, color, origen, descripcion, armado, dimension, peso, tipo_empaque, maquila, coste, componentes_fabricacion, dimensiones_empaque, creado_en";
 
+const PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY = "plasticProductsSummary";
+
 export async function listPlasticProductsSummary(): Promise<PlasticProduct[]> {
+  const cached = cacheGet<PlasticProduct[]>(PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY);
+  if (cached) return cached.slice();
   const result = await client.execute(
     `SELECT ${PLASTIC_PRODUCT_LIST_COLUMNS} FROM plastic_products ORDER BY nombre, sku`,
   );
-  return (result.rows as unknown as PlasticProductRow[]).map(rowToPlasticProduct);
+  return cacheSet(
+    PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY,
+    (result.rows as unknown as PlasticProductRow[]).map(rowToPlasticProduct),
+  );
 }
 
 export async function getPlasticProduct(id: number): Promise<PlasticProduct | null> {
@@ -1437,6 +1501,7 @@ export async function deletePlasticProduct(actor: Actor, id: number): Promise<vo
       args: [id],
     });
     await tx.commit();
+    cacheInvalidate(PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY);
   } catch (err) {
     await tx.rollback();
     throw err;
@@ -1473,6 +1538,7 @@ export async function createPlasticProduct(
       input.imagen?.mime ?? null,
     ],
   });
+  cacheInvalidate(PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY);
   return Number(result.lastInsertRowid);
 }
 
@@ -1508,6 +1574,7 @@ export async function updatePlasticProduct(
       id,
     ],
   });
+  cacheInvalidate(PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY);
 }
 
 // Usada exclusivamente por SkuMasterSection: su único propósito ahí es
@@ -1524,6 +1591,7 @@ export async function updatePlasticProductSku(actor: Actor, id: number, sku: str
     sql: "UPDATE plastic_products SET sku = ?1 WHERE id = ?2",
     args: [sku.trim(), id],
   });
+  cacheInvalidate(PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY);
 }
 
 interface PlasticItemRow extends PlasticProductRow {
@@ -1743,6 +1811,7 @@ export async function undoLastPiezaImportBatch(actor: Actor): Promise<{ eliminad
       args: [row.id],
     });
     await tx.commit();
+    cacheInvalidate(PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY);
     return { eliminadas };
   } catch (err) {
     await tx.rollback();
@@ -3647,6 +3716,7 @@ export async function upsertPrecio(
     });
 
     await tx.commit();
+    cacheInvalidate(PRECIOS_LIST_CACHE_KEY);
     return rowToPrecio(row);
   } catch (err) {
     await tx.rollback();
@@ -3702,6 +3772,7 @@ export async function updatePrecio(
     });
 
     await tx.commit();
+    cacheInvalidate(PRECIOS_LIST_CACHE_KEY);
     return rowToPrecio(row);
   } catch (err) {
     await tx.rollback();
@@ -3740,10 +3811,14 @@ export async function getPreciosBySkuPrincipal(actor: Actor, skuPrincipal: strin
   return (result.rows as unknown as PrecioRow[]).map(rowToPrecio);
 }
 
+const PRECIOS_LIST_CACHE_KEY = "preciosList";
+
 export async function getPreciosList(actor: Actor): Promise<Precio[]> {
   await assertActorAuthorized(actor, ["precios_ver", "precios_modificar", "sku_master", "backups_ver"]);
+  const cached = cacheGet<Precio[]>(PRECIOS_LIST_CACHE_KEY);
+  if (cached) return cached.slice();
   const result = await client.execute("SELECT * FROM precios ORDER BY sku");
-  return (result.rows as unknown as PrecioRow[]).map(rowToPrecio);
+  return cacheSet(PRECIOS_LIST_CACHE_KEY, (result.rows as unknown as PrecioRow[]).map(rowToPrecio));
 }
 
 // Búsqueda para el renglón de una remisión: el SKU (normal o con letra, ej.
@@ -4004,6 +4079,7 @@ export async function createRemisionConFolio(
     }
 
     await tx.commit();
+    cacheInvalidate("remisiones|");
     return { ...rowToRemision(headerRow), renglones: savedRenglones };
   } catch (err) {
     await tx.rollback();
@@ -4063,6 +4139,7 @@ export async function updateRemisionConRenglones(
     }
 
     await tx.commit();
+    cacheInvalidate("remisiones|");
     return { ...rowToRemision(headerRow), renglones: savedRenglones };
   } catch (err) {
     await tx.rollback();
@@ -4074,11 +4151,14 @@ export async function updateRemisionConRenglones(
 
 export async function listRemisiones(actor: Actor, limit = 30): Promise<Remision[]> {
   await assertActorAuthorized(actor, "remisiones_acceso");
+  const cacheKey = `remisiones|${limit}`;
+  const cached = cacheGet<Remision[]>(cacheKey);
+  if (cached) return cached.slice();
   const result = await client.execute({
     sql: "SELECT * FROM remisiones ORDER BY id DESC LIMIT ?1",
     args: [limit],
   });
-  return (result.rows as unknown as RemisionRow[]).map(rowToRemision);
+  return cacheSet(cacheKey, (result.rows as unknown as RemisionRow[]).map(rowToRemision));
 }
 
 export async function getRemisionRenglones(actor: Actor, remisionId: number): Promise<RemisionRenglon[]> {
@@ -4099,6 +4179,7 @@ export async function deleteRemision(actor: Actor, id: number): Promise<void> {
     await tx.execute({ sql: "DELETE FROM remision_renglones WHERE remision_id = ?1", args: [id] });
     await tx.execute({ sql: "DELETE FROM remisiones WHERE id = ?1", args: [id] });
     await tx.commit();
+    cacheInvalidate("remisiones|");
   } catch (err) {
     await tx.rollback();
     throw err;

@@ -15,11 +15,14 @@ import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
 import AutoGrowInput from "./AutoGrowInput";
 import Toast from "./Toast";
 import PlasticProductFields, { EMPTY_PLASTIC_DATA } from "./PlasticProductFields";
+import Pagination from "./Pagination";
 import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
   onVerPieza: (plasticProductId: number) => void;
 }
+
+const PAGE_SIZE = 50;
 
 export default function PiezasGeneralSection({ onVerPieza }: Props) {
   const { user, token } = useAuth();
@@ -32,6 +35,7 @@ export default function PiezasGeneralSection({ onVerPieza }: Props) {
   const [deleting, setDeleting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   async function refresh() {
     setLoading(true);
@@ -56,6 +60,12 @@ export default function PiezasGeneralSection({ onVerPieza }: Props) {
     logEventAsActor({ id: user.id, token }, "WARNING", `Acceso denegado a Piezas General para ${user.username}`);
   }, [allowed, user, token]);
 
+  const totalPages = Math.max(1, Math.ceil(piezas.length / PAGE_SIZE));
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
+
   if (!allowed) {
     return (
       <div className="private-section">
@@ -77,6 +87,8 @@ export default function PiezasGeneralSection({ onVerPieza }: Props) {
       setDeleting(false);
     }
   }
+
+  const pagePiezas = piezas.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   return (
     <div className="private-section">
@@ -118,7 +130,7 @@ export default function PiezasGeneralSection({ onVerPieza }: Props) {
               </tr>
             </thead>
             <tbody>
-              {piezas.map((p) => (
+              {pagePiezas.map((p) => (
                 <tr key={p.id}>
                   <td>{p.sku || "—"}</td>
                   <td>{p.nombre || "(sin nombre)"}</td>
@@ -170,6 +182,10 @@ export default function PiezasGeneralSection({ onVerPieza }: Props) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {!loading && !loadError && totalPages > 1 && (
+        <Pagination currentPage={currentPage} totalPages={totalPages} onChange={setCurrentPage} />
       )}
 
       {showForm && (

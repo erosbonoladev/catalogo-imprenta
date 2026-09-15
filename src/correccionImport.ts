@@ -130,32 +130,63 @@ const PRECIO_VENTA_RAW_FIELDS: { field: keyof RawCorreccionRow; categoria: Preci
   { field: "publicoSugeridoRaw", categoria: PRECIOS_VENTA_CATEGORIAS[4] },
 ];
 
-// undefined = celda vacía, no se toca el precio existente de esa categoría.
-// null = trae algo pero no es un número válido (>= 0, admite "$"/","/espacios).
-function parsePrecioVentaCell(raw: unknown): number | null | undefined {
+type PrecioVentaCellResult =
+  | { kind: "vacia" }
+  | { kind: "valor"; valor: number }
+  | { kind: "por_definir" }
+  | { kind: "invalido" };
+
+const POR_DEFINIR_NORMALIZADO = normalizeText("Por definir");
+
+// vacia = celda vacía, no se toca el precio existente de esa categoría.
+// por_definir = el Excel trae literalmente "Por definir" — se guarda
+// explícitamente sin precio (NULL en precios_venta, igual que dejarlo en
+// blanco a mano desde PreciosVentaModal), a diferencia de "vacia" que
+// preserva lo que ya hubiera.
+// invalido = trae algo que no es ni un número (>= 0, admite "$"/","/espacios)
+// ni "Por definir".
+function parsePrecioVentaCell(raw: unknown): PrecioVentaCellResult {
   if (typeof raw === "number" && Number.isFinite(raw)) {
-    return raw >= 0 ? raw : null;
+    return raw >= 0 ? { kind: "valor", valor: raw } : { kind: "invalido" };
   }
   const text = String(raw ?? "").trim();
-  if (!text) return undefined;
+  if (!text) return { kind: "vacia" };
+  if (normalizeText(text) === POR_DEFINIR_NORMALIZADO) return { kind: "por_definir" };
   const cleaned = text.replace(/[$,\s]/g, "");
   const value = Number(cleaned);
-  return Number.isFinite(value) && value >= 0 ? value : null;
+  return Number.isFinite(value) && value >= 0 ? { kind: "valor", valor: value } : { kind: "invalido" };
 }
 
 // --- Clasificación de filas ---
 
-export type CorreccionRowStatus = "valida" | "no_encontrado" | "error";
+// actualiza = ya existe una ficha con ese SKU, se corrige.
+// crea = no existe ninguna ficha con ese SKU — a diferencia de antes, esta
+// importación ahora también da de alta fichas nuevas con lo que trae el
+// Excel (SKU/Producto/Categoría/Tipo de producto/Código de barras/Precios
+// Venta); material, descripción, specs e imagen quedan vacíos/sin asignar,
+// igual que un alta manual en blanco desde ProductForm.
+export type CorreccionRowStatus = "actualiza" | "crea" | "error";
 
 export interface ClassifiedCorreccionRow extends RawCorreccionRow {
   status: CorreccionRowStatus;
   reason?: string;
   matchedProduct?: Product;
+  // true = el Excel trae un nombre distinto al de la ficha. Solo marca/notifica
+  // — no decide si se aplica: CorreccionImportPanel exige aceptarlo fila por
+  // fila (o "Marcar todos") antes de confirmar, por defecto se mantiene el
+  // nombre actual.
   nombreCambia?: boolean;
-  // undefined en cualquiera de estos tres = no tocar ese valor existente de la ficha.
+  // undefined en tipoProductoNuevo/codigoBarrasNuevo = no tocar ese valor
+  // existente de la ficha (solo tiene sentido para status "actualiza"; para
+  // "crea" el panel de importación los trata como "" — no hay valor previo
+  // que preservar).
   tipoProductoNuevo?: string;
   codigoBarrasNuevo?: string;
-  preciosVenta?: Partial<Record<PrecioVentaCategoria, number>>;
+  // undefined en una categoría = no tocar el precio existente de esa
+  // categoría (o, si es alta nueva, no crear fila en precios_venta para
+  // ella). null = "Por definir" en el Excel, se guarda explícitamente sin
+  // precio.
+  preciosVenta?: Partial<Record<PrecioVentaCategoria, number | null>>;
 }
 
 // Tope de sanidad, no de calidad de datos — bloquea una celda corrupta, no
@@ -172,8 +203,8 @@ function fieldTooLong(row: RawCorreccionRow): string | null {
 }
 
 // lookups: SKU (columna) -> ficha existente encontrada por products.codigo
-// exacto (null si no existe ninguna) — esta importación nunca crea fichas
-// nuevas, solo corrige las que ya existen.
+// exacto (null si no existe ninguna). Si no existe, la fila da de alta una
+// ficha nueva en vez de omitirse (ver CorreccionRowStatus).
 export function classifyCorreccionRows(
   rows: RawCorreccionRow[],
   lookups: Map<number, Product | null>,
@@ -191,13 +222,6 @@ export function classifyCorreccionRows(
     }
 
     const matched = lookups.get(row.fila) ?? null;
-    if (!matched) {
-      return {
-        ...row,
-        status: "no_encontrado",
-        reason: "No existe ninguna ficha con este SKU — esta importación no crea fichas nuevas, la fila se omite.",
-      };
-    }
 
     const tipoResuelto = resolveTipoProducto(row.tipoProducto);
     if (tipoResuelto === null) {
@@ -205,33 +229,45 @@ export function classifyCorreccionRows(
         ...row,
         status: "error",
         reason: `Tipo de producto no reconocido: "${row.tipoProducto}".`,
-        matchedProduct: matched,
+        matchedProduct: matched ?? undefined,
       };
     }
 
-    const precios: Partial<Record<PrecioVentaCategoria, number>> = {};
+    const precios: Partial<Record<PrecioVentaCategoria, number | null>> = {};
     const preciosInvalidos: string[] = [];
     for (const { field, categoria } of PRECIO_VENTA_RAW_FIELDS) {
       const parsed = parsePrecioVentaCell(row[field]);
-      if (parsed === null) preciosInvalidos.push(categoria);
-      else if (parsed !== undefined) precios[categoria] = parsed;
+      if (parsed.kind === "invalido") preciosInvalidos.push(categoria);
+      else if (parsed.kind === "valor") precios[categoria] = parsed.valor;
+      else if (parsed.kind === "por_definir") precios[categoria] = null;
     }
     if (preciosInvalidos.length > 0) {
       return {
         ...row,
         status: "error",
         reason: `Precio inválido en: ${preciosInvalidos.join(", ")}.`,
-        matchedProduct: matched,
+        matchedProduct: matched ?? undefined,
+      };
+    }
+
+    const codigoBarrasNuevo = row.codigoBarras.trim() || undefined;
+
+    if (!matched) {
+      return {
+        ...row,
+        status: "crea",
+        tipoProductoNuevo: tipoResuelto ?? undefined,
+        codigoBarrasNuevo,
+        preciosVenta: precios,
       };
     }
 
     const nombreNuevo = row.producto.trim();
     const nombreCambia = nombreNuevo !== matched.nombre.trim();
-    const codigoBarrasNuevo = row.codigoBarras.trim() || undefined;
 
     return {
       ...row,
-      status: "valida",
+      status: "actualiza",
       matchedProduct: matched,
       nombreCambia,
       tipoProductoNuevo: tipoResuelto ?? undefined,

@@ -142,23 +142,37 @@ describe("classifyCorreccionRows — campos obligatorios", () => {
 });
 
 describe("classifyCorreccionRows — SKU no encontrado", () => {
-  it("no crea fichas nuevas: SKU sin ficha existente -> no_encontrado, se omite", () => {
+  it("SKU sin ficha existente -> crea (da de alta una ficha nueva)", () => {
     const row = classifyOne({}, null);
-    expect(row.status).toBe("no_encontrado");
+    expect(row.status).toBe("crea");
     expect(row.matchedProduct).toBeUndefined();
+  });
+
+  it("una ficha nueva también valida Tipo de producto y Precios Venta", () => {
+    const row = classifyOne({ tipoProducto: "Categoría inventada" }, null);
+    expect(row.status).toBe("error");
+    expect(row.reason).toMatch(/Tipo de producto no reconocido/);
+  });
+
+  it("una ficha nueva toma SKU/Producto/Categoría/Tipo/Código de barras/Precios tal cual del Excel", () => {
+    const row = classifyOne({}, null);
+    expect(row.status).toBe("crea");
+    expect(row.tipoProductoNuevo).toBe("Rompecabezas y resaques");
+    expect(row.codigoBarrasNuevo).toBe("7501234567890");
+    expect(row.preciosVenta?.Mayoreo).toBe(80);
   });
 });
 
 describe("classifyCorreccionRows — Tipo de producto (lista cerrada)", () => {
   it("celda vacía -> no toca el valor existente (undefined, no error)", () => {
     const row = classifyOne({ tipoProducto: "" }, makeProduct());
-    expect(row.status).toBe("valida");
+    expect(row.status).toBe("actualiza");
     expect(row.tipoProductoNuevo).toBeUndefined();
   });
 
   it("coincide sin distinguir acentos/mayúsculas con la lista TIPOS_PRODUCTO", () => {
     const row = classifyOne({ tipoProducto: "abacos" }, makeProduct());
-    expect(row.status).toBe("valida");
+    expect(row.status).toBe("actualiza");
     expect(row.tipoProductoNuevo).toBe("Ábacos");
   });
 
@@ -172,7 +186,7 @@ describe("classifyCorreccionRows — Tipo de producto (lista cerrada)", () => {
 describe("classifyCorreccionRows — Precios Venta (Gobierno/Representante/Mayoreo/Medio mayoreo/Publico sugerido)", () => {
   it("celda vacía -> no se incluye esa categoría (no se pisa el precio existente)", () => {
     const row = classifyOne({ gobiernoRaw: "", representanteRaw: "" }, makeProduct());
-    expect(row.status).toBe("valida");
+    expect(row.status).toBe("actualiza");
     expect(row.preciosVenta).not.toHaveProperty("Gobierno");
     expect(row.preciosVenta).not.toHaveProperty("Representante");
     expect(row.preciosVenta?.Mayoreo).toBe(80);
@@ -180,7 +194,7 @@ describe("classifyCorreccionRows — Precios Venta (Gobierno/Representante/Mayor
 
   it("acepta formato moneda ($1,200.00) y cero", () => {
     const row = classifyOne({ gobiernoRaw: "$1,200.00", representanteRaw: 0 }, makeProduct());
-    expect(row.status).toBe("valida");
+    expect(row.status).toBe("actualiza");
     expect(row.preciosVenta?.Gobierno).toBe(1200);
     expect(row.preciosVenta?.Representante).toBe(0);
   });
@@ -196,18 +210,31 @@ describe("classifyCorreccionRows — Precios Venta (Gobierno/Representante/Mayor
     expect(row.status).toBe("error");
     expect(row.reason).toMatch(/Precio inválido en: Mayoreo/);
   });
+
+  it('"Por definir" es un valor válido: guarda explícitamente null (no error, no "no se toca")', () => {
+    const row = classifyOne({ gobiernoRaw: "Por definir" }, makeProduct());
+    expect(row.status).toBe("actualiza");
+    expect(row.preciosVenta).toHaveProperty("Gobierno");
+    expect(row.preciosVenta?.Gobierno).toBeNull();
+  });
+
+  it('"Por definir" no distingue acentos/mayúsculas ni espacios extra', () => {
+    const row = classifyOne({ representanteRaw: "  POR DEFINIR  " }, makeProduct());
+    expect(row.status).toBe("actualiza");
+    expect(row.preciosVenta?.Representante).toBeNull();
+  });
 });
 
 describe("classifyCorreccionRows — Código de barras", () => {
   it("celda vacía -> no toca el valor existente", () => {
     const row = classifyOne({ codigoBarras: "" }, makeProduct());
-    expect(row.status).toBe("valida");
+    expect(row.status).toBe("actualiza");
     expect(row.codigoBarrasNuevo).toBeUndefined();
   });
 
   it("celda con valor -> se toma tal cual (texto, no numérico)", () => {
     const row = classifyOne({ codigoBarras: "0007501234567890" }, makeProduct());
-    expect(row.status).toBe("valida");
+    expect(row.status).toBe("actualiza");
     expect(row.codigoBarrasNuevo).toBe("0007501234567890");
   });
 });
@@ -216,7 +243,7 @@ describe("classifyCorreccionRows — cambio de nombre", () => {
   it("nombre distinto al de la ficha existente -> se marca para verificación, no bloquea", () => {
     const producto = makeProduct({ nombre: "Nombre viejo" });
     const row = classifyOne({ producto: "Nombre nuevo" }, producto);
-    expect(row.status).toBe("valida");
+    expect(row.status).toBe("actualiza");
     expect(row.nombreCambia).toBe(true);
     expect(row.reason).toMatch(/El nombre cambiará: "Nombre viejo" → "Nombre nuevo"/);
   });
@@ -241,7 +268,7 @@ describe("classifyCorreccionRows — SKU repetido dentro del archivo", () => {
         [5, producto],
       ]),
     );
-    expect(result[0].status).toBe("valida");
+    expect(result[0].status).toBe("actualiza");
     expect(result[1].status).toBe("error");
     expect(result[1].reason).toMatch(/ya aparece en la fila 2/);
   });

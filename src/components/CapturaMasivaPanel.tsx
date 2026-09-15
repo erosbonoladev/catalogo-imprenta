@@ -17,8 +17,22 @@ const SUB_TABS: { value: SubTab; label: string }[] = [
   { value: "correccion", label: "Datos y Precios Venta" },
 ];
 
-export default function CapturaMasivaPanel() {
+interface Props {
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
+export default function CapturaMasivaPanel({ onDirtyChange }: Props) {
   const [subTab, setSubTab] = useState<SubTab>("fichas");
+  // Solo Correccion reporta dirty por ahora (fue la que mostró el riesgo real
+  // de commit en segundo plano) — mientras está en true, bloqueamos cambiar
+  // de sub-pestaña acá mismo, además de reenviarlo hacia arriba para que
+  // Configuraciones/App bloqueen salir de toda la sección.
+  const [importBusy, setImportBusy] = useState(false);
+
+  function handleImportBusyChange(busy: boolean) {
+    setImportBusy(busy);
+    onDirtyChange?.(busy);
+  }
 
   return (
     <div>
@@ -29,6 +43,7 @@ export default function CapturaMasivaPanel() {
             key={t.value}
             type="button"
             className={`filter-chip${subTab === t.value ? " filter-chip-active" : ""}`}
+            disabled={importBusy && subTab !== t.value}
             onClick={() => setSubTab(t.value)}
           >
             {t.label}
@@ -36,12 +51,18 @@ export default function CapturaMasivaPanel() {
         ))}
       </div>
 
+      {importBusy && (
+        <p className="hint" style={{ marginTop: "0.4rem" }}>
+          Hay una importación en curso — no se puede cambiar de pestaña hasta que termine.
+        </p>
+      )}
+
       {subTab === "fichas" && <FichaImportPanel />}
       {subTab === "imagenes" && <ImageImportPanel />}
       {subTab === "precios" && <PreciosImportPanel />}
       {subTab === "piezas" && <PiezasImportPanel />}
       {subTab === "maderas" && <MaderaImportPanel />}
-      {subTab === "correccion" && <CorreccionImportPanel />}
+      {subTab === "correccion" && <CorreccionImportPanel onDirtyChange={handleImportBusyChange} />}
     </div>
   );
 }

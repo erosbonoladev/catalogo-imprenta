@@ -25,6 +25,17 @@ export async function resetDb(): Promise<void> {
   for (const row of tables.rows as unknown as { name: string }[]) {
     await client.execute(`DELETE FROM ${row.name}`);
   }
+  // Import dinámico (no estático arriba): tests/setup.ts importa este
+  // archivo por rawClient()/TEST_DB_PATH ANTES de recrear el archivo SQLite
+  // de pruebas — un import estático de src/db.ts acá haría que su `client`
+  // de módulo se cree contra el archivo viejo, justo antes de que setup.ts
+  // lo borre y lo vuelva a crear desde cero, dejando ese cliente huérfano
+  // (síntoma: "sesión no válida" en cascada, porque las fixtures sembradas
+  // con rawClient() quedan en un archivo distinto al que db.ts consulta).
+  // Retrasar la carga de db.ts hasta que resetDb() de verdad corre (dentro
+  // de beforeEach, ya con el archivo recreado) evita el problema.
+  const { __resetListCacheForTests } = await import("../src/db");
+  __resetListCacheForTests();
 }
 
 export interface FixtureUser {
