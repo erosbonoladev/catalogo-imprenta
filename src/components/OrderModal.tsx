@@ -169,7 +169,7 @@ export default function OrderModal({ product, items, onClose }: Props) {
     const actor = { id: user.id, token };
     setGeneralSaving(true);
     try {
-      const folio = await createFolio("compra", product.codigo);
+      const folio = await createFolio(actor, "compra", product.codigo);
 
       // Todo o nada: si una sola compra falla, ninguna queda guardada — así
       // nunca se reporta éxito (ni se genera un PDF) con registros faltantes.

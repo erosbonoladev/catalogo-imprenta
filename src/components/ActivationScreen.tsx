@@ -41,6 +41,10 @@ export default function ActivationScreen() {
             Esta instalación todavía no está activada. Introduce tu credencial de activación
             (proporcionada por un administrador) para continuar.
           </p>
+          <p className="hint" style={{ marginBottom: "0.75rem" }}>
+            Tu sistema puede pedirte confirmar el acceso al llavero de contraseñas para guardar la
+            credencial de forma segura — es normal, elegí "Permitir siempre".
+          </p>
           <input
             type="text"
             className="login-input"

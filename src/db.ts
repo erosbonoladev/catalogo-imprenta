@@ -2782,7 +2782,8 @@ async function insertFolioRow(
   return { id: row.id, seccion: tipo, consecutivo: row.consecutivo, folio, sku, creado_en: row.creado_en };
 }
 
-export async function createFolio(tipo: TipoFolio, sku: string): Promise<Folio> {
+export async function createFolio(actor: Actor, tipo: TipoFolio, sku: string): Promise<Folio> {
+  await assertActorAuthorized(actor, "imprenta");
   return insertFolioRow(client, tipo, sku);
 }
 

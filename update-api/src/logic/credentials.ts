@@ -98,30 +98,41 @@ export async function activateCredential(
   if (!codigo) throw new CredentialError("Código de activación inválido.");
 
   const codeHash = await sha256Hex(codigo);
-  const result = await db.execute({
-    sql: "SELECT * FROM installation_credentials WHERE code_hash = ?1",
-    args: [codeHash],
-  });
-  const row = result.rows[0] as unknown as CredentialRow | undefined;
-
-  if (!row) {
-    await recordAudit(db, { accion: "activation_failed", detalle: "Código no encontrado" });
-    throw new CredentialError("Código de activación inválido.");
-  }
-  if (row.estado !== "activa") {
-    await recordAudit(db, { accion: "activation_failed", credential_id: row.id, detalle: "Credencial revocada" });
-    throw new CredentialError("Esta credencial fue revocada.");
-  }
-  if (row.usado_en) {
-    await recordAudit(db, { accion: "activation_failed", credential_id: row.id, detalle: "Credencial ya usada" });
-    throw new CredentialError("Esta credencial ya fue usada para activar otra instalación.");
-  }
-
   const deviceToken = generateDeviceToken();
   const deviceTokenHash = await sha256Hex(deviceToken);
 
+  let failedAudit: { credential_id?: number; detalle: string } | null = null;
+
   const tx = await db.transaction("write");
   try {
+    // La lectura de la credencial (y el chequeo de `usado_en`) ocurre DENTRO
+    // de esta transacción de escritura, no antes como un SELECT suelto: las
+    // transacciones "write" de libSQL se serializan entre sí, así que dos
+    // activaciones concurrentes con el mismo código no pueden leer ambas
+    // `usado_en = null` antes de que la primera termine — la segunda queda
+    // bloqueada hasta que la primera confirma o revierte, y al leer ya ve
+    // la credencial marcada como usada. Antes este SELECT corría fuera de
+    // la transacción y abría esa ventana de carrera (doble activación con
+    // un único código de un solo uso).
+    const result = await tx.execute({
+      sql: "SELECT * FROM installation_credentials WHERE code_hash = ?1",
+      args: [codeHash],
+    });
+    const row = result.rows[0] as unknown as CredentialRow | undefined;
+
+    if (!row) {
+      failedAudit = { detalle: "Código no encontrado" };
+      throw new CredentialError("Código de activación inválido.");
+    }
+    if (row.estado !== "activa") {
+      failedAudit = { credential_id: row.id, detalle: "Credencial revocada" };
+      throw new CredentialError("Esta credencial fue revocada.");
+    }
+    if (row.usado_en) {
+      failedAudit = { credential_id: row.id, detalle: "Credencial ya usada" };
+      throw new CredentialError("Esta credencial ya fue usada para activar otra instalación.");
+    }
+
     // Mismo truco que insertFolioRow() en src/db.ts (raíz del repo):
     // consecutivo calculado con una subquery MAX+1 dentro del mismo
     // INSERT, sin un SELECT previo separado que abra ventana de carrera.
@@ -156,6 +167,9 @@ export async function activateCredential(
     return { installationId: installation.id, installationCode, deviceToken, sedeNombre: row.sede_nombre };
   } catch (err) {
     await tx.rollback();
+    if (failedAudit) {
+      await recordAudit(db, { accion: "activation_failed", ...failedAudit });
+    }
     throw err;
   } finally {
     tx.close();

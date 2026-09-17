@@ -147,7 +147,7 @@ export default function ProduccionForm({ product, items, onOrderCreated, onSwitc
     const actor = { id: user.id, token };
     setSaving(true);
     try {
-      const folio = await createFolio("produccion", product.codigo);
+      const folio = await createFolio(actor, "produccion", product.codigo);
       const pdfBytes = await buildOrderPdf(product, entries, folio.folio);
       const defaultPath = `${folio.folio}.pdf`;
 

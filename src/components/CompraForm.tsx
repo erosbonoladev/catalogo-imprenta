@@ -65,7 +65,7 @@ export default function CompraForm({ product, item, orders, multi, refreshKey }:
     setError(null);
     setSaving(true);
     try {
-      const folio = await createFolio("compra", product.codigo);
+      const folio = await createFolio(actor, "compra", product.codigo);
       const pdfBytes = await buildPurchasePdf(
         product,
         [
