@@ -1,0 +1,9 @@
+# Copiar a .dev.vars (gitignored) para `wrangler dev` local. Nunca usar
+# valores reales de producción acá — crear un PAT/DB de staging aparte
+# (ver docs/DISTRIBUTION.md).
+GITHUB_TOKEN=github_pat_xxx
+INSTALLATIONS_TURSO_URL=libsql://your-staging-installations-db.turso.io
+INSTALLATIONS_TURSO_TOKEN=your-token-here
+MAIN_TURSO_URL=libsql://your-staging-main-db.turso.io
+MAIN_TURSO_TOKEN_RO=your-readonly-token-here
+DOWNLOAD_TOKEN_SECRET=any-long-random-string-for-local-dev

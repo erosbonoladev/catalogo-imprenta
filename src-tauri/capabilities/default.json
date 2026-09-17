@@ -20,7 +20,8 @@
         { "url": "https://drive.google.com/*" },
         { "url": "https://docs.google.com/*" },
         { "url": "https://*.googleusercontent.com/*" },
-        { "url": "https://photos.google.com/*" }
+        { "url": "https://photos.google.com/*" },
+        { "url": "https://clio-update-api.erosbonoladev.workers.dev/*" }
       ]
     }
   ]

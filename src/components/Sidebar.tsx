@@ -1,5 +1,5 @@
 import { hasPermission, useAuth } from "../auth";
-import { PERMISOS_BACKUPS } from "../types";
+import { PERMISOS_BACKUPS, PERMISOS_INSTALACIONES } from "../types";
 import { useTheme } from "../theme";
 import UpdateChecker from "./UpdateChecker";
 import barraLateralIcon from "../../Assets/barra-lateral.svg";
@@ -34,7 +34,9 @@ export default function Sidebar({
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === "dark";
   const showConfiguraciones =
-    hasPermission(user, "configuraciones") || PERMISOS_BACKUPS.some((p) => hasPermission(user, p));
+    hasPermission(user, "configuraciones") ||
+    PERMISOS_BACKUPS.some((p) => hasPermission(user, p)) ||
+    PERMISOS_INSTALACIONES.some((p) => hasPermission(user, p));
   const showRemisiones = hasPermission(user, "remisiones_acceso");
   const showPiezasGeneral = hasPermission(user, "plasticos");
   const showSkuMaster = hasPermission(user, "sku_master");

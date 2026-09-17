@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 import { hasPermission, isAdmin, useAuth } from "../auth";
 import { logEventAsActor } from "../db";
-import { PERMISOS_BACKUPS } from "../types";
+import { PERMISOS_BACKUPS, PERMISOS_INSTALACIONES } from "../types";
 import UsersPanel from "./UsersPanel";
 import ConnectedUsersPanel from "./ConnectedUsersPanel";
 import LogsPanel from "./LogsPanel";
 import CapturaMasivaPanel from "./CapturaMasivaPanel";
 import BackupsPanel from "./BackupsPanel";
+import InstalacionesPanel from "./InstalacionesPanel";
 
-type Tab = "usuarios" | "conectados" | "registro" | "backups" | "captura-masiva";
+type Tab = "usuarios" | "conectados" | "registro" | "backups" | "captura-masiva" | "instalaciones";
 
 const BASE_TABS: { value: Tab; label: string }[] = [
   { value: "conectados", label: "Usuarios conectados" },
@@ -28,7 +29,8 @@ export default function Configuraciones({ onDirtyChange }: Props) {
   const { user, token } = useAuth();
   const allowedGeneral = hasPermission(user, "configuraciones");
   const allowedBackups = PERMISOS_BACKUPS.some((p) => hasPermission(user, p));
-  const allowed = allowedGeneral || allowedBackups;
+  const allowedInstalaciones = PERMISOS_INSTALACIONES.some((p) => hasPermission(user, p));
+  const allowed = allowedGeneral || allowedBackups || allowedInstalaciones;
   const [importBusy, setImportBusy] = useState(false);
 
   function handleImportBusyChange(busy: boolean) {
@@ -43,10 +45,19 @@ export default function Configuraciones({ onDirtyChange }: Props) {
   const tabs: { value: Tab; label: string }[] = [
     ...(allowedGeneral ? BASE_TABS : []),
     ...(allowedBackups ? [{ value: "backups" as Tab, label: "Backups" }] : []),
+    ...(allowedInstalaciones ? [{ value: "instalaciones" as Tab, label: "Instalaciones" }] : []),
     ...(allowedGeneral && isAdmin(user) ? ADMIN_TABS : []),
   ];
 
-  const [tab, setTab] = useState<Tab>(allowedGeneral && isAdmin(user) ? "usuarios" : allowedGeneral ? "conectados" : "backups");
+  const [tab, setTab] = useState<Tab>(
+    allowedGeneral && isAdmin(user)
+      ? "usuarios"
+      : allowedGeneral
+        ? "conectados"
+        : allowedBackups
+          ? "backups"
+          : "instalaciones",
+  );
 
   useEffect(() => {
     if (allowed || !user || !token) return;
@@ -90,6 +101,7 @@ export default function Configuraciones({ onDirtyChange }: Props) {
       {tab === "conectados" && <ConnectedUsersPanel />}
       {tab === "registro" && <LogsPanel />}
       {tab === "backups" && <BackupsPanel />}
+      {tab === "instalaciones" && <InstalacionesPanel />}
       {tab === "captura-masiva" && <CapturaMasivaPanel onDirtyChange={handleImportBusyChange} />}
     </div>
   );

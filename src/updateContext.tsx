@@ -8,8 +8,30 @@ import {
   type ReactNode,
 } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+
+interface StoredCredential {
+  installation_id: string;
+  device_token: string;
+}
+
+// El endpoint del updater (tauri.conf.json → plugins.updater.endpoints) es
+// el Update API (ver update-api/ y docs/DISTRIBUTION.md), que exige
+// identificar la instalación — sin esto respondería 401. La descarga del
+// artefacto en sí (downloadAndInstall) no necesita estos headers: el
+// manifiesto que el Worker devuelve ya trae, por cada plataforma, una URL
+// de descarga con su propio token firmado de corta duración.
+async function updateCheckHeaders(): Promise<HeadersInit | undefined> {
+  try {
+    const stored = await invoke<StoredCredential | null>("load_device_credential");
+    if (!stored) return undefined;
+    return { Authorization: `Bearer ${stored.device_token}`, "X-Installation-Id": stored.installation_id };
+  } catch {
+    return undefined;
+  }
+}
 
 export type UpdateStatus = "idle" | "checking" | "uptodate" | "available" | "downloading" | "error";
 
@@ -47,7 +69,8 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
   const checkNow = useCallback(async (): Promise<CheckResult> => {
     setStatus("checking");
     try {
-      const found = await check();
+      const headers = await updateCheckHeaders();
+      const found = await check(headers ? { headers } : undefined);
       if (found) {
         setUpdate(found);
         setStatus("available");

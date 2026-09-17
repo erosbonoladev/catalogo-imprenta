@@ -333,6 +333,10 @@ export const PERMISOS = [
   "remisiones_crear",
   "remisiones_cancelar",
   "sku_master",
+  "instalaciones_ver",
+  "instalaciones_crear_credenciales",
+  "instalaciones_revocar",
+  "instalaciones_reactivar",
 ] as const;
 export type Permiso = (typeof PERMISOS)[number];
 
@@ -359,6 +363,10 @@ export const PERMISO_LABELS: Record<Permiso, string> = {
   remisiones_crear: "Remisiones: crear",
   remisiones_cancelar: "Remisiones: borrar",
   sku_master: "SKU Master",
+  instalaciones_ver: "Instalaciones: ver",
+  instalaciones_crear_credenciales: "Instalaciones: crear credenciales",
+  instalaciones_revocar: "Instalaciones: revocar",
+  instalaciones_reactivar: "Instalaciones: reactivar",
 };
 
 export const PERMISOS_BACKUPS: Permiso[] = [
@@ -368,6 +376,13 @@ export const PERMISOS_BACKUPS: Permiso[] = [
   "backups_restaurar",
   "backups_configurar",
   "backups_eliminar",
+];
+
+export const PERMISOS_INSTALACIONES: Permiso[] = [
+  "instalaciones_ver",
+  "instalaciones_crear_credenciales",
+  "instalaciones_revocar",
+  "instalaciones_reactivar",
 ];
 
 export const BACKUP_TIPOS = [
@@ -641,4 +656,55 @@ export interface RemisionHistorialRow {
   descuento: number;
   iva: number;
   total: number;
+}
+
+// --- Instalaciones / activación (Update API, ver docs/DISTRIBUTION.md) ---
+// Estas dos entidades no viven en Turso principal (src/db.ts) — las
+// administra el Update API (Cloudflare Worker) contra una base Turso
+// separada, precisamente para que el token de Turso embebido en el bundle
+// de CLIO nunca tenga acceso de lectura/escritura sobre credenciales de
+// activación. src/activation.ts es el único archivo que le habla a ese
+// servicio, igual que src/db.ts es el único que le habla a Turso.
+
+export type InstalacionEstado = "activa" | "revocada";
+
+export interface Instalacion {
+  id: number;
+  installation_code: string; // "CLIO-PUE-0001"
+  sede_codigo: string;
+  sede_nombre: string;
+  descripcion: string;
+  estado: InstalacionEstado;
+  ultima_version: string | null;
+  ultima_conexion_en: string | null;
+  activada_en: string;
+  revocada_en: string | null;
+}
+
+export interface InstalacionCredencial {
+  id: number;
+  code_preview: string; // últimos 4 caracteres del código, nunca el código completo
+  sede_codigo: string;
+  sede_nombre: string;
+  descripcion: string;
+  usuario_responsable: string | null;
+  estado: InstalacionEstado;
+  installation_id: number | null;
+  creado_por: string;
+  creado_en: string;
+  usado_en: string | null;
+}
+
+export interface InstalacionCredencialInput {
+  sede_codigo: string;
+  sede_nombre: string;
+  descripcion: string;
+  usuario_responsable: string;
+}
+
+// Credencial recién creada: el código en texto plano solo existe en esta
+// respuesta puntual, nunca se vuelve a poder leer después.
+export interface InstalacionCredencialCreada {
+  credencial: InstalacionCredencial;
+  codigo: string;
 }

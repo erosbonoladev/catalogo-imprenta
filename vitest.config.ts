@@ -20,5 +20,12 @@ export default defineConfig({
     environment: "node",
     setupFiles: ["./tests/setup.ts"],
     fileParallelism: false,
+    // update-api/ es un paquete Node separado con su propio
+    // vitest.config.ts/tests/setup.ts (esquema de dos bases distinto al de
+    // acá) — sin este exclude, el glob por defecto de Vitest igual
+    // encuentra sus *.test.ts y los corre contra el setup de la raíz,
+    // fallando por "no such table". Correr sus pruebas con `npm test`
+    // dentro de esa carpeta (ver docs/DISTRIBUTION.md).
+    exclude: ["**/node_modules/**", "update-api/**"],
   },
 });

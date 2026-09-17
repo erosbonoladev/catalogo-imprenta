@@ -40,6 +40,67 @@ fn allow_fs_path(app: tauri::AppHandle, path: String, is_dir: bool) -> Result<()
     result.map_err(|e| e.to_string())
 }
 
+// --- Credencial de activación de instalación (ver docs/DISTRIBUTION.md) ---
+//
+// Guardada en el llavero nativo del SO (Keychain en macOS, Credential
+// Manager en Windows) vía `keyring`, nunca en un archivo plano ni en
+// localStorage — es lo único que autoriza a esta máquina a consultar el
+// Update API. Un solo Entry por app (servicio = identifier de Tauri, cuenta
+// fija "device_credential"): esta app solo tiene una instalación activa a
+// la vez, no hace falta más de una entrada.
+
+const KEYRING_SERVICE: &str = "com.mariat.catalogo-imprenta";
+const KEYRING_ACCOUNT: &str = "device_credential";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DeviceCredential {
+    installation_id: String,
+    device_token: String,
+    last_authorized_at: String,
+}
+
+fn keyring_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn store_device_credential(
+    installation_id: String,
+    device_token: String,
+    last_authorized_at: String,
+) -> Result<(), String> {
+    let credential = DeviceCredential {
+        installation_id,
+        device_token,
+        last_authorized_at,
+    };
+    let json = serde_json::to_string(&credential).map_err(|e| e.to_string())?;
+    keyring_entry()?.set_password(&json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_device_credential() -> Result<Option<DeviceCredential>, String> {
+    match keyring_entry()?.get_password() {
+        Ok(json) => serde_json::from_str(&json)
+            .map(Some)
+            .map_err(|e| e.to_string()),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Solo para el flujo de troubleshooting/reactivación manual (reinstalar con
+/// otro código de activación en la misma máquina) — nunca se llama
+/// automáticamente por una revocación, que debe bloquear el uso sin borrar
+/// nada local (ver docs/DISTRIBUTION.md).
+#[tauri::command]
+fn clear_device_credential() -> Result<(), String> {
+    match keyring_entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -52,7 +113,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             hash_password,
             verify_password,
-            allow_fs_path
+            allow_fs_path,
+            store_device_credential,
+            load_device_credential,
+            clear_device_credential
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

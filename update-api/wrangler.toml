@@ -1,0 +1,22 @@
+name = "clio-update-api"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Solo valores no secretos. Nunca poner tokens/PATs acá — van con
+# `wrangler secret put <NOMBRE>` (ver docs/DISTRIBUTION.md), quedan
+# encriptados del lado de Cloudflare y no se versionan.
+[vars]
+GITHUB_OWNER = "erosbonoladev"
+GITHUB_REPO = "catalogo-imprenta"
+
+# Secrets requeridos en producción (configurar uno por uno):
+#   wrangler secret put GITHUB_TOKEN
+#   wrangler secret put INSTALLATIONS_TURSO_URL
+#   wrangler secret put INSTALLATIONS_TURSO_TOKEN
+#   wrangler secret put MAIN_TURSO_URL
+#   wrangler secret put MAIN_TURSO_TOKEN_RO
+#   wrangler secret put DOWNLOAD_TOKEN_SECRET
+#
+# Para desarrollo local, copiar .dev.vars.example a .dev.vars (gitignored)
+# y llenarlo — `wrangler dev` lo lee automáticamente en vez de los secrets
+# reales.

@@ -17,6 +17,14 @@ dist-ssr
 
 # BD SQLite local descartable que usan las pruebas (tests/setup.ts) — nunca es la BD real.
 /.tmp/
+update-api/.tmp/
+
+# Secrets locales del Worker (update-api/) — equivalente a .env pero con la
+# convención de nombre que usa wrangler.
+update-api/.dev.vars
+update-api/.dev.vars.*
+!update-api/.dev.vars.example
+update-api/.wrangler/
 
 # Editor directories and files
 .vscode/*

@@ -1,6 +1,6 @@
 [package]
 name = "imprenta-app"
-version = "0.15.0"
+version = "1.0.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -28,4 +28,13 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-http = "2"
 bcrypt = "0.15"
+# keyring no trae ningún backend de SO por default (a propósito, para no
+# forzar una elección de crypto backend en Linux que este proyecto no
+# necesita — Clio solo corre en Windows y macOS, ver CLAUDE.md). Sin
+# "apple-native"/"windows-native" acá, Entry::new() compilaría pero
+# fallaría en runtime por no tener ningún almacén de credenciales
+# registrado. Ambas features conviven sin problema en el mismo Cargo.toml:
+# cada build (GitHub Actions matrix macos-latest/windows-latest) solo
+# activa el backend real de su propio target OS.
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
 

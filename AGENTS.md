@@ -4,7 +4,7 @@ Guía para agentes de código (Codex y similares) en este repo. Esto es un **ín
 
 ## Qué es
 
-Catálogo de escritorio para una imprenta industrial. Login individual → catálogo base (ficha técnica: imagen, material, categoría, descripción, specs) abierto a todo usuario autenticado. Secciones internas permission-gated: Piezas, Imprenta, Configuraciones, Requisiciones, Precios (botón en la ficha técnica + captura masiva) y Remisiones (documentos de venta con PDF sobre plantilla oficial). Corre en Windows y macOS contra una BD cloud compartida (Turso). Estado real de cada módulo: [docs/MODULES.md](docs/MODULES.md) — no asumir que algo existe sin confirmarlo ahí o en el código.
+Catálogo de escritorio para una imprenta industrial. Login individual → catálogo base (ficha técnica: imagen, material, categoría, descripción, specs) abierto a todo usuario autenticado. Secciones internas permission-gated: Piezas, Imprenta, Configuraciones, Requisiciones, Precios (botón en la ficha técnica + captura masiva) y Remisiones (documentos de venta con PDF sobre plantilla oficial). Corre en Windows y macOS contra una BD cloud compartida (Turso). Antes del login hay un gate de instalación (activación por credencial, ver [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)). Estado real de cada módulo: [docs/MODULES.md](docs/MODULES.md) — no asumir que algo existe sin confirmarlo ahí o en el código.
 
 ## Stack
 
@@ -21,7 +21,7 @@ Requiere `.env` en la raíz (gitignored) con `VITE_TURSO_URL`, `VITE_TURSO_AUTH_
 - `npx tsc --noEmit` — type-check.
 - `npm run build` — type-check + build de producción (`dist/`).
 - `cd src-tauri && cargo check` — chequeo rápido de Rust.
-- `npm test` — pruebas de integridad (Vitest) contra un SQLite/libSQL local descartable (`.env.test`, `tests/`), nunca contra Turso. `src/db.ts` corre sin cambios: `vitest.config.ts` redirige `@libsql/client/web` al cliente Node de `@libsql/client` solo bajo pruebas — ver ese archivo y `tests/setup.ts`.
+- `npm test` — pruebas de integridad (Vitest) contra un SQLite/libSQL local descartable (`.env.test`, `tests/`), nunca contra Turso. `src/db.ts` corre sin cambios: `vitest.config.ts` redirige `@libsql/client/web` al cliente Node de `@libsql/client` solo bajo pruebas — ver ese archivo y `tests/setup.ts`. Excluye `update-api/` (paquete Node separado, con su propio `package.json`/`vitest.config.ts`) — sus pruebas corren con `cd update-api && npm test`.
 
 Si `npm run tauri dev` falla compilando Rust con una ruta de archivo que no coincide con la carpeta real del proyecto: es caché stale de `src-tauri/target`, no un bug de código — ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#rust--capabilities) (`cargo clean` y volver a correr).
 
@@ -46,6 +46,8 @@ Antes de dar por cerrada una tarea que toca lógica de negocio (no solo UI), cor
 - El precio/nombre guardado en `remision_renglones` es un snapshot histórico — nunca se recalcula ni se vuelve a leer de `precios`/`products` después de creada la remisión, aunque el precio del producto cambie luego. Ver [docs/DATABASE.md](docs/DATABASE.md).
 - Toda escritura sensible en `db.ts` (catálogo, piezas, imprenta, precios, remisiones, usuarios, backups) recibe un `Actor` (`{id, token}`) y lo verifica contra la BD (`assertActorAuthorized`/`assertActorSession`) antes de ejecutar — es defensa en profundidad, no un sustituto de backend real (ver `docs/PERMISSIONS.md`). Si agregás una función de escritura nueva, seguí ese mismo patrón; no la dejes sin Actor "para simplificar".
 - Operaciones que escriben más de una tabla/fila como una sola unidad lógica (crear+historial, folio+documento, borrar en cascada) van en una transacción (`client.transaction("write")`, patrón ya usado en remisiones/requisiciones/precios) — no en llamadas `client.execute` sueltas donde una puede fallar y dejar la otra a medias.
+- Nunca meter un PAT de GitHub, una clave privada de firma del updater, ni un token administrativo de Turso dentro de CLIO/el bundle del cliente — esos tres secretos viven exclusivamente del lado del Update API (`update-api/`, Cloudflare Worker) o de GitHub Actions, nunca en `.env` con prefijo `VITE_` ni hardcodeados. Ver [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
+- Las tablas `installation_credentials`/`installations`/`audit_logs` viven en una base Turso separada de la principal, y solo `update-api/` las toca — no agregarles queries desde `src/db.ts` ni fusionarlas con la base principal "para simplificar" (rompería el aislamiento que las hace seguras, ver [docs/DATABASE.md](docs/DATABASE.md)).
 
 ## Convenciones de código
 
@@ -62,5 +64,6 @@ Antes de dar por cerrada una tarea que toca lógica de negocio (no solo UI), cor
 | Qué existe y en qué estado (antes de decir "esto ya está" o "esto falta") | [docs/MODULES.md](docs/MODULES.md) |
 | Flujo completo de Requisiciones, Remisiones, Folios, Producción/Compra, captura masiva (fichas/imágenes/precios), PDF | [docs/WORKFLOWS.md](docs/WORKFLOWS.md) |
 | Backups, restauración, recuperación ante fallas | [docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md) |
+| Distribución privada, activación/revocación de instalaciones, Update API, credenciales, publicar una versión | [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) |
 
 App: `com.mariat.catalogo-imprenta` / "Clio".

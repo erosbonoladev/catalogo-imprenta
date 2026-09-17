@@ -40,6 +40,16 @@ Patrón dominante: **replace-and-reinsert** en cada guardado para tablas hijas d
 | `remision_renglones` | `remision_id` (FK), `numero_renglon`, `sku`, `producto_nombre`, `cantidad`, `precio_unitario`, `importe` | `sku`/`producto_nombre`/`precio_unitario` son un snapshot congelado al crear la remisión — nunca se vuelven a leer de `products`/`precios` después del insert, ni siquiera si el precio del producto cambia después |
 | `pending_product_images` | `codigo` (unique), `imagen`/`imagen_mime` (BLOB), `archivo_original`, `creado_por`, `creado_en` | Imágenes de la importación masiva cuyo código no correspondía a ninguna ficha en ese momento — se aplican solas la próxima vez que `createProduct` inserte ese `codigo` (`applyPendingProductImage`), y se borran de aquí al aplicarse. Ver [WORKFLOWS.md](WORKFLOWS.md#importación-de-imágenes) |
 
+## Instalaciones / credenciales de activación (base separada)
+
+`installation_credentials`, `installations` y `audit_logs` **no viven en esta base** (la que `VITE_TURSO_URL` apunta y `src/db.ts` administra) — viven en una base Turso completamente separada, de licenciamiento, creada por `scripts/create-installations-db-schema.mjs` y administrada exclusivamente por el Update API (`update-api/`, ver [DISTRIBUTION.md](DISTRIBUTION.md)). Ningún archivo de este repo fuera de `update-api/` y ese script las toca. Motivo: el token de Turso embebido en el bundle de CLIO da acceso de lectura/escritura a *todo* lo que viva en la base que apunta — separarlas es lo único que evita que ese token (ya aceptado como constraint del resto de la app) también sirva para leer/fabricar credenciales de activación.
+
+| Tabla | Columnas | Notas |
+|---|---|---|
+| `installation_credentials` | `code_hash` (unique, SHA-256 del código en texto plano — nunca se guarda el código en sí), `code_preview` (últimos 4 caracteres, para reconocerla en la UI), `sede_codigo`, `sede_nombre`, `descripcion`, `usuario_responsable`, `estado` (`activa`\|`revocada`), `installation_id` (NULL hasta que se consume), `creado_por`, `creado_en`, `usado_en` | Se consume una sola vez (`/installations/activate`). "Regenerar" deja la vieja en `revocada` (nunca se borra) y crea una fila nueva para la misma sede — mismo criterio insert-preferido-sobre-delete que `backup_history`/`app_logs` |
+| `installations` | `installation_code` (unique, `"CLIO-PUE-0001"`), `seq` (consecutivo por `sede_codigo`, mismo truco `MAX+1` en subquery que `insertFolioRow` en `src/db.ts`), `sede_codigo`, `sede_nombre`, `descripcion`, `device_token_hash` (SHA-256 del device token que vive en el Keychain/Credential Manager del cliente), `estado` (`activa`\|`revocada`), `ultima_version`, `ultima_conexion_en`, `activada_en`, `revocada_en`, `reactivada_en` | Revocar/reactivar son `UPDATE`, nunca `DELETE` — una instalación revocada sigue existiendo, solo dejan de autorizarla `/updates/latest` y `/installations/status` |
+| `audit_logs` | `accion`, `installation_id`, `credential_id`, `actor_username`, `detalle`, `creado_en` | Insert-only, mismo patrón que `app_logs`/`backup_history` de la base principal. `accion` incluye `credential_created`, `installation_activated`, `installation_revoked`, `installation_reactivated`, `credential_regenerated`, `activation_failed` |
+
 ## Mapeo de columnas heredado (`plastic_products`)
 
 | Campo en `types.ts` | Columna real |
