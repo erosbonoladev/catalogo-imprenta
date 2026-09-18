@@ -19,10 +19,8 @@ type CampoVista = { label: string; key: keyof WoodProductInput; tipo: "texto" | 
 
 const CAMPOS_VISTA: CampoVista[] = [
   { label: "SKU", key: "sku", tipo: "texto" },
-  { label: "Tamaño", key: "tamano", tipo: "texto" },
+  { label: "Pieza", key: "tamano", tipo: "texto" },
   { label: "Capas", key: "capas", tipo: "texto" },
-  { label: "Largo", key: "largo", tipo: "texto" },
-  { label: "Ancho", key: "ancho", tipo: "texto" },
   { label: "Espesor de la madera", key: "espesor", tipo: "texto" },
   { label: "Caben en una hoja de MDF 122 x 244", key: "caben_hoja_mdf", tipo: "texto" },
   { label: "Minutos en láser", key: "minutos_laser", tipo: "texto" },
@@ -46,6 +44,17 @@ const MADERA_LIKE_RE = /madera|mdf/i;
 
 function isMaderaLike(item: PlasticItem): boolean {
   return MADERA_LIKE_RE.test(item.data.nombre) || MADERA_LIKE_RE.test(item.data.material);
+}
+
+// Largo/Ancho ya no se muestran como dos campos sueltos (ver
+// docs/DATABASE.md) — se combinan en un solo valor de vista bajo "Armado".
+// Las columnas reales `largo`/`ancho` no cambian, esto es solo presentación.
+// Convención fija en toda la app: siempre Ancho primero, Largo después.
+function formatArmado(largo: string, ancho: string): string {
+  const l = largo.trim();
+  const a = ancho.trim();
+  if (l && a) return `${a} × ${l}`;
+  return a || l || "—";
 }
 
 function sameNombreSku(a: { nombre: string; sku: string }, b: { nombre: string; sku: string }): boolean {
@@ -439,7 +448,23 @@ function WoodItemCard({ item, editMode, onChange, onPickImage, onRemove }: WoodI
         ) : (
           <>
             <div className="plastic-item-view-fields">
-              {CAMPOS_VISTA.map((campo) => (
+              {CAMPOS_VISTA.slice(0, 3).map((campo) => (
+                <div className="plastic-item-view-field" key={campo.key}>
+                  <span className="plastic-item-view-field-label">{campo.label}</span>
+                  <span className="plastic-item-view-field-value">
+                    {campo.tipo === "dinero"
+                      ? formatWoodMoney(item.data[campo.key] as number | null)
+                      : (item.data[campo.key] as string) || "—"}
+                  </span>
+                </div>
+              ))}
+              <div className="plastic-item-view-field">
+                <span className="plastic-item-view-field-label">Armado</span>
+                <span className="plastic-item-view-field-value">
+                  {formatArmado(item.data.largo, item.data.ancho)}
+                </span>
+              </div>
+              {CAMPOS_VISTA.slice(3).map((campo) => (
                 <div className="plastic-item-view-field" key={campo.key}>
                   <span className="plastic-item-view-field-label">{campo.label}</span>
                   <span className="plastic-item-view-field-value">

@@ -10,6 +10,7 @@ import configuracionIcon from "../../Assets/configuracion.svg";
 import remisionesIcon from "../../Assets/remisiones.svg";
 import piezasIcon from "../../Assets/piezas.svg";
 import skuMasterIcon from "../../Assets/sku-master.svg";
+import cortesMaderaIcon from "../../Assets/cortes-madera.svg";
 
 interface Props {
   open: boolean;
@@ -19,6 +20,7 @@ interface Props {
   onRemisiones: () => void;
   onPiezasGeneral: () => void;
   onSkuMaster: () => void;
+  onCortesMadera: () => void;
 }
 
 export default function Sidebar({
@@ -29,6 +31,7 @@ export default function Sidebar({
   onRemisiones,
   onPiezasGeneral,
   onSkuMaster,
+  onCortesMadera,
 }: Props) {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -40,6 +43,7 @@ export default function Sidebar({
   const showRemisiones = hasPermission(user, "remisiones_acceso");
   const showPiezasGeneral = hasPermission(user, "plasticos");
   const showSkuMaster = hasPermission(user, "sku_master");
+  const showCortesMadera = hasPermission(user, "maderas");
 
   return (
     <>
@@ -92,7 +96,7 @@ export default function Sidebar({
             <span>Catálogo</span>
           </button>
 
-          {(showRemisiones || showPiezasGeneral || showSkuMaster) && (
+          {(showRemisiones || showPiezasGeneral || showSkuMaster || showCortesMadera) && (
             <div className="sidebar-divider" />
           )}
 
@@ -114,6 +118,13 @@ export default function Sidebar({
             <button type="button" className="sidebar-item" onClick={onPiezasGeneral}>
               <img src={piezasIcon} alt="" aria-hidden="true" className="sidebar-item-icon" />
               <span>Piezas General</span>
+            </button>
+          )}
+
+          {showCortesMadera && (
+            <button type="button" className="sidebar-item" onClick={onCortesMadera}>
+              <img src={cortesMaderaIcon} alt="" aria-hidden="true" className="sidebar-item-icon" />
+              <span>Cortes de Madera</span>
             </button>
           )}
 

@@ -332,7 +332,9 @@ export default function MaderaImportPanel() {
         Carga un archivo Excel (.xlsx) con las columnas Producto, SKU, Tamaño, Capas, Largo, Ancho,
         Espesor de la madera, Caben en una hoja de MDF 122 x 244, Minutos en láser, Importe madera,
         Pintura, Importe corte láser, Etiqueta adhesiva, Otro, Qué es Otro, Etiqueta empaque, Costo
-        total y Precio venta. El SKU identifica al producto/juego (puede repetirse en varias filas
+        total y Precio venta (dentro de CLIO, Tamaño se muestra como "Pieza" y Largo/Ancho se
+        agrupan como "Armado" — las columnas del Excel no cambian). El SKU identifica al
+        producto/juego (puede repetirse en varias filas
         cuando un juego tiene varias piezas de madera distintas). Si ese juego no existe todavía en
         el catálogo (o la fila no trae SKU), tú decides en la revisión si ese producto de madera se
         importa igual sin relacionarlo — la importación nunca crea juegos nuevos.
@@ -455,7 +457,7 @@ export default function MaderaImportPanel() {
                   <th>Fila</th>
                   <th>SKU</th>
                   <th>Producto</th>
-                  <th>Tamaño</th>
+                  <th>Pieza</th>
                   <th>Juego</th>
                   <th>Estado</th>
                   <th>Acción</th>

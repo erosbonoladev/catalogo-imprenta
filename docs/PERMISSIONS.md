@@ -20,7 +20,7 @@ PERMISOS = [
 |---|---|---|
 | `plasticos` | **Piezas** | `PlasticosSection` y `PiezasGeneralSection` (mismo permiso para ambas, no hay uno separado para el catálogo general) |
 | `imprenta` | Imprenta | `ImprentaSection` (incluye historial de órdenes) |
-| `maderas` | Maderas | `MaderasSection` (botón "Maderas" en `ProductDetail`) y `MaderaImportPanel` (pestaña "Maderas" en Captura masiva) — permiso propio, no reutiliza `plasticos` aunque la subsección de solo lectura de piezas Madera/MDF dentro de `MaderasSection` lea datos de Piezas (ver nota abajo) |
+| `maderas` | Maderas | `MaderasSection` (botón "Maderas" en `ProductDetail`), `MaderaImportPanel` (pestaña "Maderas" en Captura masiva) y `CortesMaderaSection` (atajo "Cortes de Madera" en `Sidebar`, calculadora de aprovechamiento de placas de MDF) — permiso propio, no reutiliza `plasticos` aunque la subsección de solo lectura de piezas Madera/MDF dentro de `MaderasSection` lea datos de Piezas (ver nota abajo). Mismo criterio que `plasticos` cubriendo tanto `PlasticosSection` (ficha) como `PiezasGeneralSection` (catálogo general): un único permiso para la ficha y el catálogo/calculadora general del mismo dominio |
 | `configuraciones` | Configuraciones | `Configuraciones` (tabs Usuarios/Conectados/Registro/Captura masiva) |
 | `requisiciones` | Requisiciones | Botón "Requisición" por spec en `ProductDetail` |
 | `backups_ver` | Backups: ver | Ver el tab "Backups" dentro de Configuraciones y su historial; también gatea los botones "Lista de precios" e "Historial de remisiones" (viven ahí por pedido del negocio, no porque sean parte del sistema de backups) |

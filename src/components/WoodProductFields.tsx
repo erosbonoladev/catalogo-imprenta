@@ -37,10 +37,15 @@ export default function WoodProductFields({ data, imageSrc, onChange, onPickImag
   const fields = (
     <div className="plastic-item-fields">
       <TextField label="SKU" value={data.sku} onChange={(v) => onChange({ sku: v })} />
-      <TextField label="Tamaño" value={data.tamano} onChange={(v) => onChange({ tamano: v })} />
+      <TextField label="Pieza" value={data.tamano} onChange={(v) => onChange({ tamano: v })} />
       <TextField label="Capas" value={data.capas} onChange={(v) => onChange({ capas: v })} />
-      <TextField label="Largo" value={data.largo} onChange={(v) => onChange({ largo: v })} />
-      <TextField label="Ancho" value={data.ancho} onChange={(v) => onChange({ ancho: v })} />
+      <div className="wood-armado-group">
+        <span>Armado</span>
+        <div className="wood-armado-group-fields">
+          <TextField label="Ancho" value={data.ancho} onChange={(v) => onChange({ ancho: v })} />
+          <TextField label="Largo" value={data.largo} onChange={(v) => onChange({ largo: v })} />
+        </div>
+      </div>
       <TextField
         label="Espesor de la madera"
         value={data.espesor}

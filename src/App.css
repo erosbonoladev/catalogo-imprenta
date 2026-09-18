@@ -1874,6 +1874,84 @@ body,
   font-size: 0.95rem;
 }
 
+/* Ancho/Largo de un producto de Maderas ya no son dos campos sueltos en la
+   grilla — se agrupan visualmente bajo "Armado" (las columnas reales siguen
+   siendo `ancho`/`largo` por separado, ver docs/DATABASE.md). */
+.wood-armado-group {
+  grid-column: span 2;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.wood-armado-group > span {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.wood-armado-group-fields {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.wood-armado-group-fields .plastic-item-field {
+  flex: 1 1 120px;
+}
+
+/* Cortes de Madera — representación visual de la placa. El SVG usa
+   viewBox en milímetros (mismas unidades que el algoritmo de
+   src/corteMaderaLayout.ts), así las coordenadas se usan tal cual sin
+   reconvertir — la proporción real 122:244 la mantiene el propio viewBox. */
+.corte-madera-placa-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 1.1rem 0;
+}
+
+.corte-madera-placa-svg {
+  /* Ancho fijado por min() (no por max-width + height:auto por separado)
+     para que width y height siempre resuelvan a la proporción exacta del
+     recuadro — así nunca queda más ancho/alto que su contenido y no
+     aparecen bordes blancos de "letterboxing". El aire entre el marco y la
+     placa lo da el viewBox con padding en PlacaVisual.tsx, no este ancho. */
+  height: auto;
+  display: block;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.corte-madera-placa-svg-vertical {
+  width: min(100%, 380px, 32vh);
+  aspect-ratio: 1 / 2;
+}
+
+.corte-madera-placa-svg-horizontal {
+  width: min(100%, 640px);
+  max-height: 60vh;
+  aspect-ratio: 2 / 1;
+}
+
+.corte-madera-placa-fondo {
+  fill: var(--bg);
+}
+
+.corte-madera-pieza {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  /* 3mm reales a la escala de la placa (1220x2440mm) son sub-pixel — casi
+     invisibles. vector-effect fija el grosor en pixeles de pantalla en vez
+     de unidades del viewBox, así el corte entre piezas siempre se ve, sin
+     importar el margen real usado en el cálculo. */
+  stroke-width: 2.5px;
+  vector-effect: non-scaling-stroke;
+}
+
+.corte-madera-pieza-label {
+  fill: var(--text);
+  font-size: 32px;
+}
+
 .plastic-items-add-actions {
   display: flex;
   align-items: center;

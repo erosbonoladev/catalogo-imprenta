@@ -8,6 +8,7 @@ import PiezasGeneralSection from "./components/PiezasGeneralSection";
 import PiezaDetalleScreen from "./components/PiezaDetalleScreen";
 import ImprentaSection from "./components/ImprentaSection";
 import MaderasSection from "./components/MaderasSection";
+import CortesMaderaSection from "./components/CortesMaderaSection";
 import Configuraciones from "./components/Configuraciones";
 import LoginScreen from "./components/LoginScreen";
 import Sidebar from "./components/Sidebar";
@@ -27,6 +28,7 @@ type View =
   | { name: "piezaDetalle"; plasticProductId: number }
   | { name: "imprenta"; productId: number }
   | { name: "maderas"; productId: number }
+  | { name: "cortesMadera" }
   | { name: "configuraciones" }
   | { name: "remisiones" }
   | { name: "skuMaster" };
@@ -58,6 +60,8 @@ function viewNoun(v: View): string {
       return "Imprenta";
     case "maderas":
       return "Maderas";
+    case "cortesMadera":
+      return "Cortes de Madera";
     case "configuraciones":
       return "Configuraciones";
     case "remisiones":
@@ -157,6 +161,7 @@ function App() {
         onRemisiones={() => navigate({ name: "remisiones" })}
         onPiezasGeneral={() => navigate({ name: "piezasGeneral" })}
         onSkuMaster={() => navigate({ name: "skuMaster" })}
+        onCortesMadera={() => navigate({ name: "cortesMadera" })}
       />
       <NavigationBar
         canGoBack={history.index > 0}
@@ -230,6 +235,8 @@ function App() {
             onOpenPiezas={() => navigate({ name: "plasticos", productId: view.productId })}
           />
         )}
+
+        {view.name === "cortesMadera" && <CortesMaderaSection />}
 
         {view.name === "configuraciones" && <Configuraciones onDirtyChange={setDirty} />}
 

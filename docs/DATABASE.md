@@ -58,6 +58,17 @@ Patrón dominante: **replace-and-reinsert** en cada guardado para tablas hijas d
 
 Antes "Armado" en la UI de Piezas; se renombró a "Material" (visual y en `types.ts`/componentes) sin tocar la columna en Turso para no arriesgar datos de piezas ya registradas.
 
+## Labels heredados (`wood_products`)
+
+No es un mapeo de nombre de campo en `types.ts` (a diferencia de `plastic_products.armado`/`material`, el string en código sigue siendo idéntico al de la columna) — es puramente de presentación en los componentes:
+
+| Columna real | `WoodProduct`/`WoodProductInput` | Label visible |
+|---|---|---|
+| `tamano` | `tamano` | "Pieza" (antes "Tamaño") |
+| `largo` + `ancho` | `largo` + `ancho` | Agrupados bajo "Armado" (dos campos/columnas separados, nunca fusionados) |
+
+`tamano` identifica/nombra la pieza; `largo`/`ancho` ("Armado") son sus dimensiones de corte — mismo criterio de no migrar columnas en una BD compartida en vivo que `plastic_products.armado`/`material` arriba. El Excel de importación (`src/maderaImport.ts`) sigue trayendo columnas "Tamaño"/"Largo"/"Ancho" tal cual y no cambia — solo cambió la etiqueta que ve el usuario dentro de CLIO (`WoodProductFields.tsx`, `MaderasSection.tsx`, `MaderaImportPanel.tsx`). La calculadora "Cortes de Madera" (`src/corteMaderaLayout.ts`) lee estos mismos tres campos de texto libre para sus modos "Pieza"/"Armado".
+
 ## Mapeo de columnas heredado (`product_print_items`)
 
 El tipo `PrintItem` no coincide 1:1 con las columnas (compatibilidad con filas antiguas):
