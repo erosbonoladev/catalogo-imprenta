@@ -961,7 +961,11 @@ textarea:disabled {
   gap: 1rem;
 }
 
-.image-picker img {
+/* Combinador de hijo directo, no descendiente: el botón de eliminar imagen
+   mete su propio <img> (el ícono de basura) adentro de .image-picker — con
+   un selector descendiente ese ícono heredaba este tamaño de miniatura
+   (96px, cover, borde) en vez del de .icon-btn img (18px), y salía gigante. */
+.image-picker > img {
   width: 96px;
   height: 96px;
   object-fit: cover;
@@ -1769,13 +1773,22 @@ body,
   max-width: 320px;
 }
 
+.barcode-box-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .plastic-item-image-box img {
   width: 100%;
   aspect-ratio: 4 / 3;
   object-fit: contain;
 }
 
-.barcode-box img {
+/* Hijo directo, no descendiente — mismo motivo que .image-picker > img: el
+   botón de eliminar código de barras mete su ícono de basura adentro de
+   .barcode-box, y no debe heredar este tamaño. */
+.barcode-box > img {
   width: 100%;
   aspect-ratio: 3 / 1;
   object-fit: contain;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { hasPermission, useAuth } from "../auth";
-import { logEventAsActor } from "../db";
+import { createWoodProduct, logEventAsActor } from "../db";
 import { parseAmount } from "../precios";
 import type { WoodProduct } from "../types";
 import {
@@ -13,7 +13,9 @@ import {
   type PieceSizeMm,
 } from "../corteMaderaLayout";
 import WoodProductPicker from "./WoodProductPicker";
+import { EMPTY_WOOD_DATA } from "./WoodProductFields";
 import PlacaVisual, { type PlacaOrientacion } from "./PlacaVisual";
+import Toast from "./Toast";
 
 type Origen = "catalogo" | "manual";
 type Modo = "pieza" | "armado";
@@ -45,6 +47,13 @@ export default function CortesMaderaSection() {
   const [manualAnchoRaw, setManualAnchoRaw] = useState("");
   const [manualLargoRaw, setManualLargoRaw] = useState("");
 
+  const [showSaveManual, setShowSaveManual] = useState(false);
+  const [manualSaveNombre, setManualSaveNombre] = useState("");
+  const [manualSaveSku, setManualSaveSku] = useState("");
+  const [savingManual, setSavingManual] = useState(false);
+  const [manualSaveError, setManualSaveError] = useState<string | null>(null);
+  const [showManualSaveToast, setShowManualSaveToast] = useState(false);
+
   const [gramaje, setGramaje] = useState<GramajeMadera>(GRAMAJES_MADERA[0]);
   const [margenRaw, setMargenRaw] = useState("0");
   const [incluirMargenCortadora, setIncluirMargenCortadora] = useState(true);
@@ -66,6 +75,36 @@ export default function CortesMaderaSection() {
         <p className="hint">No tienes permiso para ver esta sección.</p>
       </div>
     );
+  }
+
+  async function handleSaveManualPiece() {
+    if (!user || !token) return;
+    const nombre = manualSaveNombre.trim();
+    if (!nombre) {
+      setManualSaveError("Ingresa un nombre para guardar la pieza.");
+      return;
+    }
+    const actor = { id: user.id, token };
+    setSavingManual(true);
+    setManualSaveError(null);
+    try {
+      await createWoodProduct(actor, {
+        ...EMPTY_WOOD_DATA,
+        nombre,
+        sku: manualSaveSku.trim(),
+        ancho: manualAnchoRaw.trim(),
+        largo: manualLargoRaw.trim(),
+      });
+      setShowSaveManual(false);
+      setManualSaveNombre("");
+      setManualSaveSku("");
+      setShowManualSaveToast(true);
+    } catch (err) {
+      setManualSaveError(`No se pudo guardar: ${String(err)}`);
+      logEventAsActor(actor, "ERROR", `No se pudo guardar pieza manual de Cortes de Madera: ${String(err)}`);
+    } finally {
+      setSavingManual(false);
+    }
   }
 
   function handleSelectProduct(producto: WoodProduct) {
@@ -234,6 +273,58 @@ export default function CortesMaderaSection() {
           {manualTieneTexto && !manualValido && (
             <p className="form-error">Ancho y Largo deben ser números mayores a 0.</p>
           )}
+
+          {manualValido && (
+            <div style={{ marginTop: "0.75rem" }}>
+              {!showSaveManual ? (
+                <button type="button" className="btn-link" onClick={() => setShowSaveManual(true)}>
+                  Guardar esta pieza en el catálogo de Maderas
+                </button>
+              ) : (
+                <div className="plastic-item-fields">
+                  <label className="plastic-item-field">
+                    <span>Nombre</span>
+                    <input
+                      type="text"
+                      value={manualSaveNombre}
+                      onChange={(e) => setManualSaveNombre(e.target.value)}
+                      autoFocus
+                    />
+                  </label>
+                  <label className="plastic-item-field">
+                    <span>SKU (opcional)</span>
+                    <input
+                      type="text"
+                      value={manualSaveSku}
+                      onChange={(e) => setManualSaveSku(e.target.value)}
+                    />
+                  </label>
+                  {manualSaveError && <p className="form-error">{manualSaveError}</p>}
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={handleSaveManualPiece}
+                      disabled={savingManual}
+                    >
+                      {savingManual ? "Guardando…" : "Guardar en el catálogo"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        setShowSaveManual(false);
+                        setManualSaveError(null);
+                      }}
+                      disabled={savingManual}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -318,6 +409,12 @@ export default function CortesMaderaSection() {
           <PlacaVisual layout={layout} orientation={placaOrientacion} />
         </>
       )}
+
+      <Toast
+        message="Pieza guardada en el catálogo de Maderas"
+        show={showManualSaveToast}
+        onHide={() => setShowManualSaveToast(false)}
+      />
     </div>
   );
 }

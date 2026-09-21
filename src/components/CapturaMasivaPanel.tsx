@@ -1,16 +1,18 @@
 import { useState } from "react";
 import FichaImportPanel from "./FichaImportPanel";
 import ImageImportPanel from "./ImageImportPanel";
+import BarcodeImageImportPanel from "./BarcodeImageImportPanel";
 import PreciosImportPanel from "./PreciosImportPanel";
 import PiezasImportPanel from "./PiezasImportPanel";
 import MaderaImportPanel from "./MaderaImportPanel";
 import CorreccionImportPanel from "./CorreccionImportPanel";
 
-type SubTab = "fichas" | "imagenes" | "precios" | "piezas" | "maderas" | "correccion";
+type SubTab = "fichas" | "imagenes" | "codigo_barras" | "precios" | "piezas" | "maderas" | "correccion";
 
 const SUB_TABS: { value: SubTab; label: string }[] = [
   { value: "fichas", label: "Fichas técnicas" },
   { value: "imagenes", label: "Imágenes" },
+  { value: "codigo_barras", label: "Código de barras" },
   { value: "precios", label: "Precios Imprenta" },
   { value: "piezas", label: "Piezas" },
   { value: "maderas", label: "Maderas" },
@@ -59,6 +61,7 @@ export default function CapturaMasivaPanel({ onDirtyChange }: Props) {
 
       {subTab === "fichas" && <FichaImportPanel />}
       {subTab === "imagenes" && <ImageImportPanel />}
+      {subTab === "codigo_barras" && <BarcodeImageImportPanel />}
       {subTab === "precios" && <PreciosImportPanel />}
       {subTab === "piezas" && <PiezasImportPanel />}
       {subTab === "maderas" && <MaderaImportPanel />}

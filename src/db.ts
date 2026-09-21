@@ -213,11 +213,15 @@ function normalizeSearchTerm(value: string): string {
   return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
 
+// "todo" incluye codigo_barras_texto para que escanear/pegar un número de
+// código de barras en el buscador general encuentre la ficha — igual que ya
+// pasa con el SKU.
 const SEARCH_FILTER_CLAUSES: Record<SearchFilter, string> = {
-  todo: `${foldSearchColumn("codigo")} LIKE ?1 OR ${foldSearchColumn("nombre")} LIKE ?1 OR ${foldSearchColumn("material")} LIKE ?1`,
+  todo: `${foldSearchColumn("codigo")} LIKE ?1 OR ${foldSearchColumn("nombre")} LIKE ?1 OR ${foldSearchColumn("material")} LIKE ?1 OR ${foldSearchColumn("codigo_barras_texto")} LIKE ?1`,
   nombre: `${foldSearchColumn("nombre")} LIKE ?1 OR ${foldSearchColumn("descripcion")} LIKE ?1`,
   sku: `${foldSearchColumn("codigo")} LIKE ?1`,
   material: `${foldSearchColumn("material")} LIKE ?1`,
+  codigo_barras: `${foldSearchColumn("codigo_barras_texto")} LIKE ?1`,
 };
 
 // Sin las columnas de imagen (BLOB) — listar/buscar no las necesita y, con
@@ -335,6 +339,12 @@ export async function createProduct(
     // sin imagen propia, para no pisar una que el usuario ya haya elegido
     // en este mismo alta.
     await applyPendingProductImage(tx, productId, product.codigo);
+    // Mismo mecanismo para la imagen de código de barras, indexada por
+    // codigo_barras_texto en vez de codigo — solo si esta alta trae uno
+    // (a diferencia de codigo, puede venir vacío).
+    if (product.codigo_barras_texto) {
+      await applyPendingProductBarcodeImage(tx, productId, product.codigo_barras_texto);
+    }
     await tx.commit();
     cacheInvalidate("products|");
     return productId;
@@ -543,6 +553,36 @@ export async function findProductsByNombre(nombre: string): Promise<Product[]> {
   return (result.rows as unknown as ProductRow[]).map(rowToProduct);
 }
 
+export interface BarcodeMatch {
+  id: number;
+  codigo: string;
+  nombre: string;
+  tieneImagenBarras: boolean;
+}
+
+// Usada por la captura masiva de imágenes de código de barras (ver
+// BarcodeImageImportPanel) para resolver cada carpeta (nombrada con el
+// número de código de barras) a su ficha técnica. codigo_barras_texto no es
+// unique (a diferencia de codigo), así que devuelve un arreglo — el llamador
+// decide qué hacer si hay 0 o más de una coincidencia. Sin BLOB de imagen:
+// solo un booleano de si ya tiene una, para no traer el binario completo de
+// cada ficha en un lookup masivo (mismo motivo que PRODUCT_LIST_COLUMNS).
+export async function findProductsByBarcode(barcodeTexto: string): Promise<BarcodeMatch[]> {
+  const result = await client.execute({
+    sql: `SELECT id, codigo, nombre, (imagen_codigo_barras_mime IS NOT NULL) AS tiene_imagen_barras
+          FROM products WHERE codigo_barras_texto = ?1`,
+    args: [barcodeTexto.trim()],
+  });
+  return (
+    result.rows as unknown as { id: number; codigo: string; nombre: string; tiene_imagen_barras: number }[]
+  ).map((row) => ({
+    id: row.id,
+    codigo: row.codigo,
+    nombre: row.nombre,
+    tieneImagenBarras: Boolean(row.tiene_imagen_barras),
+  }));
+}
+
 // Solo la usa FichaImportPanel (captura masiva, exclusiva de admin — ver
 // docs/PERMISSIONS.md), de ahí que exija Actor admin sin permiso otorgable.
 export async function setPresentacionOriginal(actor: Actor, productId: number, text: string): Promise<void> {
@@ -595,9 +635,25 @@ function formatMB(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// SVG es texto XML, no tiene magic number fijo — se olfatea decodificando
+// el arranque del archivo y buscando un tag <svg> antes de cualquier otro
+// elemento, tolerando BOM/declaración XML/comentarios/DOCTYPE como hacen los
+// navegadores. Acotado a los primeros bytes: no hace falta (ni conviene)
+// decodificar el archivo entero solo para detectar el formato.
+function looksLikeSvg(bytes: Uint8Array): boolean {
+  const sample = new TextDecoder("utf-8", { fatal: false })
+    .decode(bytes.subarray(0, 2048))
+    .replace(/^﻿/, "")
+    .trimStart();
+  return /^(<\?xml[^>]*\?>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE[^>]*>\s*)?<svg[\s>]/i.test(sample);
+}
+
 // Firma real de los bytes (magic numbers), no la extensión del nombre de
 // archivo — un .jpg renombrado desde cualquier otra cosa no debe colarse.
-function detectImageMime(bytes: Uint8Array): string | null {
+// allowSvg queda opt-in (solo lo usa el código de barras, vía pickImage) en
+// vez de sumarlo siempre: las fotos de producto/piezas/maderas no lo
+// necesitan y así no se abre esa puerta donde no se pidió.
+function detectImageMime(bytes: Uint8Array, allowSvg = false): string | null {
   if (
     bytes.length >= 8 &&
     bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
@@ -622,20 +678,26 @@ function detectImageMime(bytes: Uint8Array): string | null {
   ) {
     return "image/webp";
   }
+  if (allowSvg && looksLikeSvg(bytes)) {
+    return "image/svg+xml";
+  }
   return null;
 }
 
-function validateImageBlob(data: Uint8Array): ImageBlob {
+function validateImageBlob(data: Uint8Array, opts?: { allowSvg?: boolean }): ImageBlob {
+  const allowSvg = opts?.allowSvg ?? false;
   if (data.length === 0) throw new Error("El archivo de imagen está vacío.");
   if (data.length > MAX_IMAGE_FILE_BYTES) {
     throw new Error(
       `La imagen pesa ${formatMB(data.length)}, mayor al límite permitido (${formatMB(MAX_IMAGE_FILE_BYTES)}).`,
     );
   }
-  const mime = detectImageMime(data);
+  const mime = detectImageMime(data, allowSvg);
   if (!mime) {
     throw new Error(
-      "El archivo no es una imagen válida (png/jpg/webp/gif) — el contenido no coincide con ningún formato soportado.",
+      allowSvg
+        ? "El archivo no es una imagen válida (png/jpg/webp/gif/svg) — el contenido no coincide con ningún formato soportado."
+        : "El archivo no es una imagen válida (png/jpg/webp/gif) — el contenido no coincide con ningún formato soportado.",
     );
   }
   return { data, mime };
@@ -751,21 +813,27 @@ async function readFileChunked(path: string): Promise<Uint8Array> {
   }
 }
 
-export async function pickImage(): Promise<ImageBlob | null> {
+// allowSvg lo pide únicamente el código de barras de la ficha (ver
+// ProductForm.handlePickBarcode) — el resto de los imports de imagen
+// (producto, piezas, maderas, plásticos, carrusel de impresión) siguen
+// raster-only.
+export async function pickImage(opts?: { allowSvg?: boolean }): Promise<ImageBlob | null> {
+  const allowSvg = opts?.allowSvg ?? false;
+  const extensions = allowSvg
+    ? ["png", "jpg", "jpeg", "webp", "gif", "svg"]
+    : ["png", "jpg", "jpeg", "webp", "gif"];
   const selected = await open({
     multiple: false,
-    filters: [
-      { name: "Imágenes", extensions: ["png", "jpg", "jpeg", "webp", "gif"] },
-    ],
+    filters: [{ name: "Imágenes", extensions }],
   });
   if (!selected || Array.isArray(selected)) return null;
   const ext = selected.split(".").pop()?.toLowerCase() ?? "";
-  if (!Object.prototype.hasOwnProperty.call(MIME_BY_EXT, ext)) {
+  if (!extensions.includes(ext)) {
     throw new Error(`Extensión de archivo no soportada (.${ext || "?"}).`);
   }
   await allowFsPath(selected);
   const data = await readFile(selected);
-  return validateImageBlob(data);
+  return validateImageBlob(data, { allowSvg });
 }
 
 export async function pickExcelFile(): Promise<Uint8Array | null> {
@@ -839,6 +907,36 @@ export async function readImageFileBlob(path: string): Promise<ImageBlob> {
   return validateImageBlob(data);
 }
 
+// Un nivel de subcarpetas dentro de la carpeta elegida — usada por la
+// captura masiva de código de barras (carpeta raíz -> una subcarpeta por
+// código de barras). No otorga scope de fs por sí sola: cada subcarpeta
+// encontrada necesita su propio allowFsPath antes de listarle archivos (el
+// scope de allowFsPath no es recursivo, ver src-tauri/src/lib.rs).
+export async function listSubfolders(folderPath: string): Promise<ImageFolderEntry[]> {
+  const entries = await readDir(folderPath);
+  const folders: ImageFolderEntry[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory) continue;
+    folders.push({ name: entry.name, path: await join(folderPath, entry.name) });
+  }
+  return folders;
+}
+
+// El código de barras admite SVG además de raster (ver pickImage), así que
+// su lectura de archivo en captura masiva necesita su propia lista de
+// extensiones en vez de MIME_BY_EXT (que se mantiene raster-only a
+// propósito para el resto de las importaciones de imagen).
+export const BARCODE_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif", "svg"]);
+
+export async function readBarcodeImageFileBlob(path: string): Promise<ImageBlob> {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  if (!BARCODE_IMAGE_EXTENSIONS.has(ext)) {
+    throw new Error(`Extensión de archivo no soportada (.${ext || "?"}).`);
+  }
+  const data = await readFile(path);
+  return validateImageBlob(data, { allowSvg: true });
+}
+
 // Solo la usa ImageImportPanel (captura masiva, exclusiva de admin — ver
 // docs/PERMISSIONS.md), de ahí que exija Actor admin sin permiso otorgable.
 export async function updateProductImage(
@@ -849,6 +947,20 @@ export async function updateProductImage(
   await assertActorAuthorized(actor);
   await client.execute({
     sql: "UPDATE products SET imagen = ?1, imagen_mime = ?2 WHERE id = ?3",
+    args: [imagen.data, imagen.mime, id],
+  });
+}
+
+// Mismo patrón que updateProductImage pero para imagen_codigo_barras — solo
+// la usa BarcodeImageImportPanel (captura masiva, exclusiva de admin).
+export async function updateProductBarcodeImage(
+  actor: Actor,
+  id: number,
+  imagen: ImageBlob,
+): Promise<void> {
+  await assertActorAuthorized(actor);
+  await client.execute({
+    sql: "UPDATE products SET imagen_codigo_barras = ?1, imagen_codigo_barras_mime = ?2 WHERE id = ?3",
     args: [imagen.data, imagen.mime, id],
   });
 }
@@ -899,6 +1011,56 @@ export async function upsertPendingProductImage(
           ON CONFLICT(codigo) DO UPDATE SET
             imagen = ?2, imagen_mime = ?3, archivo_original = ?4, creado_por = ?5, creado_en = datetime('now')`,
     args: [input.codigo, input.imagen.data, input.imagen.mime, input.archivoOriginal, input.usuario],
+  });
+}
+
+// --- Imágenes de código de barras pendientes (mismo patrón que las
+// imágenes pendientes de arriba, pero indexadas por codigo_barras_texto en
+// vez de codigo — usada por la captura masiva de imágenes de código de
+// barras, ver BarcodeImageImportPanel) ---
+
+// Se llama dentro de la transacción de createProduct — si existe una imagen
+// de código de barras guardada para el codigo_barras_texto de esta alta, se
+// aplica y se borra de "pendientes". No pisa una que la propia alta ya haya
+// traído. Solo se llama cuando codigo_barras_texto no está vacío (ver
+// createProduct) — a diferencia de codigo, que siempre existe.
+async function applyPendingProductBarcodeImage(
+  execer: Client | Transaction,
+  productId: number,
+  codigoBarrasTexto: string,
+): Promise<void> {
+  const result = await execer.execute({
+    sql: "SELECT id, imagen, imagen_mime FROM pending_product_barcode_images WHERE codigo_barras = ?1",
+    args: [codigoBarrasTexto],
+  });
+  const row = result.rows[0] as unknown as
+    | { id: number; imagen: ArrayBuffer; imagen_mime: string }
+    | undefined;
+  if (!row) return;
+  await execer.execute({
+    sql: "UPDATE products SET imagen_codigo_barras = ?1, imagen_codigo_barras_mime = ?2 WHERE id = ?3 AND imagen_codigo_barras IS NULL",
+    args: [row.imagen, row.imagen_mime, productId],
+  });
+  await execer.execute({ sql: "DELETE FROM pending_product_barcode_images WHERE id = ?1", args: [row.id] });
+}
+
+// Usada por BarcodeImageImportPanel (isAdmin) cuando el número de la
+// subcarpeta no corresponde al codigo_barras_texto de ninguna ficha técnica
+// todavía — la imagen queda guardada aquí en vez de descartarse, lista para
+// aplicarse sola si más adelante se crea un producto con ese código de
+// barras (ver applyPendingProductBarcodeImage arriba). ON CONFLICT por si el
+// mismo código de barras se reimporta sin ficha dos veces.
+export async function upsertPendingProductBarcodeImage(
+  actor: Actor,
+  input: { codigoBarras: string; imagen: ImageBlob; archivoOriginal: string; usuario: string | null },
+): Promise<void> {
+  await assertActorAuthorized(actor);
+  await client.execute({
+    sql: `INSERT INTO pending_product_barcode_images (codigo_barras, imagen, imagen_mime, archivo_original, creado_por)
+          VALUES (?1, ?2, ?3, ?4, ?5)
+          ON CONFLICT(codigo_barras) DO UPDATE SET
+            imagen = ?2, imagen_mime = ?3, archivo_original = ?4, creado_por = ?5, creado_en = datetime('now')`,
+    args: [input.codigoBarras, input.imagen.data, input.imagen.mime, input.archivoOriginal, input.usuario],
   });
 }
 

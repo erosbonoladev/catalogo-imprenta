@@ -20,6 +20,7 @@ const FILTROS: { value: SearchFilter; label: string }[] = [
   { value: "nombre", label: "Nombre o palabras clave" },
   { value: "sku", label: "SKU" },
   { value: "material", label: "Material" },
+  { value: "codigo_barras", label: "Código de barras" },
 ];
 
 const PAGE_SIZE = 20; // 5 filas x 4 columnas por página

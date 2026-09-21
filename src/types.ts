@@ -311,7 +311,7 @@ export interface PrintItemPurchase {
   creado_en: string;
 }
 
-export type SearchFilter = "todo" | "nombre" | "sku" | "material";
+export type SearchFilter = "todo" | "nombre" | "sku" | "material" | "codigo_barras";
 
 export const PERMISOS = [
   "plasticos",

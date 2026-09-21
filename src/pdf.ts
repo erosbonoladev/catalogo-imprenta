@@ -235,11 +235,6 @@ export async function buildPurchasePdf(
     doc.text(`Máquina: ${entry.maquina || "—"}`, marginX, y);
     y += 15;
     doc.text(`Gramos o puntos: ${entry.item.gramos_puntos || "—"}`, marginX, y);
-    y += 15;
-
-    doc.setFont("helvetica", "bold");
-    doc.text(`Total de tamaños: ${entry.totalTamanos}`, marginX, y);
-    doc.setFont("helvetica", "normal");
     y += 22;
   }
 

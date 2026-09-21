@@ -185,10 +185,20 @@ export default function ProductForm({ productId, onDone, onCancel, onDirtyChange
   }
 
   async function handlePickBarcode() {
-    const image = await pickImage();
+    const image = await pickImage({ allowSvg: true });
     if (!image) return;
     updateField("imagen_codigo_barras", image);
     setBarcodeSrc(await getImageSrc(image));
+  }
+
+  function handleRemoveImage() {
+    updateField("imagen", null);
+    setImageSrc(null);
+  }
+
+  function handleRemoveBarcode() {
+    updateField("imagen_codigo_barras", null);
+    setBarcodeSrc(null);
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -397,6 +407,17 @@ export default function ProductForm({ productId, onDone, onCancel, onDirtyChange
           <button type="button" className="btn btn-secondary" onClick={handlePickImage}>
             {imageSrc ? "Cambiar imagen" : "Seleccionar imagen de referencia"}
           </button>
+          {imageSrc && (
+            <button
+              type="button"
+              className="icon-btn icon-btn-remove"
+              onClick={handleRemoveImage}
+              title="Eliminar imagen"
+              aria-label="Eliminar imagen"
+            >
+              <img src={basuraIcon} alt="" aria-hidden="true" />
+            </button>
+          )}
         </div>
 
         <div className="barcode-box">
@@ -405,9 +426,22 @@ export default function ProductForm({ productId, onDone, onCancel, onDirtyChange
           ) : (
             <span className="product-card-placeholder">Sin código de barras</span>
           )}
-          <button type="button" className="btn btn-secondary" onClick={handlePickBarcode}>
-            {barcodeSrc ? "Cambiar código de barras" : "Agregar código de barras"}
-          </button>
+          <div className="barcode-box-actions">
+            <button type="button" className="btn btn-secondary" onClick={handlePickBarcode}>
+              {barcodeSrc ? "Cambiar código de barras" : "Agregar código de barras"}
+            </button>
+            {barcodeSrc && (
+              <button
+                type="button"
+                className="icon-btn icon-btn-remove"
+                onClick={handleRemoveBarcode}
+                title="Eliminar código de barras"
+                aria-label="Eliminar código de barras"
+              >
+                <img src={basuraIcon} alt="" aria-hidden="true" />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="form-row">

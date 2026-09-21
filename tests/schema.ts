@@ -33,6 +33,15 @@ export const SCHEMA_STATEMENTS: string[] = [
     creado_por TEXT,
     creado_en TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  `CREATE TABLE pending_product_barcode_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigo_barras TEXT NOT NULL UNIQUE,
+    imagen BLOB NOT NULL,
+    imagen_mime TEXT NOT NULL,
+    archivo_original TEXT,
+    creado_por TEXT,
+    creado_en TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
   `CREATE TABLE product_specs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     product_id INTEGER NOT NULL,
