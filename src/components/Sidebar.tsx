@@ -8,6 +8,7 @@ import estrellasIcon from "../../Assets/estrellas.svg";
 import cierreSesionIcon from "../../Assets/cierre-de-sesion-de-usuario.svg";
 import configuracionIcon from "../../Assets/configuracion.svg";
 import remisionesIcon from "../../Assets/remisiones.svg";
+import maquilaIcon from "../../Assets/maquila.svg";
 import piezasIcon from "../../Assets/piezas.svg";
 import skuMasterIcon from "../../Assets/sku-master.svg";
 import cortesMaderaIcon from "../../Assets/cortes-madera.svg";
@@ -18,6 +19,7 @@ interface Props {
   onCatalogo: () => void;
   onConfiguraciones: () => void;
   onRemisiones: () => void;
+  onMaquila: () => void;
   onPiezasGeneral: () => void;
   onSkuMaster: () => void;
   onCortesMadera: () => void;
@@ -29,6 +31,7 @@ export default function Sidebar({
   onCatalogo,
   onConfiguraciones,
   onRemisiones,
+  onMaquila,
   onPiezasGeneral,
   onSkuMaster,
   onCortesMadera,
@@ -96,9 +99,7 @@ export default function Sidebar({
             <span>Catálogo</span>
           </button>
 
-          {(showRemisiones || showPiezasGeneral || showSkuMaster || showCortesMadera) && (
-            <div className="sidebar-divider" />
-          )}
+          <div className="sidebar-divider" />
 
           {showRemisiones && (
             <button type="button" className="sidebar-item" onClick={onRemisiones}>
@@ -106,6 +107,11 @@ export default function Sidebar({
               <span>Remisiones</span>
             </button>
           )}
+
+          <button type="button" className="sidebar-item" onClick={onMaquila}>
+            <img src={maquilaIcon} alt="" aria-hidden="true" className="sidebar-item-icon" />
+            <span>Maquila</span>
+          </button>
 
           {showSkuMaster && (
             <button type="button" className="sidebar-item" onClick={onSkuMaster}>

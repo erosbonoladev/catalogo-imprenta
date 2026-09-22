@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import "./App.css";
 import SearchScreen from "./components/SearchScreen";
 import ProductDetail from "./components/ProductDetail";
@@ -31,6 +31,7 @@ type View =
   | { name: "cortesMadera" }
   | { name: "configuraciones" }
   | { name: "remisiones" }
+  | { name: "maquila" }
   | { name: "skuMaster" };
 
 interface SearchState {
@@ -66,6 +67,8 @@ function viewNoun(v: View): string {
       return "Configuraciones";
     case "remisiones":
       return "Remisiones";
+    case "maquila":
+      return "Maquila";
     case "skuMaster":
       return "SKU Master";
   }
@@ -80,6 +83,30 @@ function App() {
   const [dirty, setDirty] = useState(false);
   const [searchState, setSearchState] = useState<SearchState>(BLANK_SEARCH);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const appContentRef = useRef<HTMLElement>(null);
+  const [scrollbarWidth, setScrollbarWidth] = useState(0);
+
+  useEffect(() => {
+    const el = appContentRef.current;
+    if (!el) return;
+    // El ancho real de esta scrollbar (8px por CSS, ver .app-content::-webkit-scrollbar)
+    // no siempre coincide con lo que el motor termina renderizando según SO/DPI, y
+    // .nav-history-bar (fija, arriba a la derecha) necesita dejarle ese espacio real
+    // para no quedar encima cuando el catálogo tiene productos de sobra para scrollear.
+    const measure = () => setScrollbarWidth(el.offsetWidth - el.clientWidth);
+    measure();
+    // ResizeObserver solo dispara si .app-content mismo cambia de tamaño (ventana/
+    // fullscreen); MutationObserver cubre el caso de que el scroll aparezca porque
+    // el contenido de adentro creció (más resultados) sin que la ventana se mueva.
+    const resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(el);
+    const mutationObserver = new MutationObserver(measure);
+    mutationObserver.observe(el, { childList: true, subtree: true });
+    return () => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+    };
+  }, []);
 
   const view = history.stack[history.index];
   const prevView = history.index > 0 ? history.stack[history.index - 1] : null;
@@ -151,7 +178,7 @@ function App() {
   const forwardTitle = nextView ? `Ir a ${viewNoun(nextView)}` : null;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" style={{ "--scrollbar-w": `${scrollbarWidth}px` } as CSSProperties}>
       <DailyBackupPrompt />
       <Sidebar
         open={sidebarOpen}
@@ -159,6 +186,7 @@ function App() {
         onCatalogo={goToCatalogo}
         onConfiguraciones={() => navigate({ name: "configuraciones" })}
         onRemisiones={() => navigate({ name: "remisiones" })}
+        onMaquila={() => navigate({ name: "maquila" })}
         onPiezasGeneral={() => navigate({ name: "piezasGeneral" })}
         onSkuMaster={() => navigate({ name: "skuMaster" })}
         onCortesMadera={() => navigate({ name: "cortesMadera" })}
@@ -172,7 +200,7 @@ function App() {
         onForward={goForward}
       />
 
-      <main className="app app-content">
+      <main className="app app-content" ref={appContentRef}>
         {view.name === "search" && (
           <SearchScreen
             query={searchState.query}
@@ -241,6 +269,13 @@ function App() {
         {view.name === "configuraciones" && <Configuraciones onDirtyChange={setDirty} />}
 
         {view.name === "remisiones" && <RemisionesSection />}
+
+        {view.name === "maquila" && (
+          <div className="private-section">
+            <h1>Maquila</h1>
+            <p className="hint">Próximamente.</p>
+          </div>
+        )}
 
         {view.name === "skuMaster" && (
           <SkuMasterSection
