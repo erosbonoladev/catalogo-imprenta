@@ -31,7 +31,6 @@ type View =
   | { name: "cortesMadera" }
   | { name: "configuraciones" }
   | { name: "remisiones" }
-  | { name: "maquila" }
   | { name: "skuMaster" };
 
 interface SearchState {
@@ -67,8 +66,6 @@ function viewNoun(v: View): string {
       return "Configuraciones";
     case "remisiones":
       return "Remisiones";
-    case "maquila":
-      return "Maquila";
     case "skuMaster":
       return "SKU Master";
   }
@@ -186,7 +183,6 @@ function App() {
         onCatalogo={goToCatalogo}
         onConfiguraciones={() => navigate({ name: "configuraciones" })}
         onRemisiones={() => navigate({ name: "remisiones" })}
-        onMaquila={() => navigate({ name: "maquila" })}
         onPiezasGeneral={() => navigate({ name: "piezasGeneral" })}
         onSkuMaster={() => navigate({ name: "skuMaster" })}
         onCortesMadera={() => navigate({ name: "cortesMadera" })}
@@ -269,13 +265,6 @@ function App() {
         {view.name === "configuraciones" && <Configuraciones onDirtyChange={setDirty} />}
 
         {view.name === "remisiones" && <RemisionesSection />}
-
-        {view.name === "maquila" && (
-          <div className="private-section">
-            <h1>Maquila</h1>
-            <p className="hint">Próximamente.</p>
-          </div>
-        )}
 
         {view.name === "skuMaster" && (
           <SkuMasterSection

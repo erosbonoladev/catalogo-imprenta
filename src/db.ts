@@ -1861,6 +1861,61 @@ export async function findPlasticProductInJuegoBySku(
   return row ? rowToPlasticProduct(row) : null;
 }
 
+// Busca una pieza por su posición (product_plastic_items.orden) dentro de
+// un juego específico — usada como respaldo en la reimportación de un
+// export de SKU Master ("Desglose") cuando la fila no trae SKU propio, o
+// cuando el SKU de la fila fue reasignado durante una depuración externa
+// (ej. hoja "Cambios aplicados") y por eso no matchea ninguna pieza ya
+// ligada por SKU: la posición sigue identificando la misma pieza aunque su
+// nombre o SKU hayan cambiado.
+export async function findPlasticProductInJuegoByOrden(
+  productId: number,
+  orden: number,
+): Promise<PlasticProduct | null> {
+  const result = await client.execute({
+    sql: `SELECT pp.* FROM plastic_products pp
+          JOIN product_plastic_items ppi ON ppi.plastic_product_id = pp.id
+          WHERE ppi.product_id = ?1 AND ppi.orden = ?2
+          LIMIT 1`,
+    args: [productId, orden],
+  });
+  const row = result.rows[0] as unknown as PlasticProductRow | undefined;
+  return row ? rowToPlasticProduct(row) : null;
+}
+
+// Busca una pieza por SKU exacto en TODO el catálogo, sin importar a qué
+// juego esté ligada (o si no está ligada a ninguno) — usada para detectar,
+// en una fila que de otro modo sería "nueva" dentro de su propio juego, que
+// ya existe una pieza igual en otro contexto y así no duplicarla en el
+// catálogo maestro (ver findPlasticProductInJuegoBySku para el
+// equivalente acotado a un juego específico, que es el que decide
+// "actualizar" vs "nueva"; este es solo una señal para que el usuario
+// decida en la revisión, nunca vincula solo).
+export async function findPlasticProductGlobalBySku(sku: string): Promise<PlasticProduct | null> {
+  const trimmed = sku.trim();
+  if (!trimmed) return null;
+  const result = await client.execute({
+    sql: `SELECT * FROM plastic_products WHERE sku = ?1 LIMIT 1`,
+    args: [trimmed],
+  });
+  const row = result.rows[0] as unknown as PlasticProductRow | undefined;
+  return row ? rowToPlasticProduct(row) : null;
+}
+
+// Mismo criterio que findPlasticProductGlobalBySku pero por nombre exacto
+// (sin distinguir mayúsculas/espacios), para cuando la fila no trae SKU
+// propio.
+export async function findPlasticProductGlobalByNombre(nombre: string): Promise<PlasticProduct | null> {
+  const trimmed = nombre.trim();
+  if (!trimmed) return null;
+  const result = await client.execute({
+    sql: `SELECT * FROM plastic_products WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(?1)) LIMIT 1`,
+    args: [trimmed],
+  });
+  const row = result.rows[0] as unknown as PlasticProductRow | undefined;
+  return row ? rowToPlasticProduct(row) : null;
+}
+
 // Upsert incremental de una fila de importación masiva de piezas: a
 // diferencia de savePlasticItems (que reemplaza TODA la relación de un
 // juego), esta función solo crea/actualiza una pieza puntual sin tocar el
@@ -1868,6 +1923,15 @@ export async function findPlasticProductInJuegoBySku(
 // `productId` es null cuando la fila no se pudo relacionar con ningún juego
 // pero el usuario decidió importarla igual — la pieza se crea/actualiza en
 // el catálogo maestro sin fila en product_plastic_items.
+//
+// Cuando `plasticProductId` viene de un emparejamiento acotado al juego
+// (findPlasticProductInJuegoBySku/ByOrden/ByNombre), la fila en
+// product_plastic_items ya existe — el INSERT de abajo es un no-op (la
+// condición NOT EXISTS lo evita). Cuando viene de un duplicado global
+// (findPlasticProductGlobalBySku/ByNombre, el usuario eligió "Vincular a
+// pieza existente" para una fila que era "nueva" en su propio juego), la
+// pieza existe pero todavía no está ligada a este juego — ahí el INSERT sí
+// crea la relación, además de actualizar la pieza con lo que traiga la fila.
 export async function importPiezaRow(
   actor: Actor,
   productId: number | null,
@@ -1884,12 +1948,16 @@ export async function importPiezaRow(
       resolvedId = plasticProductId;
     } else {
       resolvedId = await createPlasticProduct(actor, input, tx);
-      if (productId !== null) {
-        await tx.execute({
-          sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden) VALUES (?1, ?2, ?3)`,
-          args: [productId, resolvedId, orden],
-        });
-      }
+    }
+    if (productId !== null) {
+      await tx.execute({
+        sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden)
+              SELECT ?1, ?2, ?3
+              WHERE NOT EXISTS (
+                SELECT 1 FROM product_plastic_items WHERE product_id = ?1 AND plastic_product_id = ?2
+              )`,
+        args: [productId, resolvedId, orden],
+      });
     }
     await tx.commit();
     return resolvedId;

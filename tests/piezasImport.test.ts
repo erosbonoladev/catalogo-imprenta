@@ -7,12 +7,16 @@ import {
   buildPiezaInput,
   classifyPiezaRows,
   normalizeImageLink,
+  pieceName,
   readPiezasWorkbook,
   type PiezaRowLookup,
   type RawPiezaImportRow,
 } from "../src/piezasImport";
 import {
+  findPlasticProductGlobalByNombre,
+  findPlasticProductGlobalBySku,
   findPlasticProductInJuegoByNombre,
+  findPlasticProductInJuegoByOrden,
   findPlasticProductInJuegoBySku,
   getLastPiezaImportBatch,
   importPiezaRow,
@@ -290,6 +294,140 @@ describe("readPiezasWorkbook", () => {
   });
 });
 
+describe("readPiezasWorkbook: formato Desglose (export de SKU Master reimportado)", () => {
+  // Encabezados reales del export (desgloseSheetRows en excelExport.ts) más
+  // "SKU Principal" (se ignora, se usa "Producto (Clave)" como llave exacta)
+  // y "Vínculo producto y orden" (columna agregada a mano por el usuario en
+  // su depuración, no parte del export — debe ignorarse sin confundirse con
+  // "Orden").
+  const DESGLOSE_HEADERS = [
+    "SKU Principal",
+    "Producto (Clave)",
+    "Producto (Nombre)",
+    "Orden",
+    "SKU Pieza",
+    "Nombre Pieza",
+    "Cantidad",
+    "Descripción",
+    "Material",
+    "Color",
+    "Origen",
+    "Dimensión",
+    "Peso",
+    "Tipo de empaque",
+    "Maquila",
+    "Costo",
+    "Componentes de fabricación",
+    "Dimensiones de empaque",
+    "Vínculo producto y orden",
+  ];
+
+  function buildDesgloseWorkbook(rows: (string | number)[][], sheetName = "Desglose"): Uint8Array {
+    const wb = XLSX.utils.book_new();
+    // Una hoja irrelevante primero (como "Hoja 1" en el archivo real del
+    // usuario) — la detección debe ser por NOMBRE de hoja, no por posición.
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["algo"], ["irrelevante"]]), "Hoja 1");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([DESGLOSE_HEADERS, ...rows]), sheetName);
+    return new Uint8Array(XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer);
+  }
+
+  it("detecta la hoja 'Desglose' por nombre (no por posición) y lee filas planas, un juego por fila", () => {
+    const bytes = buildDesgloseWorkbook([
+      ["1000", "1000", "Ábaco Gigante", "1", "", "Codo 90° 2\"", "", "Codo 90° 2\"", "", "", "BOD", "", "308.4", "", "5.00", "30.84", "6", "", "1000:1"],
+      ["1000", "1000", "Ábaco Gigante", "2", "1138-1", "Tee 2\"", "", "Tee 2\"", "", "", "GIL", "", "237.6", "", "5.00", "23.76", "3", "", "1000:2"],
+    ]);
+    const result = readPiezasWorkbook(bytes);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[0]).toMatchObject({ juegoSku: "1000", sku: "", nombre: 'Codo 90° 2"', orden: 1 });
+    expect(result.rows[1]).toMatchObject({ juegoSku: "1000", sku: "1138-1", nombre: 'Tee 2"', orden: 2 });
+  });
+
+  it("no confunde la columna 'Orden' con 'Vínculo producto y orden' (ambas contienen el token 'orden')", () => {
+    const bytes = buildDesgloseWorkbook([
+      ["1000", "1000", "Ábaco Gigante", "7", "", "Pieza", "", "Pieza", "", "", "BOD", "", "10", "", "1.00", "1.00", "1", "", "1000:7"],
+    ]);
+    const result = readPiezasWorkbook(bytes);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows[0].orden).toBe(7);
+  });
+
+  it("cuando 'Descripción' viene vacía, usa 'Nombre Pieza' tanto para nombre como para descripcion", () => {
+    const bytes = buildDesgloseWorkbook([
+      ["1029", "1029", "Teatro Digital", "1", "", "Tela Teatro Digital", "", "", "", "", "EXTR", "", "247.2", "", "", "", "", "", "1029:1"],
+    ]);
+    const result = readPiezasWorkbook(bytes);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows[0].nombre).toBe("Tela Teatro Digital");
+    expect(result.rows[0].descripcion).toBe("Tela Teatro Digital");
+  });
+
+  it("lee Material/Color/Tipo de empaque cuando la fila los trae", () => {
+    const bytes = buildDesgloseWorkbook([
+      ["1129", "1129", "Caja Mis Primeras Matemáticas", "1", "3075-1T", "No. Didáctico 1 Azul", "", "", "Plastico", "Azul", "BOD", "3.8x3.5x1", "0.004", "Madera", "", "", "", "", "1129:1"],
+    ]);
+    const result = readPiezasWorkbook(bytes);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows[0]).toMatchObject({ material: "Plastico", color: "Azul", tipoEmpaque: "Madera" });
+  });
+
+  it("fila sin 'Producto (Clave)' (marcador de pieza sin relación, ej. 'SIN-PRODUCTO') queda con juegoSku vacío", () => {
+    const bytes = buildDesgloseWorkbook([
+      ["", "", "", "", "", "Cubo", "", "", "Plástico", "Rojo", "BOD", "", "", "", "", "", "", "", "SIN-PRODUCTO:2669"],
+    ]);
+    const result = readPiezasWorkbook(bytes);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows[0].juegoSku).toBe("");
+    expect(result.rows[0].nombre).toBe("Cubo");
+  });
+
+  it("reporta encabezados faltantes específicos del formato Desglose (no los del formato clásico)", () => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.aoa_to_sheet([["Producto (Clave)", "Nombre Pieza"], ["1000", "Pieza"]]),
+      "Desglose",
+    );
+    const bytes = new Uint8Array(XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer);
+    const result = readPiezasWorkbook(bytes);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.missingHeaders).toContain("SKU Pieza");
+    expect(result.missingHeaders).toContain("Orden");
+    expect(result.missingHeaders).not.toContain("Links Imágenes Piezas");
+  });
+
+  it("sin ninguna hoja 'Desglose', cae al formato clásico (primera hoja, agrupado por bloques)", () => {
+    const REAL_HEADERS = [
+      "IMAGEN", "ORIGEN", "SKU", "Descripción", "COMPONENTES DE FABRICACION",
+      "Dimensiones", "PESO (GR.)", "MAQUILA", "COSTO", "NETO PROD",
+      "DIMENSIONES EMPAQUE", "LINKS IMAGENES PIEZAS",
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.aoa_to_sheet([
+        REAL_HEADERS,
+        ["", "", "1042", "PORTA LIBROS", "17", "", "3410", "", "477.80", "", "", ""],
+        ["", "BOD", "", "Tela porta libro", "1", "", "955", "", "220.00", "", "", ""],
+      ]),
+      "Piezas",
+    );
+    const bytes = new Uint8Array(XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer);
+    const result = readPiezasWorkbook(bytes);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({ juegoSku: "1042", descripcion: "Tela porta libro" });
+    expect(result.rows[0].orden).toBeUndefined();
+  });
+});
+
 // --- classifyPiezaRows ---
 
 describe("classifyPiezaRows", () => {
@@ -299,6 +437,39 @@ describe("classifyPiezaRows", () => {
     const [result] = classifyPiezaRows([row], lookups);
     expect(result.status).toBe("nueva");
     expect(result.matchedJuego?.codigo).toBe("7234");
+    expect(result.matchedDuplicado).toBeUndefined();
+  });
+
+  it("nueva con coincidencia global (otro juego, o sin ninguno) -> arrastra matchedDuplicado sin cambiar el status", () => {
+    const row = makeRow();
+    const duplicado = makePieza({ id: 99, nombre: "Tubo 2\"" });
+    const lookups = new Map<number, PiezaRowLookup>([
+      [
+        row.fila,
+        {
+          juego: makeJuego(),
+          pieza: null,
+          globalDuplicado: { pieza: duplicado, matchedBy: "nombre", usadaEn: [{ id: 5, codigo: "8100", nombre: "Otro juego" }] },
+        },
+      ],
+    ]);
+    const [result] = classifyPiezaRows([row], lookups);
+    expect(result.status).toBe("nueva");
+    expect(result.matchedDuplicado?.pieza.id).toBe(99);
+    expect(result.matchedDuplicado?.matchedBy).toBe("nombre");
+    expect(result.matchedDuplicado?.usadaEn).toEqual([{ id: 5, codigo: "8100", nombre: "Otro juego" }]);
+  });
+
+  it("actualizar (ya matcheó dentro del juego) no lleva matchedDuplicado aunque el lookup lo traiga", () => {
+    const row = makeRow();
+    const pieza = makePieza();
+    const duplicado = makePieza({ id: 99 });
+    const lookups = new Map<number, PiezaRowLookup>([
+      [row.fila, { juego: makeJuego(), pieza, globalDuplicado: { pieza: duplicado, matchedBy: "sku", usadaEn: [] } }],
+    ]);
+    const [result] = classifyPiezaRows([row], lookups);
+    expect(result.status).toBe("actualizar");
+    expect(result.matchedDuplicado).toBeUndefined();
   });
 
   it("ya existe una pieza con ese nombre en ese juego -> actualizar", () => {
@@ -394,6 +565,23 @@ describe("classifyPiezaRows", () => {
     expect(results[1].status).toBe("nueva");
   });
 
+  it("formato Desglose: usa 'nombre' (Nombre Pieza) en vez de 'descripcion' para validar y para el dedup por nombre", () => {
+    const rowA = makeRow({ fila: 2, descripcion: "", nombre: "Tela Teatro Digital" });
+    const rowB = makeRow({ fila: 3, descripcion: "otra descripcion", nombre: "Tela Teatro Digital" });
+    const juego = makeJuego();
+    const lookups = new Map<number, PiezaRowLookup>([
+      [2, { juego, pieza: null }],
+      [3, { juego, pieza: null }],
+    ]);
+    const results = classifyPiezaRows([rowA, rowB], lookups);
+    // La primera no es error aunque "descripcion" venga vacía (usa "nombre").
+    expect(results[0].status).toBe("nueva");
+    // La segunda es duplicado del mismo juego por "nombre" (Nombre Pieza),
+    // aunque su "descripcion" sea distinta.
+    expect(results[1].status).toBe("error");
+    expect(results[1].reason).toMatch(/repetid/);
+  });
+
   it("imageStatus: con-link / sin-link / link-invalido", () => {
     const conLink = makeRow({ linkImagen: "https://drive.google.com/file/d/ABC/view" });
     const sinLink = makeRow({ fila: 3, linkImagen: "" });
@@ -451,6 +639,41 @@ describe("buildPiezaInput", () => {
     const newImage = { data: new Uint8Array([1, 2, 3]), mime: "image/jpeg" };
     const input = buildPiezaInput(classified, newImage);
     expect(input.imagen).toEqual(newImage);
+  });
+
+  it("formato Desglose: nombre usa 'Nombre Pieza' con prioridad sobre 'Descripción' cuando difieren", () => {
+    const row = makeRow({ nombre: "No. Didáctico 1 Azul", descripcion: "otra cosa" });
+    const [classified] = classifyPiezaRows([row], new Map([[row.fila, { juego: makeJuego(), pieza: null }]]));
+    const input = buildPiezaInput(classified, null);
+    expect(input.nombre).toBe("No. Didáctico 1 Azul");
+  });
+
+  it("formato Desglose: Material/Color/Tipo de empaque presentes en la fila reemplazan lo existente", () => {
+    const row = makeRow({ material: "Plastico", color: "Azul", tipoEmpaque: "Madera" });
+    const pieza = makePieza({ material: "ABS", color: "Rojo", tipo_empaque: "Caja" });
+    const [classified] = classifyPiezaRows([row], new Map([[row.fila, { juego: makeJuego(), pieza }]]));
+    const input = buildPiezaInput(classified, null);
+    expect(input.material).toBe("Plastico");
+    expect(input.color).toBe("Azul");
+    expect(input.tipo_empaque).toBe("Madera");
+  });
+
+  it("formato Desglose: Material/Color/Tipo de empaque vacíos (string vacío, no undefined) conservan lo existente", () => {
+    const row = makeRow({ material: "", color: "", tipoEmpaque: "" });
+    const pieza = makePieza({ material: "ABS", color: "Rojo", tipo_empaque: "Caja" });
+    const [classified] = classifyPiezaRows([row], new Map([[row.fila, { juego: makeJuego(), pieza }]]));
+    const input = buildPiezaInput(classified, null);
+    expect(input.material).toBe("ABS");
+    expect(input.color).toBe("Rojo");
+    expect(input.tipo_empaque).toBe("Caja");
+  });
+});
+
+describe("pieceName", () => {
+  it("usa 'nombre' cuando está presente, cae a 'descripcion' cuando no", () => {
+    expect(pieceName(makeRow({ nombre: "Nombre Pieza", descripcion: "Otra" }))).toBe("Nombre Pieza");
+    expect(pieceName(makeRow({ nombre: undefined, descripcion: "Solo descripcion" }))).toBe("Solo descripcion");
+    expect(pieceName(makeRow({ nombre: "", descripcion: "Solo descripcion" }))).toBe("Solo descripcion");
   });
 });
 
@@ -553,6 +776,129 @@ describe("findPlasticProductInJuegoByNombre + importPiezaRow", () => {
 
     const foundInB = await findPlasticProductInJuegoBySku("1138-1", productB);
     expect(foundInB).toBeNull();
+  });
+
+  it("findPlasticProductInJuegoByOrden encuentra por posición dentro del juego, pero no en otro juego ni en otra posición", async () => {
+    const actor = await createFixtureUser({ username: "u3c", permisos: ["plasticos"] });
+    const productA = await seedJuego("1000");
+    const productB = await seedJuego("9999");
+
+    const [classified] = classifyPiezaRows(
+      [makeRow({ juegoSku: "1000", orden: 7 })],
+      new Map([[3, { juego: makeJuego({ id: productA, codigo: "1000" }), pieza: null }]]),
+    );
+    const input = buildPiezaInput(classified, null);
+    const plasticId = await importPiezaRow(actor, productA, null, input, 7);
+
+    const foundInA = await findPlasticProductInJuegoByOrden(productA, 7);
+    expect(foundInA?.id).toBe(plasticId);
+
+    expect(await findPlasticProductInJuegoByOrden(productA, 8)).toBeNull();
+    expect(await findPlasticProductInJuegoByOrden(productB, 7)).toBeNull();
+  });
+
+  it("reencuentra una pieza cuyo SKU cambió (depuración externa) por posición, y el SKU nuevo de la fila gana al actualizar", async () => {
+    const actor = await createFixtureUser({ username: "u3d", permisos: ["plasticos"] });
+    const productId = await seedJuego("4011");
+
+    const original = classifyPiezaRows(
+      [makeRow({ juegoSku: "4011", sku: "4011-1", orden: 1, descripcion: "Ladrillo grande amarillo" })],
+      new Map([[3, { juego: makeJuego({ id: productId, codigo: "4011" }), pieza: null }]]),
+    )[0];
+    const plasticId = await importPiezaRow(actor, productId, null, buildPiezaInput(original, null), 1);
+
+    // El SKU de la fila cambió (ej. "Cambios aplicados": 4011-1 -> 2046-1),
+    // así que ya no matchea por SKU — pero sí por posición (orden 1).
+    const pieza = await findPlasticProductInJuegoByOrden(productId, 1);
+    expect(pieza?.id).toBe(plasticId);
+
+    const corregida = classifyPiezaRows(
+      [makeRow({ juegoSku: "4011", sku: "2046-1", orden: 1, descripcion: "Ladrillo grande amarillo" })],
+      new Map([[3, { juego: makeJuego({ id: productId, codigo: "4011" }), pieza }]]),
+    )[0];
+    await importPiezaRow(actor, productId, plasticId, buildPiezaInput(corregida, null), 1);
+
+    const actualizado = await rawClient().execute({
+      sql: "SELECT sku FROM plastic_products WHERE id = ?1",
+      args: [plasticId],
+    });
+    expect((actualizado.rows[0] as unknown as { sku: string }).sku).toBe("2046-1");
+  });
+
+  it("findPlasticProductGlobalBySku encuentra una pieza sin importar a qué juego está ligada (o si no tiene ninguno)", async () => {
+    const actor = await createFixtureUser({ username: "u3e", permisos: ["plasticos"] });
+    const productA = await seedJuego("1000");
+
+    const [classified] = classifyPiezaRows(
+      [makeRow({ juegoSku: "1000", sku: "3346-17", orden: 1 })],
+      new Map([[3, { juego: makeJuego({ id: productA, codigo: "1000" }), pieza: null }]]),
+    );
+    const plasticId = await importPiezaRow(actor, productA, null, buildPiezaInput(classified, null), 1);
+
+    const found = await findPlasticProductGlobalBySku("3346-17");
+    expect(found?.id).toBe(plasticId);
+    expect(await findPlasticProductGlobalBySku("no-existe")).toBeNull();
+  });
+
+  it("findPlasticProductGlobalByNombre encuentra por nombre exacto (sin distinguir mayúsculas/espacios) en cualquier juego", async () => {
+    const actor = await createFixtureUser({ username: "u3f", permisos: ["plasticos"] });
+    const productA = await seedJuego("7234");
+
+    const [classified] = classifyPiezaRows(
+      [makeRow({ juegoSku: "7234", descripcion: 'Tubo 2"' })],
+      new Map([[3, { juego: makeJuego({ id: productA, codigo: "7234" }), pieza: null }]]),
+    );
+    const plasticId = await importPiezaRow(actor, productA, null, buildPiezaInput(classified, null), 1);
+
+    const found = await findPlasticProductGlobalByNombre('  tubo 2"  ');
+    expect(found?.id).toBe(plasticId);
+    expect(await findPlasticProductGlobalByNombre("pieza que no existe")).toBeNull();
+  });
+
+  it("importPiezaRow con un plasticProductId de OTRO juego: liga la pieza existente a este juego sin duplicar ni tocar su vínculo anterior", async () => {
+    const actor = await createFixtureUser({ username: "u3g", permisos: ["plasticos"] });
+    const productA = await seedJuego("1000");
+    const productB = await seedJuego("1001");
+
+    const [classifiedA] = classifyPiezaRows(
+      [makeRow({ juegoSku: "1000", descripcion: 'Tubo 2"' })],
+      new Map([[3, { juego: makeJuego({ id: productA, codigo: "1000" }), pieza: null }]]),
+    );
+    const plasticId = await importPiezaRow(actor, productA, null, buildPiezaInput(classifiedA, null), 1);
+
+    // La fila del juego B "vincula a la pieza existente" en vez de crear una nueva.
+    const [classifiedB] = classifyPiezaRows(
+      [makeRow({ juegoSku: "1001", descripcion: 'Tubo 2"', coste: "99.00" })],
+      new Map([[3, { juego: makeJuego({ id: productB, codigo: "1001" }), pieza: null }]]),
+    );
+    const linkedId = await importPiezaRow(actor, productB, plasticId, buildPiezaInput(classifiedB, null), 1);
+    expect(linkedId).toBe(plasticId);
+
+    const relA = await rawClient().execute({
+      sql: "SELECT * FROM product_plastic_items WHERE product_id = ?1 AND plastic_product_id = ?2",
+      args: [productA, plasticId],
+    });
+    expect(relA.rows).toHaveLength(1); // el vínculo original con el juego A sigue intacto
+
+    const relB = await rawClient().execute({
+      sql: "SELECT * FROM product_plastic_items WHERE product_id = ?1 AND plastic_product_id = ?2",
+      args: [productB, plasticId],
+    });
+    expect(relB.rows).toHaveLength(1); // se creó el nuevo vínculo con el juego B
+
+    const pieza = await rawClient().execute({
+      sql: "SELECT coste FROM plastic_products WHERE id = ?1",
+      args: [plasticId],
+    });
+    expect((pieza.rows[0] as unknown as { coste: string }).coste).toBe("99.00"); // se actualizó con la fila del juego B
+
+    // Llamarlo de nuevo con el mismo juego B no duplica el vínculo.
+    await importPiezaRow(actor, productB, plasticId, buildPiezaInput(classifiedB, null), 1);
+    const relBOtraVez = await rawClient().execute({
+      sql: "SELECT * FROM product_plastic_items WHERE product_id = ?1 AND plastic_product_id = ?2",
+      args: [productB, plasticId],
+    });
+    expect(relBOtraVez.rows).toHaveLength(1);
   });
 
   it("exige el permiso 'plasticos'", async () => {

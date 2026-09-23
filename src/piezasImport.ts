@@ -12,12 +12,14 @@ function normalizeHeader(text: string): string {
 
 export interface RawPiezaImportRow {
   fila: number;
-  // SKU del juego al que pertenece esta pieza — no viene en una columna
-  // propia de la fila, se resuelve agrupando por bloques (ver
-  // readPiezasWorkbook): una fila con SKU sin guion es un juego, y las
-  // filas siguientes (sin SKU, o con SKU con guion) son sus piezas, hasta
-  // el próximo juego. Vacío si esta fila apareció antes de cualquier fila
-  // de juego.
+  // SKU del juego al que pertenece esta pieza. En el formato clásico
+  // (agrupado por bloques) no viene en una columna propia de la fila, se
+  // resuelve agrupando (ver readLegacyBlockWorkbook): una fila con SKU sin
+  // guion es un juego, y las filas siguientes son sus piezas, hasta el
+  // próximo juego. En el formato "Desglose" (ver readDesgloseSheet) viene
+  // directo en la columna "Producto (Clave)" de cada fila. Vacío cuando no
+  // se pudo determinar (antes de cualquier fila de juego, o fila marcada
+  // sin producto).
   juegoSku: string;
   // SKU propio de la pieza, si la empresa le asignó uno (ej. "1138-1",
   // sub-SKU del juego; o "3346-17", una pieza reutilizada de otro
@@ -33,12 +35,37 @@ export interface RawPiezaImportRow {
   coste: string;
   dimensionesEmpaque: string;
   linkImagen: string;
+  // --- Campos que solo trae el formato "Desglose" (export de SKU Master
+  // reimportado) — undefined en el formato clásico, donde no existen como
+  // columnas propias. Ver readDesgloseSheet y pieceName().
+  //
+  // Nombre real de la pieza (columna "Nombre Pieza"). El formato clásico
+  // solo tiene una columna "Descripción" que hace de nombre; pieceName()
+  // decide cuál usar como nombre en ambos formatos.
+  nombre?: string;
+  // Posición dentro del juego (product_plastic_items.orden en el momento
+  // del export). Permite reencontrar la pieza aunque su nombre o SKU hayan
+  // cambiado en una depuración externa (ver "Cambios aplicados" en
+  // WORKFLOWS.md) — el formato clásico no trae esta columna.
+  orden?: number | null;
+  material?: string;
+  color?: string;
+  tipoEmpaque?: string;
+}
+
+// Nombre a usar para una fila en ambos formatos: el formato "Desglose"
+// trae "Nombre Pieza" como columna propia (prioritaria); el clásico solo
+// tiene "Descripción", que ya hace las veces de nombre. Si "Nombre Pieza"
+// viniera vacío (raro, un par de filas del archivo real del usuario), cae
+// a Descripción.
+export function pieceName(row: RawPiezaImportRow): string {
+  return row.nombre?.trim() || row.descripcion.trim();
 }
 
 type ColumnKey = "origen" | "sku" | "descripcion" | "componentesFabricacion" | "dimension" | "peso" | "maquila" | "coste" | "dimensionesEmpaque" | "linkImagen";
 
-interface ColumnSpec {
-  key: ColumnKey;
+interface ColumnSpec<K extends string = ColumnKey> {
+  key: K;
   label: string;
   // Todos estos tokens (normalizados) deben aparecer en el encabezado.
   tokens: string[];
@@ -70,7 +97,7 @@ const COLUMN_SPECS: ColumnSpec[] = [
   { key: "linkImagen", label: "Links Imágenes Piezas", tokens: ["link"] },
 ];
 
-function findColumn(normalizedHeaderRow: string[], spec: ColumnSpec): number {
+function findColumn<K extends string>(normalizedHeaderRow: string[], spec: ColumnSpec<K>): number {
   return normalizedHeaderRow.findIndex((h) => {
     if (!spec.tokens.every((token) => h.includes(token))) return false;
     if (spec.exclude?.some((token) => h.includes(token))) return false;
@@ -106,6 +133,13 @@ function applyMergedCells(grid: unknown[][], merges: XLSX.Range[] | undefined): 
   }
 }
 
+// Punto de entrada: si el libro trae una hoja llamada "Desglose" (el
+// nombre exacto que usa el export de SKU Master, ver buildSkuMasterWorkbook
+// en excelExport.ts), se lee con readDesgloseSheet — ese formato manda
+// siempre que la hoja exista, para no confundir al usuario mostrándole los
+// encabezados faltantes del formato clásico. Si no hay ninguna hoja
+// "Desglose", se asume el archivo del proveedor (formato clásico agrupado
+// por bloques, primera hoja).
 export function readPiezasWorkbook(bytes: Uint8Array): PiezasWorkbookReadResult {
   let workbook: XLSX.WorkBook;
   try {
@@ -114,6 +148,16 @@ export function readPiezasWorkbook(bytes: Uint8Array): PiezasWorkbookReadResult 
     return { ok: false, missingHeaders: ALL_LABELS.slice() };
   }
 
+  const desgloseSheetName = workbook.SheetNames.find((name) => normalizeHeader(name) === "desglose");
+  if (desgloseSheetName) {
+    const desgloseSheet = workbook.Sheets[desgloseSheetName];
+    if (desgloseSheet) return readDesgloseSheet(desgloseSheet);
+  }
+
+  return readLegacyBlockWorkbook(workbook);
+}
+
+function readLegacyBlockWorkbook(workbook: XLSX.WorkBook): PiezasWorkbookReadResult {
   const sheetName = workbook.SheetNames[0];
   const maybeSheet = sheetName ? workbook.Sheets[sheetName] : undefined;
   if (!maybeSheet) return { ok: false, missingHeaders: ALL_LABELS.slice() };
@@ -197,6 +241,120 @@ export function readPiezasWorkbook(bytes: Uint8Array): PiezasWorkbookReadResult 
   return { ok: true, rows };
 }
 
+// --- Formato "Desglose" (export de SKU Master reimportado) ---
+//
+// A diferencia del formato clásico (agrupado por bloques juego→piezas), el
+// export de SKU Master (buildSkuMasterWorkbook/desgloseSheetRows en
+// excelExport.ts) es plano: una fila por pieza, con el juego repetido en
+// cada una ("Producto (Clave)"), pensado para depurar el catálogo en Excel
+// (renombrar, corregir SKUs, resolver duplicados) y reimportarlo — no trae
+// imágenes por link, esa columna no existe en este formato.
+type DesgloseColumnKey =
+  | "productoClave"
+  | "orden"
+  | "skuPieza"
+  | "nombrePieza"
+  | "descripcion"
+  | "material"
+  | "color"
+  | "origen"
+  | "dimension"
+  | "peso"
+  | "tipoEmpaque"
+  | "maquila"
+  | "costo"
+  | "componentesFabricacion"
+  | "dimensionesEmpaque";
+
+const DESGLOSE_COLUMN_SPECS: ColumnSpec<DesgloseColumnKey>[] = [
+  { key: "productoClave", label: "Producto (Clave)", tokens: ["producto", "clave"] },
+  // Excluye "vinculo" porque el archivo real del usuario trae una columna
+  // extra "Vínculo producto y orden" (agregada a mano para su depuración,
+  // no parte del export) que también contiene el token "orden".
+  { key: "orden", label: "Orden", tokens: ["orden"], exclude: ["vinculo"] },
+  { key: "skuPieza", label: "SKU Pieza", tokens: ["sku", "pieza"] },
+  { key: "nombrePieza", label: "Nombre Pieza", tokens: ["nombre", "pieza"] },
+  { key: "descripcion", label: "Descripción", tokens: ["descripcion"] },
+  { key: "material", label: "Material", tokens: ["material"] },
+  { key: "color", label: "Color", tokens: ["color"] },
+  { key: "origen", label: "Origen", tokens: ["origen"] },
+  { key: "dimension", label: "Dimensión", tokens: ["dimension"], exclude: ["empaque"] },
+  // Excluye "original"/"gramos" porque el archivo real trae una columna de
+  // nota al final ("Peso original en gramos...") que también contiene "peso".
+  { key: "peso", label: "Peso", tokens: ["peso"], exclude: ["original", "gramos"] },
+  { key: "tipoEmpaque", label: "Tipo de empaque", tokens: ["tipo", "empaque"] },
+  { key: "maquila", label: "Maquila", tokens: ["maquila"] },
+  { key: "costo", label: "Costo", tokens: ["costo"] },
+  { key: "componentesFabricacion", label: "Componentes de fabricación", tokens: ["componentes", "fabricacion"] },
+  { key: "dimensionesEmpaque", label: "Dimensiones de empaque", tokens: ["dimension", "empaque"] },
+];
+
+const DESGLOSE_ALL_LABELS = DESGLOSE_COLUMN_SPECS.map((s) => s.label);
+
+function readDesgloseSheet(sheet: XLSX.WorkSheet): PiezasWorkbookReadResult {
+  const grid = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
+  if (grid.length === 0) return { ok: false, missingHeaders: DESGLOSE_ALL_LABELS.slice() };
+  applyMergedCells(grid, sheet["!merges"]);
+
+  const headerRow = (grid[0] ?? []).map((cell) => String(cell ?? ""));
+  const normalizedHeaderRow = headerRow.map(normalizeHeader);
+
+  const columnIndex: Partial<Record<DesgloseColumnKey, number>> = {};
+  const missingHeaders: string[] = [];
+  for (const spec of DESGLOSE_COLUMN_SPECS) {
+    const idx = findColumn(normalizedHeaderRow, spec);
+    if (idx === -1) {
+      missingHeaders.push(spec.label);
+    } else {
+      columnIndex[spec.key] = idx;
+    }
+  }
+  if (missingHeaders.length > 0) return { ok: false, missingHeaders };
+
+  function cell(row: unknown[], key: DesgloseColumnKey): string {
+    const idx = columnIndex[key];
+    if (idx === undefined) return "";
+    const value = row[idx];
+    return value === undefined || value === null ? "" : String(value).trim();
+  }
+
+  const rows: RawPiezaImportRow[] = [];
+  for (let i = 1; i < grid.length; i++) {
+    const row = grid[i] ?? [];
+    const isBlank = row.every((v) => String(v ?? "").trim() === "");
+    if (isBlank) continue;
+
+    const nombrePieza = cell(row, "nombrePieza");
+    const ordenRaw = cell(row, "orden");
+    const ordenNum = ordenRaw === "" ? NaN : Number(ordenRaw);
+
+    rows.push({
+      fila: i + 1,
+      juegoSku: cell(row, "productoClave"),
+      sku: cell(row, "skuPieza"),
+      origen: cell(row, "origen"),
+      // Igual que pieceName(): si "Descripción" viene vacía (un puñado de
+      // filas del archivo real), se refleja el nombre en vez de guardar una
+      // descripción vacía cuando sí hay un nombre.
+      descripcion: cell(row, "descripcion") || nombrePieza,
+      componentesFabricacion: cell(row, "componentesFabricacion"),
+      dimension: cell(row, "dimension"),
+      peso: cell(row, "peso"),
+      maquila: cell(row, "maquila"),
+      coste: cell(row, "costo"),
+      dimensionesEmpaque: cell(row, "dimensionesEmpaque"),
+      linkImagen: "",
+      nombre: nombrePieza,
+      orden: Number.isFinite(ordenNum) ? ordenNum : null,
+      material: cell(row, "material"),
+      color: cell(row, "color"),
+      tipoEmpaque: cell(row, "tipoEmpaque"),
+    });
+  }
+
+  return { ok: true, rows };
+}
+
 // --- Links de imagen (Google Drive/Photos) ---
 //
 // La columna trae un link público, no una imagen embebida. Google Drive
@@ -251,22 +409,41 @@ export function normalizeImageLink(raw: string): string | null {
 export type PiezaRowStatus = "nueva" | "actualizar" | "sin-relacion" | "error";
 export type PiezaImageStatus = "con-link" | "sin-link" | "link-invalido";
 
+// Coincidencia por SKU o nombre con una pieza que ya existe en TODO el
+// catálogo (otro juego, o sin ninguno) — solo se calcula para filas que de
+// otro modo serían "nueva" dentro de su propio juego (ver
+// findPlasticProductGlobalBySku/ByNombre en db.ts). Es una señal para que
+// el usuario decida en la revisión si vincula esa pieza en vez de crear una
+// duplicada — nunca vincula por sí sola (ver classifyPiezaRows).
+export interface PiezaGlobalDuplicado {
+  pieza: PlasticProduct;
+  matchedBy: "sku" | "nombre";
+  // Juegos que ya usan esta pieza — contexto para decidir si de verdad es
+  // la misma pieza física (ver getProductsUsingPlasticProduct en db.ts).
+  usadaEn: { id: number; codigo: string; nombre: string }[];
+}
+
 export interface ClassifiedPiezaRow extends RawPiezaImportRow {
   status: PiezaRowStatus;
   reason?: string;
   matchedJuego?: Product;
   matchedPieza?: PlasticProduct;
+  matchedDuplicado?: PiezaGlobalDuplicado;
   imageStatus: PiezaImageStatus;
 }
 
 export interface PiezaRowLookup {
   juego: Product | null;
   pieza: PlasticProduct | null;
+  globalDuplicado?: PiezaGlobalDuplicado | null;
 }
 
 export const SIN_RELACION_MOTIVO = "No se encontró una relación con el producto";
+// Cubre dos casos según el formato: en el clásico, una fila de pieza
+// apareció antes de cualquier fila de juego; en "Desglose", la fila no trae
+// nada en "Producto (Clave)" (ej. la fila "SIN-PRODUCTO" del archivo real).
 export const SIN_JUEGO_PREVIO_MOTIVO =
-  "Esta fila aparece antes de cualquier fila de juego — no se pudo determinar a qué juego pertenece";
+  "Esta fila no tiene un producto (juego) asociado — revisa el SKU/Clave del producto en el archivo";
 
 // Topes de sanidad, no de calidad de datos — solo bloquean una celda
 // corrupta/pegada por accidente con miles de caracteres.
@@ -284,6 +461,10 @@ function fieldTooLong(row: RawPiezaImportRow): string | null {
   if (row.dimensionesEmpaque.length > MAX_SHORT_FIELD_LENGTH) return "Dimensiones Empaque";
   if (row.descripcion.length > MAX_LONG_FIELD_LENGTH) return "Descripción";
   if (row.linkImagen.length > MAX_LONG_FIELD_LENGTH) return "Links Imágenes Piezas";
+  if ((row.nombre?.length ?? 0) > MAX_SHORT_FIELD_LENGTH) return "Nombre Pieza";
+  if ((row.material?.length ?? 0) > MAX_SHORT_FIELD_LENGTH) return "Material";
+  if ((row.color?.length ?? 0) > MAX_SHORT_FIELD_LENGTH) return "Color";
+  if ((row.tipoEmpaque?.length ?? 0) > MAX_SHORT_FIELD_LENGTH) return "Tipo de empaque";
   return null;
 }
 
@@ -300,11 +481,11 @@ export function classifyPiezaRows(
   const results: ClassifiedPiezaRow[] = rows.map((row) => {
     const imageStatus = computeImageStatus(row);
 
-    if (!row.descripcion.trim()) {
+    if (!pieceName(row)) {
       return {
         ...row,
         status: "error",
-        reason: "Falta la Descripción (se usa como nombre de la pieza).",
+        reason: "Falta el nombre de la pieza (Descripción o Nombre Pieza).",
         imageStatus,
       };
     }
@@ -335,7 +516,8 @@ export function classifyPiezaRows(
     if (matchedPieza) {
       return { ...row, status: "actualizar", matchedJuego, matchedPieza, imageStatus };
     }
-    return { ...row, status: "nueva", matchedJuego, imageStatus };
+    const matchedDuplicado = lookups.get(row.fila)?.globalDuplicado ?? undefined;
+    return { ...row, status: "nueva", matchedJuego, matchedDuplicado, imageStatus };
   });
 
   // Pieza repetida dentro del mismo juego, dentro del mismo archivo — el
@@ -350,7 +532,7 @@ export function classifyPiezaRows(
     if (!row.matchedJuego) continue;
     const key = row.sku.trim()
       ? `${row.matchedJuego.id}::sku::${row.sku.trim().toLowerCase()}`
-      : `${row.matchedJuego.id}::nombre::${row.descripcion.trim().toLowerCase()}`;
+      : `${row.matchedJuego.id}::nombre::${pieceName(row).toLowerCase()}`;
     const firstFila = seenPorJuego.get(key);
     if (firstFila !== undefined) {
       row.status = "error";
@@ -367,19 +549,25 @@ export function classifyPiezaRows(
 // Construye el PlasticProductInput a escribir para una fila ya clasificada.
 // El SKU de la pieza manda cuando la fila lo trae (asignado por la
 // empresa); si no lo trae, se preserva el que ya tuviera la pieza en una
-// actualización — igual que Color/Material/Tipo de empaque — o queda vacío
-// en un alta, listo para asignarse a mano después (ver SkuMasterSection).
+// actualización. Color/Material/Tipo de empaque siguen el mismo criterio
+// aunque el formato "Desglose" sí traiga esas columnas: un valor presente
+// en el Excel gana, uno vacío conserva lo que ya tenía la pieza — vacío
+// nunca borra un dato ya capturado (el formato clásico nunca traía estas
+// columnas, así que ahí siempre caen al valor existente, sin cambio de
+// comportamiento). En un alta nueva sin pieza existente, quedan vacíos,
+// listos para completarse a mano después (ver SkuMasterSection).
 export function buildPiezaInput(row: ClassifiedPiezaRow, image: ImageBlob | null): PlasticProductInput {
+  const nombre = pieceName(row);
   return {
-    nombre: row.descripcion.trim(),
+    nombre,
     sku: row.sku.trim() || (row.matchedPieza?.sku ?? ""),
-    color: row.matchedPieza?.color ?? "",
+    color: row.color?.trim() || (row.matchedPieza?.color ?? ""),
     origen: row.origen.trim(),
-    descripcion: row.descripcion.trim(),
-    material: row.matchedPieza?.material ?? "",
+    descripcion: row.descripcion.trim() || nombre,
+    material: row.material?.trim() || (row.matchedPieza?.material ?? ""),
     dimension: row.dimension.trim(),
     peso: row.peso.trim(),
-    tipo_empaque: row.matchedPieza?.tipo_empaque ?? "",
+    tipo_empaque: row.tipoEmpaque?.trim() || (row.matchedPieza?.tipo_empaque ?? ""),
     maquila: row.maquila.trim(),
     coste: row.coste.trim(),
     componentes_fabricacion: row.componentesFabricacion.trim(),

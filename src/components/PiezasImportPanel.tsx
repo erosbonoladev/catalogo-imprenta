@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
 import {
   downloadImportedImageFromCandidates,
+  findPlasticProductGlobalByNombre,
+  findPlasticProductGlobalBySku,
   findPlasticProductInJuegoByNombre,
+  findPlasticProductInJuegoByOrden,
   findPlasticProductInJuegoBySku,
   findProductByCodigo,
   getLastPiezaImportBatch,
   getPlasticItems,
+  getProductsUsingPlasticProduct,
   importPiezaRow,
   logEventAsActor,
   pickExcelFile,
@@ -19,8 +23,10 @@ import {
   buildImageLinkCandidates,
   buildPiezaInput,
   classifyPiezaRows,
+  pieceName,
   readPiezasWorkbook,
   type ClassifiedPiezaRow,
+  type PiezaGlobalDuplicado,
   type PiezaRowLookup,
   type RawPiezaImportRow,
 } from "../piezasImport";
@@ -38,6 +44,7 @@ interface Progress {
 interface ImportSummary {
   nuevas: number;
   actualizadas: number;
+  vinculadas: number;
   omitidas: number;
   conErrores: number;
   imagenesFallidas: number;
@@ -89,12 +96,37 @@ async function buildLookups(
           lookups.set(row.fila, { juego: null, pieza: null });
           return;
         }
-        // Con SKU propio, el criterio de duplicado es SKU+juego (más
-        // preciso); sin SKU, se compara por nombre+juego.
-        const pieza = row.sku.trim()
-          ? await findPlasticProductInJuegoBySku(row.sku, juego.id)
-          : await findPlasticProductInJuegoByNombre(row.descripcion, juego.id);
-        lookups.set(row.fila, { juego, pieza });
+        // Cascada de emparejamiento, primer resultado gana: SKU propio
+        // (más preciso) -> posición (product_plastic_items.orden, solo la
+        // trae el formato "Desglose" — encuentra la pieza aunque una
+        // depuración externa le haya cambiado el SKU o el nombre, ver
+        // "Cambios aplicados" en WORKFLOWS.md) -> nombre dentro del juego
+        // (comportamiento clásico, único disponible para el formato
+        // agrupado por bloques).
+        let pieza = row.sku.trim() ? await findPlasticProductInJuegoBySku(row.sku, juego.id) : null;
+        if (!pieza && row.orden != null) {
+          pieza = await findPlasticProductInJuegoByOrden(juego.id, row.orden);
+        }
+        if (!pieza) {
+          pieza = await findPlasticProductInJuegoByNombre(pieceName(row), juego.id);
+        }
+
+        // La fila sería "nueva" dentro de su propio juego — antes de darlo
+        // por hecho, se busca en TODO el catálogo (otro juego, o sin
+        // ninguno) por SKU exacto primero (más preciso) y, si no hay SKU o
+        // no matchea, por nombre exacto. Es solo una señal para la
+        // revisión: nunca vincula la pieza encontrada por sí sola.
+        let globalDuplicado: PiezaGlobalDuplicado | null = null;
+        if (!pieza) {
+          const bySku = row.sku.trim() ? await findPlasticProductGlobalBySku(row.sku) : null;
+          const found = bySku ?? (await findPlasticProductGlobalByNombre(pieceName(row)));
+          if (found) {
+            const usadaEn = await getProductsUsingPlasticProduct(found.id);
+            globalDuplicado = { pieza: found, matchedBy: bySku ? "sku" : "nombre", usadaEn };
+          }
+        }
+
+        lookups.set(row.fila, { juego, pieza, globalDuplicado });
       }),
     );
     onProgress(Math.min(i + CHUNK_SIZE, relevant.length));
@@ -109,6 +141,11 @@ export default function PiezasImportPanel() {
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<ClassifiedPiezaRow[]>([]);
   const [overwriteChoices, setOverwriteChoices] = useState<Map<number, boolean>>(new Map());
+  // Solo para filas "nueva" con matchedDuplicado: true = vincular la pieza
+  // ya existente en vez de crear una nueva. Por defecto false (sigue
+  // creando nueva, igual que antes de este cambio) — nunca vincula sin que
+  // el usuario lo elija fila por fila o con "Marcar todos".
+  const [linkExistingChoices, setLinkExistingChoices] = useState<Map<number, boolean>>(new Map());
   const [validateProgress, setValidateProgress] = useState<Progress>({ done: 0, total: 0 });
   const [commitProgress, setCommitProgress] = useState<Progress>({ done: 0, total: 0 });
   const [backupProgress, setBackupProgress] = useState<BackupProgress | null>(null);
@@ -118,6 +155,10 @@ export default function PiezasImportPanel() {
   const [undoing, setUndoing] = useState(false);
   const [undoError, setUndoError] = useState<string | null>(null);
   const [undoDone, setUndoDone] = useState<number | null>(null);
+  // Filtro de solo vista de la tabla de revisión — no cambia qué filas se
+  // procesan al confirmar, solo cuáles se listan (mismo patrón que
+  // "Mostrar solo cambios de nombre" en CorreccionImportPanel.tsx).
+  const [statusFilter, setStatusFilter] = useState<"todas" | ClassifiedPiezaRow["status"]>("todas");
 
   useEffect(() => {
     if (allowed || !user || !token) return;
@@ -150,7 +191,9 @@ export default function PiezasImportPanel() {
     setError(null);
     setRows([]);
     setOverwriteChoices(new Map());
+    setLinkExistingChoices(new Map());
     setSummary(null);
+    setStatusFilter("todas");
     loadLastBatch();
   }
 
@@ -206,10 +249,13 @@ export default function PiezasImportPanel() {
     );
     const classified = classifyPiezaRows(result.rows, lookups);
     const overwrite = new Map<number, boolean>();
+    const linkExisting = new Map<number, boolean>();
     for (const row of classified) {
       if (row.status === "actualizar" || row.status === "sin-relacion") overwrite.set(row.fila, false);
+      if (row.status === "nueva" && row.matchedDuplicado) linkExisting.set(row.fila, false);
     }
     setOverwriteChoices(overwrite);
+    setLinkExistingChoices(linkExisting);
     setRows(classified);
     setPhase("reviewing");
   }
@@ -232,9 +278,49 @@ export default function PiezasImportPanel() {
     });
   }
 
-  async function handleConfirm() {
+  // Corre la importación de una vez, omitiendo repetidas (actualizar) y sin
+  // relación — no alcanza con solo "preparar" el mapa de omisión con
+  // markAllOfStatus, porque esas dos categorías ya arrancan omitidas por
+  // defecto: tocar el botón no cambiaba nada visible y el usuario igual
+  // tenía que bajar a tocar "Confirmar importación" aparte. Se calcula el
+  // mapa "solo nuevo" al toque (no vía setState, que es asíncrono) y se le
+  // pasa directo a handleConfirm.
+  function importOnlyNuevas() {
+    const overwrite = new Map(overwriteChoices);
+    for (const row of rows) {
+      if (row.status === "actualizar" || row.status === "sin-relacion") overwrite.set(row.fila, false);
+    }
+    setOverwriteChoices(overwrite);
+    void handleConfirm(overwrite);
+  }
+
+  function setLinkExisting(fila: number, value: boolean) {
+    setLinkExistingChoices((prev) => {
+      const next = new Map(prev);
+      next.set(fila, value);
+      return next;
+    });
+  }
+
+  function markAllLinkExisting(value: boolean) {
+    setLinkExistingChoices((prev) => {
+      const next = new Map(prev);
+      for (const row of rows) {
+        if (row.status === "nueva" && row.matchedDuplicado) next.set(row.fila, value);
+      }
+      return next;
+    });
+  }
+
+  // `overwriteChoicesOverride` permite disparar la importación con un mapa
+  // recién calculado en el mismo tick (ver importOnlyNuevas) sin depender
+  // de que el setState de overwriteChoices ya se haya aplicado — React
+  // batchea esas actualizaciones, así que leer el estado del componente
+  // justo después de llamar a markAllOfStatus podría traer el valor viejo.
+  async function handleConfirm(overwriteChoicesOverride?: Map<number, boolean>) {
     if (!user || !token) return;
     const actor = { id: user.id, token };
+    const overwrite = overwriteChoicesOverride ?? overwriteChoices;
     setError(null);
     setPhase("backing-up");
     const backup = await runBackupNow(
@@ -257,6 +343,7 @@ export default function PiezasImportPanel() {
 
     let nuevas = 0;
     let actualizadas = 0;
+    let vinculadas = 0;
     let omitidas = 0;
     let conErrores = 0;
     let imagenesFallidas = 0;
@@ -284,7 +371,7 @@ export default function PiezasImportPanel() {
         errorRows.push({ fila: row.fila, motivo: row.reason ?? "Error desconocido." });
         continue;
       }
-      if ((row.status === "actualizar" || row.status === "sin-relacion") && !(overwriteChoices.get(row.fila) ?? false)) {
+      if ((row.status === "actualizar" || row.status === "sin-relacion") && !(overwrite.get(row.fila) ?? false)) {
         omitidas += 1;
         continue;
       }
@@ -310,11 +397,28 @@ export default function PiezasImportPanel() {
 
         const input = buildPiezaInput(row, downloadedImage);
         const existing = row.matchedPieza;
+        const linkToDuplicado =
+          !existing && row.matchedDuplicado && (linkExistingChoices.get(row.fila) ?? false)
+            ? row.matchedDuplicado.pieza
+            : null;
         if (existing) {
           await importPiezaRow(actor, juegoId, existing.id, input, 0);
           actualizadas += 1;
+        } else if (linkToDuplicado) {
+          // La pieza ya existe en el catálogo (en otro juego, o sin
+          // ninguno) y el usuario eligió reutilizarla en vez de crear una
+          // duplicada — se actualiza con lo que traiga la fila y se liga a
+          // este juego (importPiezaRow inserta el vínculo si todavía no
+          // existía). No cuenta como "creada": el undo de la importación no
+          // debe borrar una pieza que ya existía antes de esta corrida.
+          const orden = juegoId === null ? 0 : (row.orden ?? (await nextOrden(juegoId)));
+          await importPiezaRow(actor, juegoId, linkToDuplicado.id, input, orden);
+          vinculadas += 1;
         } else {
-          const orden = juegoId !== null ? await nextOrden(juegoId) : 0;
+          // Si la fila trae su propia posición (formato "Desglose"), se
+          // respeta — así una pieza nueva agregada durante una depuración
+          // externa queda en el mismo lugar que tenía en el archivo.
+          const orden = juegoId === null ? 0 : (row.orden ?? (await nextOrden(juegoId)));
           const newId = await importPiezaRow(actor, juegoId, null, input, orden);
           createdIds.push(newId);
           nuevas += 1;
@@ -338,6 +442,7 @@ export default function PiezasImportPanel() {
     setSummary({
       nuevas,
       actualizadas,
+      vinculadas,
       omitidas,
       conErrores,
       imagenesFallidas,
@@ -348,7 +453,7 @@ export default function PiezasImportPanel() {
     logEventAsActor(
       actor,
       "INFO",
-      `Captura masiva de piezas: ${nuevas} nuevas, ${actualizadas} actualizadas, ${omitidas} omitidas, ${conErrores} con errores, ${imagenesFallidas} imágenes no descargadas (total ${rows.length}).`,
+      `Captura masiva de piezas: ${nuevas} nuevas, ${actualizadas} actualizadas, ${vinculadas} vinculadas a pieza existente, ${omitidas} omitidas, ${conErrores} con errores, ${imagenesFallidas} imágenes no descargadas (total ${rows.length}).`,
     );
     setPhase("done");
     loadLastBatch();
@@ -358,19 +463,25 @@ export default function PiezasImportPanel() {
   const actualizarCount = rows.filter((r) => r.status === "actualizar").length;
   const sinRelacionCount = rows.filter((r) => r.status === "sin-relacion").length;
   const erroresCount = rows.filter((r) => r.status === "error").length;
+  const duplicadosCount = rows.filter((r) => r.status === "nueva" && r.matchedDuplicado).length;
+  // Filtro de solo vista — no cambia qué filas se procesan al confirmar, solo cuáles se listan.
+  const displayedRows = statusFilter === "todas" ? rows : rows.filter((r) => r.status === statusFilter);
 
   return (
     <div>
       <h2>Captura masiva de piezas</h2>
       <p className="hint" style={{ marginTop: "0.4rem" }}>
-        Carga un archivo Excel (.xlsx) con las columnas Origen, SKU, Descripción, Componentes de
-        Fabricación, Dimensiones, Peso, Maquila, Costo, Dimensiones Empaque y Links Imágenes
-        Piezas. Una fila con SKU sin guion (ej. "1138") es un juego; las filas siguientes son sus
-        piezas, tengan o no su propio SKU (ej. "1138-1"), hasta la próxima fila de juego. Si ese
-        juego no existe todavía en el catálogo (o una fila de pieza aparece antes de cualquier
-        juego), tú decides en la revisión si esa pieza se importa igual sin relacionarla — la
-        importación nunca crea juegos nuevos. Las imágenes se descargan automáticamente desde el
-        link (Google Drive/Photos).
+        Acepta dos formatos de Excel (.xlsx). El del proveedor, agrupado por bloques: una fila con
+        SKU sin guion (ej. "1138") es un juego; las filas siguientes son sus piezas, tengan o no su
+        propio SKU (ej. "1138-1"), hasta la próxima fila de juego. Si ese juego no existe todavía en
+        el catálogo (o una fila de pieza aparece antes de cualquier juego), tú decides en la
+        revisión si esa pieza se importa igual sin relacionarla — la importación nunca crea juegos
+        nuevos. Las imágenes se descargan automáticamente desde el link (Google Drive/Photos). O el
+        export de "Exportar a Excel" de SKU Master (hoja "Desglose", detectada por su nombre),
+        depurado en Excel y reimportado: una fila plana por pieza con el juego en cada una, sin
+        imágenes. Ahí, si la fila no trae SKU propio, además del nombre se usa la posición dentro
+        del juego para reencontrar la pieza — así una corrección de SKU o de nombre hecha en Excel
+        se aplica sobre la pieza correcta en vez de crear una duplicada.
       </p>
 
       {lastBatch && phase === "picking" && (
@@ -444,17 +555,32 @@ export default function PiezasImportPanel() {
         <div className="import-review">
           <div className="import-review-summary">
             <span className="tag">{nuevasCount} nueva(s)</span>
-            <span className="tag">{actualizarCount} para actualizar</span>
+            <span className="tag">{actualizarCount} repetida(s) (ya existen en el catálogo)</span>
             <span className="tag">{sinRelacionCount} sin relación con un juego</span>
             <span className="tag">{erroresCount} con error</span>
+            {duplicadosCount > 0 && (
+              <span className="tag">{duplicadosCount} nueva(s) con posible duplicado en el catálogo</span>
+            )}
             <span className="tag">{rows.length} fila(s) en total</span>
+          </div>
+
+          <div className="import-review-actions">
+            <button type="button" className="btn btn-primary" onClick={importOnlyNuevas}>
+              Importar solo lo nuevo ({nuevasCount})
+            </button>
+            <span className="hint" style={{ margin: 0 }}>
+              Corre la importación ahora mismo (con su backup previo), creando solo las{" "}
+              {nuevasCount} nueva(s) y omitiendo las {actualizarCount} repetida(s) y las{" "}
+              {sinRelacionCount} sin relación — sin importar lo que hayas marcado más abajo.
+            </span>
           </div>
 
           <p className="hint" style={{ margin: 0 }}>
             Actualizar reemplaza Origen/Descripción/Dimensiones/Peso/Maquila/Costo/Componentes de
             fabricación/Dimensiones de empaque de esa pieza con lo que traiga el Excel. Color,
-            Material y Tipo de empaque no se tocan si el archivo no los trae. La imagen solo se
-            reemplaza si el link de esa fila se pudo descargar. Las filas "Sin relación" no
+            Material y Tipo de empaque solo se reemplazan si la fila trae un valor — vacíos no
+            borran lo que la pieza ya tenía. La imagen solo se reemplaza si el link de esa fila se
+            pudo descargar (el formato "Desglose" no trae imágenes). Las filas "Sin relación" no
             encontraron un juego — si decides importarlas, quedan en el catálogo de Piezas sin
             asociarse a ningún juego, listas para relacionarlas a mano después.
           </p>
@@ -483,13 +609,72 @@ export default function PiezasImportPanel() {
             </div>
           )}
 
+          {duplicadosCount > 0 && (
+            <>
+              <p className="hint" style={{ margin: 0 }}>
+                Estas {duplicadosCount} fila(s) serían "Nueva" dentro de su propio juego, pero
+                coinciden por SKU o por nombre con una pieza que ya existe en el catálogo (en otro
+                juego, o sin ninguno). No se vinculan solas — un nombre o SKU repetido no siempre es
+                la misma pieza física. Revisá la columna "Motivo" antes de vincular en bloque.
+              </p>
+              <div className="import-review-actions">
+                <span className="hint" style={{ margin: 0 }}>Para nuevas con posible duplicado:</span>
+                <button type="button" className="btn btn-secondary" onClick={() => markAllLinkExisting(true)}>
+                  Marcar todos: Vincular a pieza existente
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={() => markAllLinkExisting(false)}>
+                  Marcar todos: Crear nueva
+                </button>
+              </div>
+            </>
+          )}
+
+          <div className="import-review-actions">
+            <span className="hint" style={{ margin: 0 }}>Mostrar en la tabla:</span>
+            <button
+              type="button"
+              className={`filter-chip${statusFilter === "todas" ? " filter-chip-active" : ""}`}
+              onClick={() => setStatusFilter("todas")}
+            >
+              Todas ({rows.length})
+            </button>
+            <button
+              type="button"
+              className={`filter-chip${statusFilter === "nueva" ? " filter-chip-active" : ""}`}
+              onClick={() => setStatusFilter("nueva")}
+            >
+              Nuevas ({nuevasCount})
+            </button>
+            <button
+              type="button"
+              className={`filter-chip${statusFilter === "actualizar" ? " filter-chip-active" : ""}`}
+              onClick={() => setStatusFilter("actualizar")}
+            >
+              Repetidas ({actualizarCount})
+            </button>
+            <button
+              type="button"
+              className={`filter-chip${statusFilter === "sin-relacion" ? " filter-chip-active" : ""}`}
+              onClick={() => setStatusFilter("sin-relacion")}
+            >
+              Sin relación ({sinRelacionCount})
+            </button>
+            <button
+              type="button"
+              className={`filter-chip${statusFilter === "error" ? " filter-chip-active" : ""}`}
+              onClick={() => setStatusFilter("error")}
+            >
+              Con error ({erroresCount})
+            </button>
+          </div>
+
           <div className="import-review-table-wrap">
             <table className="import-review-table">
               <thead>
                 <tr>
                   <th>Fila</th>
                   <th>SKU</th>
-                  <th>Descripción</th>
+                  <th>Pieza</th>
                   <th>Juego</th>
                   <th>Imagen</th>
                   <th>Estado</th>
@@ -498,11 +683,11 @@ export default function PiezasImportPanel() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {displayedRows.map((row) => (
                   <tr key={row.fila}>
                     <td>{row.fila}</td>
                     <td>{row.sku || "—"}</td>
-                    <td>{row.descripcion || "—"}</td>
+                    <td>{pieceName(row) || "—"}</td>
                     <td>
                       {row.matchedJuego
                         ? `${row.matchedJuego.codigo} — ${row.matchedJuego.nombre}`
@@ -549,23 +734,65 @@ export default function PiezasImportPanel() {
                               : "Se omitirá esta fila."}
                           </span>
                         </div>
+                      ) : row.status === "nueva" && row.matchedDuplicado ? (
+                        <div className="import-overwrite-cell">
+                          <div className="import-review-actions">
+                            <button
+                              type="button"
+                              className={`filter-chip${linkExistingChoices.get(row.fila) ? " filter-chip-active" : ""}`}
+                              onClick={() => setLinkExisting(row.fila, true)}
+                            >
+                              Vincular a pieza existente
+                            </button>
+                            <button
+                              type="button"
+                              className={`filter-chip${!linkExistingChoices.get(row.fila) ? " filter-chip-active" : ""}`}
+                              onClick={() => setLinkExisting(row.fila, false)}
+                            >
+                              Crear nueva
+                            </button>
+                          </div>
+                          <span className="import-overwrite-status">
+                            {linkExistingChoices.get(row.fila)
+                              ? "Se vinculará la pieza existente a este juego (se actualiza con lo que traiga esta fila)."
+                              : "Se creará una pieza nueva, aunque ya exista una parecida."}
+                          </span>
+                        </div>
                       ) : row.status === "nueva" ? (
                         "Se creará"
                       ) : (
                         "Se omitirá"
                       )}
                     </td>
-                    <td className="import-review-motivo">{row.reason ?? "—"}</td>
+                    <td className="import-review-motivo">
+                      {row.status === "nueva" && row.matchedDuplicado ? (
+                        <>
+                          Coincide por {row.matchedDuplicado.matchedBy === "sku" ? "SKU" : "nombre"} con
+                          la pieza existente "{row.matchedDuplicado.pieza.nombre}"
+                          {row.matchedDuplicado.pieza.sku ? ` (SKU ${row.matchedDuplicado.pieza.sku})` : ""}.{" "}
+                          {row.matchedDuplicado.usadaEn.length > 0
+                            ? `Ya se usa en: ${row.matchedDuplicado.usadaEn.map((p) => `${p.codigo} — ${p.nombre}`).join(", ")}.`
+                            : "No está ligada a ningún juego todavía."}
+                        </>
+                      ) : (
+                        (row.reason ?? "—")
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {displayedRows.length === 0 && (
+              <p className="hint" style={{ margin: "0.5rem 0" }}>
+                Ninguna fila coincide con este filtro.
+              </p>
+            )}
           </div>
 
           {error && <p className="form-error">{error}</p>}
 
           <div className="form-actions">
-            <button type="button" className="btn btn-primary" onClick={handleConfirm}>
+            <button type="button" className="btn btn-primary" onClick={() => handleConfirm()}>
               Confirmar importación
             </button>
             <button type="button" className="btn btn-secondary" onClick={reset}>
@@ -605,6 +832,10 @@ export default function PiezasImportPanel() {
             <div className="import-summary-item">
               <span>{summary.actualizadas}</span>
               <span>Registros actualizados</span>
+            </div>
+            <div className="import-summary-item">
+              <span>{summary.vinculadas}</span>
+              <span>Vinculados a pieza existente</span>
             </div>
             <div className="import-summary-item">
               <span>{summary.omitidas}</span>
