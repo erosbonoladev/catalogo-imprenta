@@ -21,6 +21,10 @@ export const SCHEMA_STATEMENTS: string[] = [
     tipo_producto TEXT,
     codigo_barras_texto TEXT,
     presentacion_original TEXT,
+    dimensiones_empaque TEXT,
+    juegos_por_empaque TEXT,
+    peso_empaque TEXT,
+    volumen_empaque TEXT,
     creado_en TEXT NOT NULL DEFAULT (datetime('now')),
     actualizado_en TEXT
   )`,
@@ -72,6 +76,12 @@ export const SCHEMA_STATEMENTS: string[] = [
     coste TEXT,
     componentes_fabricacion TEXT,
     dimensiones_empaque TEXT,
+    juegos_por_empaque TEXT,
+    costo_por_juego TEXT,
+    peso_empaque TEXT,
+    volumen_empaque TEXT,
+    precio_por_pieza TEXT,
+    precio_por_juego TEXT,
     imagen BLOB,
     imagen_mime TEXT,
     creado_en TEXT NOT NULL DEFAULT (datetime('now'))
@@ -90,7 +100,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     product_id INTEGER NOT NULL,
     plastic_product_id INTEGER NOT NULL,
-    orden INTEGER NOT NULL DEFAULT 1
+    orden INTEGER NOT NULL DEFAULT 1,
+    cantidad TEXT NOT NULL DEFAULT ''
   )`,
   `CREATE TABLE piezas_import_batches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -330,6 +341,13 @@ export const SCHEMA_STATEMENTS: string[] = [
     actualizado_por TEXT,
     creado_en TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(product_id, categoria)
+  )`,
+  `CREATE TABLE precios_produccion (
+    product_id INTEGER PRIMARY KEY,
+    precio REAL,
+    actualizado_en TEXT NOT NULL DEFAULT (datetime('now')),
+    actualizado_por TEXT,
+    creado_en TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
   `CREATE TABLE remision_renglones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

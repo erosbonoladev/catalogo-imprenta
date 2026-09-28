@@ -249,7 +249,11 @@ function App() {
         )}
 
         {view.name === "imprenta" && (
-          <ImprentaSection productId={view.productId} onDirtyChange={setDirty} />
+          <ImprentaSection
+            productId={view.productId}
+            onDirtyChange={setDirty}
+            onOpenPiezas={() => navigate({ name: "plasticos", productId: view.productId })}
+          />
         )}
 
         {view.name === "maderas" && (

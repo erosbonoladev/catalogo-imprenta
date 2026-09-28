@@ -35,6 +35,10 @@ const emptyProduct: ProductInput = {
   imagen_codigo_barras: null,
   tipo_producto: "",
   codigo_barras_texto: "",
+  dimensiones_empaque: "",
+  juegos_por_empaque: "",
+  peso_empaque: "",
+  volumen_empaque: "",
 };
 
 export default function ProductForm({ productId, onDone, onCancel, onDirtyChange }: Props) {
@@ -81,6 +85,10 @@ export default function ProductForm({ productId, onDone, onCancel, onDirtyChange
           imagen_codigo_barras: existing.imagen_codigo_barras,
           tipo_producto: existing.tipo_producto,
           codigo_barras_texto: existing.codigo_barras_texto,
+          dimensiones_empaque: existing.dimensiones_empaque,
+          juegos_por_empaque: existing.juegos_por_empaque,
+          peso_empaque: existing.peso_empaque,
+          volumen_empaque: existing.volumen_empaque,
         });
         setSpecs(existingSpecs);
         setDescriptions(ensureFixedDescriptions(existingDescriptions));
@@ -451,6 +459,44 @@ export default function ProductForm({ productId, onDone, onCancel, onDirtyChange
               value={product.codigo_barras_texto}
               onChange={(v) => updateField("codigo_barras_texto", v)}
               placeholder="ej. 0075678901234"
+            />
+          </label>
+        </div>
+
+        <div className="form-row">
+          <label>
+            Dimensiones de empaque
+            <AutoGrowInput
+              value={product.dimensiones_empaque}
+              onChange={(v) => updateField("dimensiones_empaque", v)}
+              placeholder="ej. 28 x 28 cm"
+            />
+          </label>
+          <label>
+            Juegos por empaque
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={product.juegos_por_empaque}
+              onChange={(e) => updateField("juegos_por_empaque", e.target.value)}
+            />
+          </label>
+        </div>
+
+        <div className="form-row">
+          <label>
+            Peso empaque (Kg)
+            <AutoGrowInput
+              value={product.peso_empaque}
+              onChange={(v) => updateField("peso_empaque", v)}
+            />
+          </label>
+          <label>
+            Volumen empaque (M3)
+            <AutoGrowInput
+              value={product.volumen_empaque}
+              onChange={(v) => updateField("volumen_empaque", v)}
             />
           </label>
         </div>

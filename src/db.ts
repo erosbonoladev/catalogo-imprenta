@@ -24,6 +24,7 @@ import type {
   PlasticProductInput,
   Precio,
   PrecioInput,
+  PrecioProduccion,
   PrecioVenta,
   PrecioVentaEntradaInput,
   PrintItem,
@@ -151,6 +152,10 @@ interface ProductRow {
   tipo_producto: string | null;
   codigo_barras_texto: string | null;
   presentacion_original: string | null;
+  dimensiones_empaque: string | null;
+  juegos_por_empaque: string | null;
+  peso_empaque: string | null;
+  volumen_empaque: string | null;
   creado_en: string;
   actualizado_en: string | null;
 }
@@ -168,6 +173,10 @@ function rowToProduct(row: ProductRow): Product {
     tipo_producto: row.tipo_producto ?? "",
     codigo_barras_texto: row.codigo_barras_texto ?? "",
     presentacion_original: row.presentacion_original ?? "",
+    dimensiones_empaque: row.dimensiones_empaque ?? "",
+    juegos_por_empaque: row.juegos_por_empaque ?? "",
+    peso_empaque: row.peso_empaque ?? "",
+    volumen_empaque: row.volumen_empaque ?? "",
     creado_en: row.creado_en,
     actualizado_en: row.actualizado_en ?? row.creado_en,
   };
@@ -314,8 +323,8 @@ export async function createProduct(
   const tx = await client.transaction("write");
   try {
     const result = await tx.execute({
-      sql: `INSERT INTO products (codigo, nombre, categoria, material, descripcion, imagen, imagen_mime, imagen_codigo_barras, imagen_codigo_barras_mime, tipo_producto, codigo_barras_texto, actualizado_en)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, datetime('now'))`,
+      sql: `INSERT INTO products (codigo, nombre, categoria, material, descripcion, imagen, imagen_mime, imagen_codigo_barras, imagen_codigo_barras_mime, tipo_producto, codigo_barras_texto, dimensiones_empaque, juegos_por_empaque, peso_empaque, volumen_empaque, actualizado_en)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, datetime('now'))`,
       args: [
         product.codigo,
         product.nombre,
@@ -328,6 +337,10 @@ export async function createProduct(
         product.imagen_codigo_barras?.mime ?? null,
         product.tipo_producto || null,
         product.codigo_barras_texto || null,
+        product.dimensiones_empaque.trim() || null,
+        product.juegos_por_empaque.trim() || null,
+        product.peso_empaque.trim() || null,
+        product.volumen_empaque.trim() || null,
       ],
     });
     const productId = Number(result.lastInsertRowid);
@@ -372,8 +385,9 @@ export async function updateProduct(
             SET codigo = ?1, nombre = ?2, categoria = ?3, material = ?4, descripcion = ?5, imagen = ?6, imagen_mime = ?7,
                 imagen_codigo_barras = ?8, imagen_codigo_barras_mime = ?9,
                 tipo_producto = ?10, codigo_barras_texto = ?11,
+                dimensiones_empaque = ?12, juegos_por_empaque = ?13, peso_empaque = ?14, volumen_empaque = ?15,
                 actualizado_en = datetime('now')
-            WHERE id = ?12`,
+            WHERE id = ?16`,
       args: [
         product.codigo,
         product.nombre,
@@ -386,6 +400,10 @@ export async function updateProduct(
         product.imagen_codigo_barras?.mime ?? null,
         product.tipo_producto || null,
         product.codigo_barras_texto || null,
+        product.dimensiones_empaque.trim() || null,
+        product.juegos_por_empaque.trim() || null,
+        product.peso_empaque.trim() || null,
+        product.volumen_empaque.trim() || null,
         id,
       ],
     });
@@ -1525,11 +1543,11 @@ interface PlasticProductRow {
   armado: string;
   dimension: string;
   peso: string;
-  tipo_empaque: string;
   maquila: string;
   coste: string;
   componentes_fabricacion: string;
-  dimensiones_empaque: string;
+  precio_por_pieza: string;
+  precio_por_juego: string;
   imagen: ArrayBuffer | null;
   imagen_mime: string | null;
   creado_en: string;
@@ -1546,11 +1564,11 @@ function rowToPlasticProduct(row: PlasticProductRow): PlasticProduct {
     material: row.armado,
     dimension: row.dimension,
     peso: row.peso,
-    tipo_empaque: row.tipo_empaque,
     maquila: row.maquila,
     coste: row.coste,
     componentes_fabricacion: row.componentes_fabricacion,
-    dimensiones_empaque: row.dimensiones_empaque,
+    precio_por_pieza: row.precio_por_pieza,
+    precio_por_juego: row.precio_por_juego,
     imagen: toImageBlob(row.imagen, row.imagen_mime),
     creado_en: row.creado_en,
   };
@@ -1566,11 +1584,11 @@ function plasticProductToData(product: PlasticProduct): PlasticProductInput {
     material: product.material,
     dimension: product.dimension,
     peso: product.peso,
-    tipo_empaque: product.tipo_empaque,
     maquila: product.maquila,
     coste: product.coste,
     componentes_fabricacion: product.componentes_fabricacion,
-    dimensiones_empaque: product.dimensiones_empaque,
+    precio_por_pieza: product.precio_por_pieza,
+    precio_por_juego: product.precio_por_juego,
     imagen: product.imagen,
   };
 }
@@ -1599,7 +1617,7 @@ export async function searchPlasticProducts(
 // reenvían a `updatePlasticProduct` al vincular una pieza existente a una
 // ficha — cambiar esa función habría borrado imágenes existentes en silencio.
 const PLASTIC_PRODUCT_LIST_COLUMNS =
-  "id, nombre, sku, color, origen, descripcion, armado, dimension, peso, tipo_empaque, maquila, coste, componentes_fabricacion, dimensiones_empaque, creado_en";
+  "id, nombre, sku, color, origen, descripcion, armado, dimension, peso, maquila, coste, componentes_fabricacion, precio_por_pieza, precio_por_juego, creado_en";
 
 const PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY = "plasticProductsSummary";
 
@@ -1680,7 +1698,7 @@ export async function createPlasticProduct(
   await assertActorAuthorized(actor, "plasticos");
   const result = await executor.execute({
     sql: `INSERT INTO plastic_products
-          (nombre, sku, color, origen, descripcion, armado, dimension, peso, tipo_empaque, maquila, coste, componentes_fabricacion, dimensiones_empaque, imagen, imagen_mime)
+          (nombre, sku, color, origen, descripcion, armado, dimension, peso, maquila, coste, componentes_fabricacion, precio_por_pieza, precio_por_juego, imagen, imagen_mime)
           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)`,
     args: [
       input.nombre.trim(),
@@ -1691,11 +1709,11 @@ export async function createPlasticProduct(
       input.material.trim(),
       input.dimension.trim(),
       input.peso.trim(),
-      input.tipo_empaque.trim(),
       input.maquila.trim(),
       input.coste.trim(),
       input.componentes_fabricacion.trim(),
-      input.dimensiones_empaque.trim(),
+      input.precio_por_pieza.trim(),
+      input.precio_por_juego.trim(),
       input.imagen?.data ?? null,
       input.imagen?.mime ?? null,
     ],
@@ -1714,8 +1732,9 @@ export async function updatePlasticProduct(
   await executor.execute({
     sql: `UPDATE plastic_products
           SET nombre = ?1, sku = ?2, color = ?3, origen = ?4, descripcion = ?5, armado = ?6,
-              dimension = ?7, peso = ?8, tipo_empaque = ?9, maquila = ?10, coste = ?11,
-              componentes_fabricacion = ?12, dimensiones_empaque = ?13, imagen = ?14, imagen_mime = ?15
+              dimension = ?7, peso = ?8, maquila = ?9, coste = ?10,
+              componentes_fabricacion = ?11, precio_por_pieza = ?12,
+              precio_por_juego = ?13, imagen = ?14, imagen_mime = ?15
           WHERE id = ?16`,
     args: [
       input.nombre.trim(),
@@ -1726,11 +1745,11 @@ export async function updatePlasticProduct(
       input.material.trim(),
       input.dimension.trim(),
       input.peso.trim(),
-      input.tipo_empaque.trim(),
       input.maquila.trim(),
       input.coste.trim(),
       input.componentes_fabricacion.trim(),
-      input.dimensiones_empaque.trim(),
+      input.precio_por_pieza.trim(),
+      input.precio_por_juego.trim(),
       input.imagen?.data ?? null,
       input.imagen?.mime ?? null,
       id,
@@ -1759,11 +1778,12 @@ export async function updatePlasticProductSku(actor: Actor, id: number, sku: str
 interface PlasticItemRow extends PlasticProductRow {
   item_id: number;
   item_orden: number;
+  item_cantidad: string;
 }
 
 export async function getPlasticItems(productId: number): Promise<PlasticItem[]> {
   const result = await client.execute({
-    sql: `SELECT ppi.id AS item_id, ppi.orden AS item_orden, pp.*
+    sql: `SELECT ppi.id AS item_id, ppi.orden AS item_orden, ppi.cantidad AS item_cantidad, pp.*
           FROM product_plastic_items ppi
           JOIN plastic_products pp ON pp.id = ppi.plastic_product_id
           WHERE ppi.product_id = ?1
@@ -1775,6 +1795,7 @@ export async function getPlasticItems(productId: number): Promise<PlasticItem[]>
     product_id: productId,
     plastic_product_id: row.id,
     orden: row.item_orden,
+    cantidad: row.item_cantidad ?? "",
     data: plasticProductToData(rowToPlasticProduct(row)),
   }));
 }
@@ -1787,7 +1808,7 @@ export async function savePlasticItems(
   await assertActorAuthorized(actor, "plasticos");
   const tx = await client.transaction("write");
   try {
-    const resolved: { plasticProductId: number; orden: number }[] = [];
+    const resolved: { plasticProductId: number; orden: number; cantidad: string }[] = [];
     let orden = 1;
     for (const item of items) {
       if (!item.data.nombre.trim() && !item.data.sku.trim()) continue;
@@ -1798,17 +1819,17 @@ export async function savePlasticItems(
       } else {
         plasticProductId = await createPlasticProduct(actor, item.data, tx);
       }
-      resolved.push({ plasticProductId, orden });
+      resolved.push({ plasticProductId, orden, cantidad: item.cantidad.trim() });
       orden += 1;
     }
     await tx.execute({
       sql: "DELETE FROM product_plastic_items WHERE product_id = ?1",
       args: [productId],
     });
-    for (const { plasticProductId, orden: itemOrden } of resolved) {
+    for (const { plasticProductId, orden: itemOrden, cantidad } of resolved) {
       await tx.execute({
-        sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden) VALUES (?1, ?2, ?3)`,
-        args: [productId, plasticProductId, itemOrden],
+        sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden, cantidad) VALUES (?1, ?2, ?3, ?4)`,
+        args: [productId, plasticProductId, itemOrden, cantidad],
       });
     }
     await tx.commit();
@@ -1818,6 +1839,24 @@ export async function savePlasticItems(
   } finally {
     tx.close();
   }
+}
+
+// Quita una pieza de una ficha por el id de su vínculo (product_plastic_items),
+// sin tocar el resto de piezas ligadas a esa misma ficha ni la pieza maestra
+// en plastic_products (sigue existiendo en el catálogo y en cualquier otra
+// ficha que la use) — a diferencia de savePlasticItems (que reemplaza TODA
+// la relación de la ficha de una sola vez), esta función borra una sola
+// fila. Usada por ImprentaSection para "Quitar de este juego" una pieza de
+// Origen IMPR que no hace falta ahí, sin tener cargada la lista completa de
+// piezas de la ficha (esa pantalla no la tiene, y no le corresponde
+// tenerla) — mismo permiso `plasticos` que el resto de escrituras de
+// Piezas, sin ampliarlo (decisión explícita del usuario).
+export async function deletePlasticItem(actor: Actor, itemId: number): Promise<void> {
+  await assertActorAuthorized(actor, "plasticos");
+  await client.execute({
+    sql: "DELETE FROM product_plastic_items WHERE id = ?1",
+    args: [itemId],
+  });
 }
 
 // Busca una pieza por nombre exacto (sin distinguir mayúsculas/espacios),
@@ -4153,6 +4192,65 @@ export async function savePreciosVenta(
   return getPreciosVenta(actor, productId);
 }
 
+// --- Precio de Producción (independiente de Precios Imprenta/Precio Venta
+// arriba — no se mezcla con ninguno de los dos, mismo criterio que Precio
+// Venta respecto a Precios Imprenta) ---
+
+interface PrecioProduccionRow {
+  product_id: number;
+  precio: number | null;
+  actualizado_en: string;
+  actualizado_por: string | null;
+}
+
+function assertPrecioProduccionValido(precio: number | null): void {
+  if (precio !== null && (!Number.isFinite(precio) || precio < 0)) {
+    throw new Error("Ingresa un precio válido (mayor o igual a 0) o déjalo en blanco.");
+  }
+}
+
+const PRECIO_PRODUCCION_LECTURA_PERMISOS: Permiso[] = [
+  "precios_produccion_ver",
+  "precios_produccion_modificar",
+];
+
+// A diferencia de Precio Venta (5 categorías, una fila por categoría), acá
+// hay una sola fila por producto — `product_id` es la propia PRIMARY KEY de
+// `precios_produccion`, no hace falta un `id` separado.
+export async function getPrecioProduccion(actor: Actor, productId: number): Promise<PrecioProduccion> {
+  await assertActorAuthorized(actor, PRECIO_PRODUCCION_LECTURA_PERMISOS);
+  const result = await client.execute({
+    sql: "SELECT * FROM precios_produccion WHERE product_id = ?1",
+    args: [productId],
+  });
+  const row = result.rows[0] as unknown as PrecioProduccionRow | undefined;
+  return row
+    ? {
+        product_id: row.product_id,
+        precio: row.precio,
+        actualizado_en: row.actualizado_en,
+        actualizado_por: row.actualizado_por,
+      }
+    : { product_id: productId, precio: null, actualizado_en: null, actualizado_por: null };
+}
+
+export async function savePrecioProduccion(
+  actor: Actor,
+  productId: number,
+  precio: number | null,
+): Promise<PrecioProduccion> {
+  const username = await assertActorAuthorized(actor, "precios_produccion_modificar");
+  assertPrecioProduccionValido(precio);
+  await client.execute({
+    sql: `INSERT INTO precios_produccion (product_id, precio, actualizado_en, actualizado_por)
+          VALUES (?1, ?2, datetime('now'), ?3)
+          ON CONFLICT(product_id) DO UPDATE SET
+            precio = ?2, actualizado_en = datetime('now'), actualizado_por = ?3`,
+    args: [productId, precio, username],
+  });
+  return getPrecioProduccion(actor, productId);
+}
+
 // --- Remisiones ---
 
 interface RemisionRow {
@@ -4464,6 +4562,7 @@ export interface PiezaDesgloseExportRow {
   producto_codigo: string | null;
   producto_nombre: string | null;
   orden: number | null;
+  cantidad: string | null;
   pieza_id: number;
   sku: string;
   nombre: string;
@@ -4473,21 +4572,23 @@ export interface PiezaDesgloseExportRow {
   origen: string;
   dimension: string;
   peso: string;
-  tipo_empaque: string;
   maquila: string;
   coste: string;
   componentes_fabricacion: string;
-  dimensiones_empaque: string;
+  precio_por_pieza: string;
+  precio_por_juego: string;
 }
 
 async function fetchPiezasDesgloseParaExport(): Promise<PiezaDesgloseExportRow[]> {
   const result = await client.execute(`
     SELECT
       p.codigo AS producto_codigo, p.nombre AS producto_nombre, ppi.orden AS orden,
+      ppi.cantidad AS cantidad,
       pp.id AS pieza_id, pp.sku AS sku, pp.nombre AS nombre, pp.descripcion AS descripcion,
       pp.armado AS material, pp.color AS color, pp.origen AS origen, pp.dimension AS dimension,
-      pp.peso AS peso, pp.tipo_empaque AS tipo_empaque, pp.maquila AS maquila, pp.coste AS coste,
-      pp.componentes_fabricacion AS componentes_fabricacion, pp.dimensiones_empaque AS dimensiones_empaque
+      pp.peso AS peso, pp.maquila AS maquila, pp.coste AS coste,
+      pp.componentes_fabricacion AS componentes_fabricacion,
+      pp.precio_por_pieza AS precio_por_pieza, pp.precio_por_juego AS precio_por_juego
     FROM plastic_products pp
     LEFT JOIN product_plastic_items ppi ON ppi.plastic_product_id = pp.id
     LEFT JOIN products p ON p.id = ppi.product_id

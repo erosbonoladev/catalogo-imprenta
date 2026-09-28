@@ -26,6 +26,10 @@ async function seedProduct(actorRef: { id: number; token: string }, codigo: stri
       imagen_codigo_barras: null,
       tipo_producto: "",
       codigo_barras_texto: "",
+      dimensiones_empaque: "",
+      juegos_por_empaque: "",
+      peso_empaque: "",
+      volumen_empaque: "",
     },
     [],
   );

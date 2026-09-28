@@ -17,6 +17,10 @@ const base = {
   imagen: null,
   imagen_codigo_barras: null,
   tipo_producto: "",
+  dimensiones_empaque: "",
+  juegos_por_empaque: "",
+  peso_empaque: "",
+  volumen_empaque: "",
 };
 
 describe("Imágenes de código de barras pendientes: upsertPendingProductBarcodeImage + applyPendingProductBarcodeImage (vía createProduct)", () => {

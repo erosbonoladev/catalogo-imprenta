@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import {
+  deletePlasticItem,
   deletePrintItemOrder,
   deletePrintItemPurchase,
+  getPlasticItems,
   getPrintItemOrders,
   getPrintItemPurchases,
   getPrintItems,
@@ -12,6 +14,7 @@ import {
 import type {
   ImageBlob,
   PlacasExistentes,
+  PlasticItem,
   PrintItem,
   PrintItemCheck,
   PrintItemExtra,
@@ -32,6 +35,24 @@ import basuraIcon from "../../Assets/basura.svg";
 interface Props {
   productId: number;
   onDirtyChange?: (dirty: boolean) => void;
+  onOpenPiezas: () => void;
+}
+
+// Piezas ya registradas en el catálogo de Piezas cuyo Origen es "IMPR"
+// (Imprenta) — se muestran aquí también, de solo lectura, con un link de
+// vuelta a Piezas y un botón "Agregar a Imprenta" que crea un producto de
+// impresión (PrintItem) nuevo, precargado con nombre/foto, para que el
+// equipo de Imprenta capture ahí sus propios datos (tamaño, tintas, papel,
+// máquina…) sin tocar ni duplicar los campos de Piezas (material, dimensión,
+// peso…) — son informaciones de naturaleza distinta, cada una vive en su
+// propia tabla. Mismo patrón que "Agregar datos de madera" en
+// MaderasSection — ver docs/DATABASE.md.
+function isImprentaOrigin(item: PlasticItem): boolean {
+  return item.data.origen === "IMPR";
+}
+
+function sameNombre(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
 const TIPOS_PAPEL = ["Bond", "Sulfatada", "Cartulina", "Couché", "Opalina", "Kraft"];
@@ -96,12 +117,13 @@ function emptyItem(orden: number): PrintItem {
   };
 }
 
-export default function ImprentaSection({ productId, onDirtyChange }: Props) {
+export default function ImprentaSection({ productId, onDirtyChange, onOpenPiezas }: Props) {
   const { user, token } = useAuth();
   const allowed = hasPermission(user, "imprenta");
   const [product, setProduct] = useState<Product | null>(null);
   const [items, setItems] = useState<PrintItem[]>([]);
   const [savedItems, setSavedItems] = useState<PrintItem[]>([]);
+  const [piezasImprenta, setPiezasImprenta] = useState<PlasticItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -122,15 +144,19 @@ export default function ImprentaSection({ productId, onDirtyChange }: Props) {
     order: PrintItemOrder;
     purchase: PrintItemPurchase;
   } | null>(null);
+  const [confirmingRemovePiezaId, setConfirmingRemovePiezaId] = useState<number | null>(null);
+  const [removingPieza, setRemovingPieza] = useState(false);
+  const [removePiezaError, setRemovePiezaError] = useState<string | null>(null);
 
   function loadItems() {
     setLoading(true);
     setLoadError(null);
-    Promise.all([getPrintItems(productId), getProduct(productId)])
-      .then(([i, p]) => {
+    Promise.all([getPrintItems(productId), getProduct(productId), getPlasticItems(productId)])
+      .then(([i, p, piezas]) => {
         setItems(i);
         setSavedItems(i);
         setProduct(p);
+        setPiezasImprenta(piezas.filter(isImprentaOrigin));
       })
       .catch((err) => setLoadError(`No se pudo cargar Imprenta: ${String(err)}`))
       .finally(() => setLoading(false));
@@ -161,9 +187,67 @@ export default function ImprentaSection({ productId, onDirtyChange }: Props) {
     setItems((prev) => [...prev, emptyItem(prev.length + 1)]);
   }
 
+  // "Agregar a Imprenta" sobre una pieza de Piezas de Origen "IMPR" ya
+  // vinculada a esta ficha (subsección de solo lectura más abajo): crea un
+  // producto de impresión nuevo, precargado con nombre (y foto, si la
+  // pieza ya tenía una en Piezas — se reutiliza en vez de partir sin
+  // imagen), listo para completar con Tamaño/Tintas/Papel/Máquina/etc. — la
+  // pieza original en Piezas no se toca ni se le copian sus campos
+  // (material, dimensión, peso…), son registros independientes con
+  // propósitos distintos (decidido con el usuario). Mismo patrón que
+  // "Agregar datos de madera" en MaderasSection.
+  //
+  // Idempotente a propósito por nombre (PrintItem no tiene SKU propio): si
+  // ya se agregó un producto de impresión desde esta misma pieza no se crea
+  // otro — sin esto, el botón seguía visible después de "promover" una
+  // pieza, y un segundo clic duplicaba el producto en el próximo Guardar.
+  function addItemFromPieza(pieza: PlasticItem) {
+    if (items.some((item) => sameNombre(item.nombre, pieza.data.nombre))) return;
+    setDirty(true);
+    setEditMode(true);
+    setItems((prev) => [
+      ...prev,
+      {
+        ...emptyItem(prev.length + 1),
+        nombre: pieza.data.nombre,
+        images: pieza.data.imagen ? [{ imagen: pieza.data.imagen, orden: 1 }] : [],
+      },
+    ]);
+  }
+
   function removeItem(index: number) {
     setDirty(true);
     setItems((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  // "Quitar de este juego" sobre una pieza de Origen "IMPR" que no hace
+  // falta en esta ficha — solo quita el vínculo (product_plastic_items),
+  // la pieza sigue existiendo en el catálogo de Piezas y en cualquier otra
+  // ficha que la use, reversible desde Piezas (Agregar un producto
+  // existente). Botón visible solo con permiso `plasticos` además de
+  // `imprenta` (decisión explícita del usuario: no ampliar quién puede
+  // tocar el vínculo de Piezas desde Imprenta) — mismo permiso que ya exige
+  // deletePlasticItem server-side.
+  async function handleRemovePieza(item: PlasticItem) {
+    if (!user || !token || !item.id) return;
+    const actor = { id: user.id, token };
+    setRemovingPieza(true);
+    setRemovePiezaError(null);
+    try {
+      await deletePlasticItem(actor, item.id);
+      logEventAsActor(
+        actor,
+        "INFO",
+        `Pieza "${item.data.nombre}" quitada de la ficha #${productId} desde Imprenta por ${user.username}`,
+      );
+      setConfirmingRemovePiezaId(null);
+      loadItems();
+    } catch (err) {
+      setRemovePiezaError(`No se pudo quitar la pieza: ${String(err)}`);
+      logEventAsActor(actor, "ERROR", `No se pudo quitar la pieza #${item.id} desde Imprenta: ${String(err)}`);
+    } finally {
+      setRemovingPieza(false);
+    }
   }
 
   function toggleCheck(itemIndex: number, checkIndex: number, marcado: boolean) {
@@ -383,6 +467,18 @@ export default function ImprentaSection({ productId, onDirtyChange }: Props) {
       </div>
     );
   }
+
+  // Una pieza deja de listarse en la subsección de abajo en cuanto tiene un
+  // producto de impresión con el mismo nombre (agregado vía addItemFromPieza
+  // o a mano) — sus datos ya están representados en la lista editable de
+  // arriba, mostrar ambas tarjetas a la vez se veía como si se hubiera
+  // duplicado el producto (no era un duplicado real en la BD, solo dos
+  // tarjetas para lo mismo en pantalla). Se recalcula en cada render, así
+  // que desaparece de inmediato al agregar, sin esperar a Guardar. Mismo
+  // criterio que "piezasSinPromover" en MaderasSection.
+  const piezasSinPromover = piezasImprenta.filter(
+    (pieza) => !items.some((item) => sameNombre(item.nombre, pieza.data.nombre)),
+  );
 
   return (
     <div className="private-section">
@@ -911,6 +1007,86 @@ export default function ImprentaSection({ productId, onDirtyChange }: Props) {
 
       <Toast message="Guardado con éxito" show={showToast} onHide={() => setShowToast(false)} />
 
+      {piezasSinPromover.length > 0 && (
+        <div className="plastic-items-list" style={{ marginTop: "2rem" }}>
+          <h2>Piezas con Origen Imprenta ya registradas en Piezas</h2>
+          <p className="hint">
+            Estas piezas viven en el catálogo de Piezas (no se duplican aquí) — se muestran también
+            en esta sección porque su Origen está marcado como "IMPR". Para editar sus datos de
+            Piezas, hazlo desde Piezas. Para capturar los datos propios de Imprenta (Tamaño, Tintas,
+            Papel, Máquina…), usa "Agregar a Imprenta": crea un producto de impresión nuevo (con
+            nombre y foto precargados desde esta pieza) en la lista editable de arriba, sin tocar ni
+            duplicar la pieza original. Si una pieza no hace falta en este juego, "Quitar de este
+            juego" (visible solo con permiso de Piezas) la desvincula sin borrarla del catálogo — sigue
+            disponible para volver a agregarla aquí o en cualquier otro juego desde Piezas.
+          </p>
+          {piezasSinPromover.map((item) => (
+            <div className="plastic-item-card" key={item.id}>
+              <div className="plastic-item-card-header">
+                <h3>{item.data.nombre || "(sin nombre)"}</h3>
+              </div>
+              <div className="plastic-item-view-fields">
+                <div className="plastic-item-view-field">
+                  <span className="plastic-item-view-field-label">SKU</span>
+                  <span className="plastic-item-view-field-value">{item.data.sku || "—"}</span>
+                </div>
+                <div className="plastic-item-view-field">
+                  <span className="plastic-item-view-field-label">Cantidad</span>
+                  <span className="plastic-item-view-field-value">{item.cantidad || "—"}</span>
+                </div>
+                <div className="plastic-item-view-field">
+                  <span className="plastic-item-view-field-label">Material</span>
+                  <span className="plastic-item-view-field-value">{item.data.material || "—"}</span>
+                </div>
+                <div className="plastic-item-view-field">
+                  <span className="plastic-item-view-field-label">Dimensión</span>
+                  <span className="plastic-item-view-field-value">{item.data.dimension || "—"}</span>
+                </div>
+              </div>
+              <div className="form-actions">
+                <button type="button" className="btn-link" onClick={onOpenPiezas}>
+                  Ver en Piezas
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={() => addItemFromPieza(item)}>
+                  Agregar a Imprenta
+                </button>
+                {hasPermission(user, "plasticos") &&
+                  (confirmingRemovePiezaId === item.id ? (
+                    <span className="confirm-delete">
+                      ¿Quitar esta pieza de la ficha?
+                      <button
+                        type="button"
+                        className="btn btn-danger"
+                        onClick={() => handleRemovePieza(item)}
+                        disabled={removingPieza}
+                      >
+                        {removingPieza ? "Quitando…" : "Sí, quitar"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-link"
+                        onClick={() => setConfirmingRemovePiezaId(null)}
+                        disabled={removingPieza}
+                      >
+                        Cancelar
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn-link"
+                      onClick={() => setConfirmingRemovePiezaId(item.id ?? null)}
+                    >
+                      Quitar de este juego
+                    </button>
+                  ))}
+              </div>
+            </div>
+          ))}
+          {removePiezaError && <p className="form-error">{removePiezaError}</p>}
+        </div>
+      )}
+
       {orderItems && product && (
         <OrderModal product={product} items={orderItems} onClose={() => setOrderItems(null)} />
       )}
@@ -935,6 +1111,7 @@ export default function ImprentaSection({ productId, onDirtyChange }: Props) {
           onUpdated={(updated) => handlePurchaseUpdated(editPurchaseTarget.order.id, updated)}
         />
       )}
+
     </div>
   );
 }

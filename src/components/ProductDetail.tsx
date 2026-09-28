@@ -13,6 +13,7 @@ import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
 import RequisicionModal from "./RequisicionModal";
 import PreciosModal from "./PreciosModal";
 import PreciosVentaModal from "./PreciosVentaModal";
+import PrecioProduccionModal from "./PrecioProduccionModal";
 import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
@@ -51,6 +52,7 @@ export default function ProductDetail({
   const [requisicionSpec, setRequisicionSpec] = useState<ProductSpec | null>(null);
   const [showPrecios, setShowPrecios] = useState(false);
   const [showPreciosVenta, setShowPreciosVenta] = useState(false);
+  const [showPrecioProduccion, setShowPrecioProduccion] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -153,6 +155,15 @@ export default function ProductDetail({
                 Precios Venta
               </button>
             )}
+            {hasPermission(user, "precios_produccion_ver") && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-ficha-precios"
+                onClick={() => setShowPrecioProduccion(true)}
+              >
+                Precio de Producción
+              </button>
+            )}
           </div>
           <h1>{product.nombre}</h1>
           <p className="product-detail-tags">
@@ -160,6 +171,12 @@ export default function ProductDetail({
             {product.material && <span className="tag">{product.material}</span>}
           </p>
           <p className="product-detail-meta">Tipo de producto: {product.tipo_producto || "Sin asignar"}</p>
+          <p className="product-detail-meta">
+            Dimensiones de empaque: {product.dimensiones_empaque || "—"}
+          </p>
+          <p className="product-detail-meta">Juegos por empaque: {product.juegos_por_empaque || "—"}</p>
+          <p className="product-detail-meta">Peso empaque (Kg): {product.peso_empaque || "—"}</p>
+          <p className="product-detail-meta">Volumen empaque (M3): {product.volumen_empaque || "—"}</p>
 
           {activeDescSlot && (
             <div className="description-viewer">
@@ -210,13 +227,6 @@ export default function ProductDetail({
                 ))}
               </tbody>
             </table>
-          )}
-
-          {product.presentacion_original && (
-            <details className="presentacion-original">
-              <summary>Ver texto original de Presentación / Contenido</summary>
-              <p>{product.presentacion_original}</p>
-            </details>
           )}
 
           <div className="product-detail-actions">
@@ -285,6 +295,10 @@ export default function ProductDetail({
 
       {showPreciosVenta && (
         <PreciosVentaModal product={product} onClose={() => setShowPreciosVenta(false)} />
+      )}
+
+      {showPrecioProduccion && (
+        <PrecioProduccionModal product={product} onClose={() => setShowPrecioProduccion(false)} />
       )}
 
       <p className="last-modified">

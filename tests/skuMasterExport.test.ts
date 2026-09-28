@@ -23,6 +23,10 @@ function productInput(codigo: string, nombre: string) {
     imagen_codigo_barras: null,
     tipo_producto: "",
     codigo_barras_texto: "",
+    dimensiones_empaque: "",
+    juegos_por_empaque: "",
+    peso_empaque: "",
+    volumen_empaque: "",
   };
 }
 
@@ -36,11 +40,11 @@ function piezaInput(nombre: string, sku: string) {
     material: "",
     dimension: "",
     peso: "",
-    tipo_empaque: "",
     maquila: "",
     coste: "",
     componentes_fabricacion: "",
-    dimensiones_empaque: "",
+    precio_por_pieza: "",
+    precio_por_juego: "",
     imagen: { data: new Uint8Array([1, 2, 3]), mime: "image/png" },
   };
 }
@@ -83,7 +87,7 @@ describe("getSkuMasterExportData — reúne productos, desglose de piezas, preci
     await createPlasticProduct(admin, piezaInput("Pieza suelta", "8080"));
 
     await rawClient().execute({
-      sql: "INSERT INTO product_plastic_items (product_id, plastic_product_id, orden) VALUES (?1, ?2, 1)",
+      sql: "INSERT INTO product_plastic_items (product_id, plastic_product_id, orden, cantidad) VALUES (?1, ?2, 1, '4')",
       args: [productId, piezaVinculadaId],
     });
     await rawClient().execute({
@@ -104,6 +108,7 @@ describe("getSkuMasterExportData — reúne productos, desglose de piezas, preci
     const desgloseVinculado = data.piezas.find((p) => p.sku === "9001-1");
     expect(desgloseVinculado?.producto_codigo).toBe("9001");
     expect(desgloseVinculado?.orden).toBe(1);
+    expect(desgloseVinculado?.cantidad).toBe("4");
 
     // La pieza sin ficha vinculada no se omite ni se le inventa un producto —
     // aparece con las columnas de producto en null (ver LEFT JOIN en db.ts).

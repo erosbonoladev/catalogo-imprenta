@@ -209,6 +209,10 @@ export default function FichaImportPanel() {
               imagen_codigo_barras: null,
               tipo_producto: "",
               codigo_barras_texto: "",
+              dimensiones_empaque: "",
+              juegos_por_empaque: "",
+              peso_empaque: "",
+              volumen_empaque: "",
             },
             specs,
           );
@@ -246,6 +250,10 @@ export default function FichaImportPanel() {
             imagen_codigo_barras: existing.imagen_codigo_barras,
             tipo_producto: existing.tipo_producto,
             codigo_barras_texto: existing.codigo_barras_texto,
+            dimensiones_empaque: existing.dimensiones_empaque,
+            juegos_por_empaque: existing.juegos_por_empaque,
+            peso_empaque: existing.peso_empaque,
+            volumen_empaque: existing.volumen_empaque,
           },
           specs,
         );

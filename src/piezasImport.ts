@@ -33,7 +33,6 @@ export interface RawPiezaImportRow {
   peso: string;
   maquila: string;
   coste: string;
-  dimensionesEmpaque: string;
   linkImagen: string;
   // --- Campos que solo trae el formato "Desglose" (export de SKU Master
   // reimportado) — undefined en el formato clásico, donde no existen como
@@ -50,7 +49,8 @@ export interface RawPiezaImportRow {
   orden?: number | null;
   material?: string;
   color?: string;
-  tipoEmpaque?: string;
+  precioPorPieza?: string;
+  precioPorJuego?: string;
 }
 
 // Nombre a usar para una fila en ambos formatos: el formato "Desglose"
@@ -62,7 +62,7 @@ export function pieceName(row: RawPiezaImportRow): string {
   return row.nombre?.trim() || row.descripcion.trim();
 }
 
-type ColumnKey = "origen" | "sku" | "descripcion" | "componentesFabricacion" | "dimension" | "peso" | "maquila" | "coste" | "dimensionesEmpaque" | "linkImagen";
+type ColumnKey = "origen" | "sku" | "descripcion" | "componentesFabricacion" | "dimension" | "peso" | "maquila" | "coste" | "linkImagen";
 
 interface ColumnSpec<K extends string = ColumnKey> {
   key: K;
@@ -78,8 +78,14 @@ interface ColumnSpec<K extends string = ColumnKey> {
 // ("PESO (GR.)") y variantes de redacción ("COMPONENTES FABRICACION"/"...DE
 // FABRICACION") — por eso el match es por tokens contenidos, no por
 // igualdad exacta como en fichaImport.ts. La columna "IMAGEN" (miniatura,
-// primera columna del archivo real) y "NETO PROD" se ignoran deliberadamente
-// — no se importan ni se guardan en ningún lado.
+// primera columna del archivo real), "NETO PROD" y "Dimensiones Empaque" se
+// ignoran deliberadamente — no se importan ni se guardan en ningún lado.
+// "Dimensiones Empaque" se ignora desde 2026-09-24 (antes se leía por pieza,
+// hacia `plastic_products.dimensiones_empaque`): ese dato ahora vive en la
+// ficha técnica (`products.dimensiones_empaque`, describe el empaque del
+// juego completo, no de cada pieza), y la importación masiva de Piezas
+// deliberadamente no escribe en `products` — quien lo necesite lo captura a
+// mano desde la ficha (decisión explícita del usuario, ver docs/WORKFLOWS.md).
 const COLUMN_SPECS: ColumnSpec[] = [
   { key: "origen", label: "Origen", tokens: ["origen"] },
   { key: "sku", label: "SKU", tokens: ["sku"] },
@@ -93,7 +99,6 @@ const COLUMN_SPECS: ColumnSpec[] = [
   { key: "peso", label: "Peso", tokens: ["peso"] },
   { key: "maquila", label: "Maquila", tokens: ["maquila"] },
   { key: "coste", label: "Costo", tokens: ["costo"] },
-  { key: "dimensionesEmpaque", label: "Dimensiones Empaque", tokens: ["dimension", "empaque"] },
   { key: "linkImagen", label: "Links Imágenes Piezas", tokens: ["link"] },
 ];
 
@@ -233,7 +238,6 @@ function readLegacyBlockWorkbook(workbook: XLSX.WorkBook): PiezasWorkbookReadRes
       peso: cell(row, "peso"),
       maquila: cell(row, "maquila"),
       coste: cell(row, "coste"),
-      dimensionesEmpaque: cell(row, "dimensionesEmpaque"),
       linkImagen: linkImagenCell(i, row),
     });
   }
@@ -260,11 +264,11 @@ type DesgloseColumnKey =
   | "origen"
   | "dimension"
   | "peso"
-  | "tipoEmpaque"
   | "maquila"
   | "costo"
   | "componentesFabricacion"
-  | "dimensionesEmpaque";
+  | "precioPorPieza"
+  | "precioPorJuego";
 
 const DESGLOSE_COLUMN_SPECS: ColumnSpec<DesgloseColumnKey>[] = [
   { key: "productoClave", label: "Producto (Clave)", tokens: ["producto", "clave"] },
@@ -278,15 +282,21 @@ const DESGLOSE_COLUMN_SPECS: ColumnSpec<DesgloseColumnKey>[] = [
   { key: "material", label: "Material", tokens: ["material"] },
   { key: "color", label: "Color", tokens: ["color"] },
   { key: "origen", label: "Origen", tokens: ["origen"] },
+  // Excluye "empaque" para no confundirse con "Dimensiones Empaque" — esa
+  // columna ya no tiene `ColumnSpec` propio (se movió a la ficha técnica,
+  // ver docs/WORKFLOWS.md) pero puede seguir presente en un archivo real.
   { key: "dimension", label: "Dimensión", tokens: ["dimension"], exclude: ["empaque"] },
   // Excluye "original"/"gramos" porque el archivo real trae una columna de
   // nota al final ("Peso original en gramos...") que también contiene "peso".
   { key: "peso", label: "Peso", tokens: ["peso"], exclude: ["original", "gramos"] },
-  { key: "tipoEmpaque", label: "Tipo de empaque", tokens: ["tipo", "empaque"] },
   { key: "maquila", label: "Maquila", tokens: ["maquila"] },
-  { key: "costo", label: "Costo", tokens: ["costo"] },
+  // Excluye "juego" para no confundirse con "Costo por juego" — esa columna
+  // ya no tiene `ColumnSpec` propio (se retiró de Piezas del todo, ver
+  // docs/DATABASE.md) pero puede seguir presente en un archivo real.
+  { key: "costo", label: "Costo", tokens: ["costo"], exclude: ["juego"] },
   { key: "componentesFabricacion", label: "Componentes de fabricación", tokens: ["componentes", "fabricacion"] },
-  { key: "dimensionesEmpaque", label: "Dimensiones de empaque", tokens: ["dimension", "empaque"] },
+  { key: "precioPorPieza", label: "Precio por pieza", tokens: ["precio", "pieza"] },
+  { key: "precioPorJuego", label: "Precio por juego", tokens: ["precio", "juego"] },
 ];
 
 const DESGLOSE_ALL_LABELS = DESGLOSE_COLUMN_SPECS.map((s) => s.label);
@@ -342,13 +352,13 @@ function readDesgloseSheet(sheet: XLSX.WorkSheet): PiezasWorkbookReadResult {
       peso: cell(row, "peso"),
       maquila: cell(row, "maquila"),
       coste: cell(row, "costo"),
-      dimensionesEmpaque: cell(row, "dimensionesEmpaque"),
       linkImagen: "",
       nombre: nombrePieza,
       orden: Number.isFinite(ordenNum) ? ordenNum : null,
       material: cell(row, "material"),
       color: cell(row, "color"),
-      tipoEmpaque: cell(row, "tipoEmpaque"),
+      precioPorPieza: cell(row, "precioPorPieza"),
+      precioPorJuego: cell(row, "precioPorJuego"),
     });
   }
 
@@ -458,13 +468,13 @@ function fieldTooLong(row: RawPiezaImportRow): string | null {
   if (row.peso.length > MAX_SHORT_FIELD_LENGTH) return "Peso";
   if (row.maquila.length > MAX_SHORT_FIELD_LENGTH) return "Maquila";
   if (row.coste.length > MAX_SHORT_FIELD_LENGTH) return "Costo";
-  if (row.dimensionesEmpaque.length > MAX_SHORT_FIELD_LENGTH) return "Dimensiones Empaque";
   if (row.descripcion.length > MAX_LONG_FIELD_LENGTH) return "Descripción";
   if (row.linkImagen.length > MAX_LONG_FIELD_LENGTH) return "Links Imágenes Piezas";
   if ((row.nombre?.length ?? 0) > MAX_SHORT_FIELD_LENGTH) return "Nombre Pieza";
   if ((row.material?.length ?? 0) > MAX_SHORT_FIELD_LENGTH) return "Material";
   if ((row.color?.length ?? 0) > MAX_SHORT_FIELD_LENGTH) return "Color";
-  if ((row.tipoEmpaque?.length ?? 0) > MAX_SHORT_FIELD_LENGTH) return "Tipo de empaque";
+  if ((row.precioPorPieza?.length ?? 0) > MAX_SHORT_FIELD_LENGTH) return "Precio por pieza";
+  if ((row.precioPorJuego?.length ?? 0) > MAX_SHORT_FIELD_LENGTH) return "Precio por juego";
   return null;
 }
 
@@ -549,13 +559,14 @@ export function classifyPiezaRows(
 // Construye el PlasticProductInput a escribir para una fila ya clasificada.
 // El SKU de la pieza manda cuando la fila lo trae (asignado por la
 // empresa); si no lo trae, se preserva el que ya tuviera la pieza en una
-// actualización. Color/Material/Tipo de empaque siguen el mismo criterio
-// aunque el formato "Desglose" sí traiga esas columnas: un valor presente
-// en el Excel gana, uno vacío conserva lo que ya tenía la pieza — vacío
-// nunca borra un dato ya capturado (el formato clásico nunca traía estas
-// columnas, así que ahí siempre caen al valor existente, sin cambio de
-// comportamiento). En un alta nueva sin pieza existente, quedan vacíos,
-// listos para completarse a mano después (ver SkuMasterSection).
+// actualización. Color/Material y las 2 columnas de costeo (Precio por
+// pieza, Precio por juego) siguen el mismo criterio aunque el formato
+// "Desglose" sí traiga esas columnas: un valor presente en el Excel gana,
+// uno vacío conserva lo que ya tenía la pieza — vacío nunca borra un dato ya
+// capturado (el formato clásico nunca traía estas columnas, así que ahí
+// siempre caen al valor existente, sin cambio de comportamiento). En un
+// alta nueva sin pieza existente, quedan vacíos, listos para completarse a
+// mano después (ver SkuMasterSection).
 export function buildPiezaInput(row: ClassifiedPiezaRow, image: ImageBlob | null): PlasticProductInput {
   const nombre = pieceName(row);
   return {
@@ -567,11 +578,11 @@ export function buildPiezaInput(row: ClassifiedPiezaRow, image: ImageBlob | null
     material: row.material?.trim() || (row.matchedPieza?.material ?? ""),
     dimension: row.dimension.trim(),
     peso: row.peso.trim(),
-    tipo_empaque: row.tipoEmpaque?.trim() || (row.matchedPieza?.tipo_empaque ?? ""),
     maquila: row.maquila.trim(),
     coste: row.coste.trim(),
     componentes_fabricacion: row.componentesFabricacion.trim(),
-    dimensiones_empaque: row.dimensionesEmpaque.trim(),
+    precio_por_pieza: row.precioPorPieza?.trim() || (row.matchedPieza?.precio_por_pieza ?? ""),
+    precio_por_juego: row.precioPorJuego?.trim() || (row.matchedPieza?.precio_por_juego ?? ""),
     imagen: image ?? row.matchedPieza?.imagen ?? null,
   };
 }

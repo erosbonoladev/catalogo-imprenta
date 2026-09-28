@@ -2025,24 +2025,6 @@ body,
   padding: 0 0.3rem;
 }
 
-/* Ficha técnica: texto original de Presentación / Contenido */
-
-.presentacion-original {
-  margin-bottom: 1.5rem;
-  color: var(--text-muted);
-}
-
-.presentacion-original summary {
-  cursor: pointer;
-  color: var(--accent);
-}
-
-.presentacion-original p {
-  color: var(--text);
-  white-space: pre-wrap;
-  margin: 0.6rem 0 0;
-}
-
 /* Configuraciones: captura masiva de fichas técnicas / imágenes */
 
 .import-picker {

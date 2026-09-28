@@ -27,11 +27,10 @@ const CAMPOS: { label: string; key: keyof PlasticProduct }[] = [
   { label: "Origen", key: "origen" },
   { label: "Dimensión", key: "dimension" },
   { label: "Peso", key: "peso" },
-  { label: "Tipo de empaque", key: "tipo_empaque" },
   { label: "Maquila", key: "maquila" },
-  { label: "Coste", key: "coste" },
   { label: "Componentes de fabricación", key: "componentes_fabricacion" },
-  { label: "Dimensiones de empaque", key: "dimensiones_empaque" },
+  { label: "Precio por pieza", key: "precio_por_pieza" },
+  { label: "Precio por juego", key: "precio_por_juego" },
 ];
 
 export default function PiezaDetalleScreen({ plasticProductId, onBack, onOpenProduct }: Props) {

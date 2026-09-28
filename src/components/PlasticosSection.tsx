@@ -27,11 +27,10 @@ const CAMPOS_VISTA: { label: string; key: keyof PlasticProductInput }[] = [
   { label: "Material", key: "material" },
   { label: "Dimensión", key: "dimension" },
   { label: "Peso", key: "peso" },
-  { label: "Tipo de empaque", key: "tipo_empaque" },
   { label: "Maquila", key: "maquila" },
-  { label: "Coste", key: "coste" },
   { label: "Componentes de fabricación", key: "componentes_fabricacion" },
-  { label: "Dimensiones de empaque", key: "dimensiones_empaque" },
+  { label: "Precio por pieza", key: "precio_por_pieza" },
+  { label: "Precio por juego", key: "precio_por_juego" },
 ];
 
 export default function PlasticosSection({ productId, onDirtyChange }: Props) {
@@ -82,11 +81,16 @@ export default function PlasticosSection({ productId, onDirtyChange }: Props) {
     );
   }
 
+  function updateItemCantidad(index: number, cantidad: string) {
+    setDirty(true);
+    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, cantidad } : item)));
+  }
+
   function addNewItem() {
     setDirty(true);
     setItems((prev) => [
       ...prev,
-      { plastic_product_id: null, orden: prev.length + 1, data: { ...EMPTY_PLASTIC_DATA } },
+      { plastic_product_id: null, orden: prev.length + 1, cantidad: "", data: { ...EMPTY_PLASTIC_DATA } },
     ]);
   }
 
@@ -97,6 +101,7 @@ export default function PlasticosSection({ productId, onDirtyChange }: Props) {
       {
         plastic_product_id: producto.id,
         orden: prev.length + 1,
+        cantidad: "",
         data: {
           nombre: producto.nombre,
           sku: producto.sku,
@@ -106,11 +111,11 @@ export default function PlasticosSection({ productId, onDirtyChange }: Props) {
           material: producto.material,
           dimension: producto.dimension,
           peso: producto.peso,
-          tipo_empaque: producto.tipo_empaque,
           maquila: producto.maquila,
           coste: producto.coste,
           componentes_fabricacion: producto.componentes_fabricacion,
-          dimensiones_empaque: producto.dimensiones_empaque,
+          precio_por_pieza: producto.precio_por_pieza,
+          precio_por_juego: producto.precio_por_juego,
           imagen: producto.imagen,
         },
       },
@@ -216,6 +221,7 @@ export default function PlasticosSection({ productId, onDirtyChange }: Props) {
             item={item}
             editMode={editMode}
             onChange={(patch) => updateItemData(index, patch)}
+            onCantidadChange={(v) => updateItemCantidad(index, v)}
             onPickImage={() => pickProductImage(index)}
             onRemove={() => removeItem(index)}
           />
@@ -263,11 +269,19 @@ interface PlasticItemCardProps {
   item: PlasticItem;
   editMode: boolean;
   onChange: (patch: Partial<PlasticProductInput>) => void;
+  onCantidadChange: (value: string) => void;
   onPickImage: () => void;
   onRemove: () => void;
 }
 
-function PlasticItemCard({ item, editMode, onChange, onPickImage, onRemove }: PlasticItemCardProps) {
+function PlasticItemCard({
+  item,
+  editMode,
+  onChange,
+  onCantidadChange,
+  onPickImage,
+  onRemove,
+}: PlasticItemCardProps) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   useRevokeObjectUrl(imageSrc);
 
@@ -318,6 +332,18 @@ function PlasticItemCard({ item, editMode, onChange, onPickImage, onRemove }: Pl
             imageSrc={imageSrc}
             onChange={onChange}
             onPickImage={onPickImage}
+            extraFields={
+              <label className="plastic-item-field">
+                <span>Cantidad</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={item.cantidad}
+                  onChange={(e) => onCantidadChange(e.target.value)}
+                />
+              </label>
+            }
           />
         ) : (
           <>
@@ -331,6 +357,10 @@ function PlasticItemCard({ item, editMode, onChange, onPickImage, onRemove }: Pl
               </div>
             </div>
             <div className="plastic-item-view-fields">
+              <div className="plastic-item-view-field">
+                <span className="plastic-item-view-field-label">Cantidad</span>
+                <span className="plastic-item-view-field-value">{item.cantidad || "—"}</span>
+              </div>
               {CAMPOS_VISTA.map((campo) => (
                 <div className="plastic-item-view-field" key={campo.key}>
                   <span className="plastic-item-view-field-label">{campo.label}</span>

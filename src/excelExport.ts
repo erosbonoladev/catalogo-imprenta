@@ -91,9 +91,6 @@ function productosSheetRows(productos: Product[]): unknown[][] {
   return aoa;
 }
 
-// "Cantidad" queda siempre vacía: product_plastic_items (join ficha↔pieza)
-// no tiene columna de cantidad en el esquema actual — se deja la cabecera
-// para que sea claro qué información falta, sin inventar un valor.
 function desgloseSheetRows(piezas: PiezaDesgloseExportRow[]): unknown[][] {
   const aoa: unknown[][] = [
     [
@@ -110,11 +107,11 @@ function desgloseSheetRows(piezas: PiezaDesgloseExportRow[]): unknown[][] {
       "Origen",
       "Dimensión",
       "Peso",
-      "Tipo de empaque",
       "Maquila",
       "Costo",
       "Componentes de fabricación",
-      "Dimensiones de empaque",
+      "Precio por pieza",
+      "Precio por juego",
     ],
   ];
   for (const p of piezas) {
@@ -130,18 +127,18 @@ function desgloseSheetRows(piezas: PiezaDesgloseExportRow[]): unknown[][] {
       p.orden ?? "",
       p.sku,
       p.nombre,
-      "",
+      p.cantidad ?? "",
       p.descripcion,
       p.material,
       p.color,
       p.origen,
       p.dimension,
       p.peso,
-      p.tipo_empaque,
       p.maquila,
       p.coste,
       p.componentes_fabricacion,
-      p.dimensiones_empaque,
+      p.precio_por_pieza,
+      p.precio_por_juego,
     ]);
   }
   return aoa;
@@ -182,9 +179,18 @@ function round3(n: number): number {
 // aparte, no se suman juegos y piezas — ver DATABASE.md). "Factor precio" =
 // Precio ÷ Costo del juego, una razón calculada para referencia, no un dato
 // guardado. "Juegos por empaque"/"Peso empaque"/"Volumen empaque"/"Costo
-// por Kg" no existen en ninguna tabla — quedan vacías con su encabezado,
-// mismo criterio que "Cantidad" en Desglose.
-export function recetasSheetRows(piezas: PiezaDesgloseExportRow[], precios: Precio[]): unknown[][] {
+// por Kg" no existen en ninguna tabla — quedan vacías con su encabezado, sin
+// inventar el dato. "Dimensiones de empaque" sí existe, pero en `products`
+// (ficha), no en `plastic_products` (pieza) — se movió ahí 2026-09-24 porque
+// describe el empaque del juego completo, no de cada pieza (antes se
+// repetía idéntica en cada pieza del mismo juego). Por eso solo aparece una
+// vez, en la fila resumen del juego, no en cada fila de pieza.
+export function recetasSheetRows(
+  piezas: PiezaDesgloseExportRow[],
+  precios: Precio[],
+  productos: Product[],
+): unknown[][] {
+  const productoByCodigo = new Map(productos.map((p) => [p.codigo, p]));
   const aoa: unknown[][] = [
     [
       "SKU Principal",
@@ -262,7 +268,7 @@ export function recetasSheetRows(piezas: PiezaDesgloseExportRow[], precios: Prec
         "",
         p.origen,
         p.maquila,
-        p.dimensiones_empaque,
+        "",
         "",
       ]);
     }
@@ -289,7 +295,7 @@ export function recetasSheetRows(piezas: PiezaDesgloseExportRow[], precios: Prec
       factor !== null ? factor.toFixed(2) : "",
       "",
       "",
-      "",
+      productoByCodigo.get(codigo)?.dimensiones_empaque || "",
       "",
     ]);
     aoa.push(...filasPiezas);
@@ -370,7 +376,7 @@ export function buildSkuMasterWorkbook(data: SkuMasterExportData): Uint8Array {
   return buildMultiSheetWorkbookBytes([
     { name: "Productos", aoa: productosSheetRows(data.productos) },
     { name: "Desglose", aoa: desgloseSheetRows(data.piezas) },
-    { name: "Recetas", aoa: recetasSheetRows(data.piezas, data.precios) },
+    { name: "Recetas", aoa: recetasSheetRows(data.piezas, data.precios, data.productos) },
     { name: "Precios Imprenta", aoa: preciosExportSheetRows(data.precios) },
     { name: "Remisiones", aoa: remisionesExportSheetRows(data.remisiones) },
   ]);

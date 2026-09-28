@@ -28,6 +28,10 @@ const base = {
   descripcion: "",
   imagen: null,
   imagen_codigo_barras: null,
+  dimensiones_empaque: "",
+  juegos_por_empaque: "",
+  peso_empaque: "",
+  volumen_empaque: "",
 };
 
 describe("tipo_producto — valor controlado", () => {

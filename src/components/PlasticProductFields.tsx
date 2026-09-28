@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { PlasticProductInput } from "../types";
 import AutoGrowInput from "./AutoGrowInput";
 
@@ -12,11 +13,11 @@ export const EMPTY_PLASTIC_DATA: PlasticProductInput = {
   material: "",
   dimension: "",
   peso: "",
-  tipo_empaque: "",
   maquila: "",
   coste: "",
   componentes_fabricacion: "",
-  dimensiones_empaque: "",
+  precio_por_pieza: "",
+  precio_por_juego: "",
   imagen: null,
 };
 
@@ -25,9 +26,20 @@ interface Props {
   imageSrc: string | null;
   onChange: (patch: Partial<PlasticProductInput>) => void;
   onPickImage: () => void;
+  // Campos que no viven en plastic_products (ej. Cantidad, propia del
+  // vínculo ficha↔pieza en PlasticosSection) pero que deben verse junto al
+  // resto en la misma grilla — solo PlasticosSection la usa hoy,
+  // PiezasGeneralSection/PiezaFormModal la omiten sin cambios.
+  extraFields?: ReactNode;
 }
 
-export default function PlasticProductFields({ data, imageSrc, onChange, onPickImage }: Props) {
+export default function PlasticProductFields({
+  data,
+  imageSrc,
+  onChange,
+  onPickImage,
+  extraFields,
+}: Props) {
   return (
     <>
       <div className="plastic-item-media-col">
@@ -44,6 +56,7 @@ export default function PlasticProductFields({ data, imageSrc, onChange, onPickI
       </div>
 
       <div className="plastic-item-fields">
+        {extraFields}
         <PlasticField label="SKU" value={data.sku} onChange={(v) => onChange({ sku: v })} />
         <PlasticField label="Color" value={data.color} onChange={(v) => onChange({ color: v })} />
         <label className="plastic-item-field">
@@ -64,22 +77,21 @@ export default function PlasticProductFields({ data, imageSrc, onChange, onPickI
           onChange={(v) => onChange({ dimension: v })}
         />
         <PlasticField label="Peso" value={data.peso} onChange={(v) => onChange({ peso: v })} />
-        <PlasticField
-          label="Tipo de empaque"
-          value={data.tipo_empaque}
-          onChange={(v) => onChange({ tipo_empaque: v })}
-        />
         <PlasticField label="Maquila" value={data.maquila} onChange={(v) => onChange({ maquila: v })} />
-        <PlasticField label="Coste" value={data.coste} onChange={(v) => onChange({ coste: v })} />
         <PlasticField
           label="Componentes de fabricación"
           value={data.componentes_fabricacion}
           onChange={(v) => onChange({ componentes_fabricacion: v })}
         />
         <PlasticField
-          label="Dimensiones de empaque"
-          value={data.dimensiones_empaque}
-          onChange={(v) => onChange({ dimensiones_empaque: v })}
+          label="Precio por pieza"
+          value={data.precio_por_pieza}
+          onChange={(v) => onChange({ precio_por_pieza: v })}
+        />
+        <PlasticField
+          label="Precio por juego"
+          value={data.precio_por_juego}
+          onChange={(v) => onChange({ precio_por_juego: v })}
         />
       </div>
     </>

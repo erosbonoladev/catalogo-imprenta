@@ -578,7 +578,8 @@ export default function PiezasImportPanel() {
           <p className="hint" style={{ margin: 0 }}>
             Actualizar reemplaza Origen/Descripción/Dimensiones/Peso/Maquila/Costo/Componentes de
             fabricación/Dimensiones de empaque de esa pieza con lo que traiga el Excel. Color,
-            Material y Tipo de empaque solo se reemplazan si la fila trae un valor — vacíos no
+            Material, Juegos por empaque, Costo por juego, Peso empaque, Volumen empaque, Precio
+            por pieza y Precio por juego solo se reemplazan si la fila trae un valor — vacíos no
             borran lo que la pieza ya tenía. La imagen solo se reemplaza si el link de esa fila se
             pudo descargar (el formato "Desglose" no trae imágenes). Las filas "Sin relación" no
             encontraron un juego — si decides importarlas, quedan en el catálogo de Piezas sin

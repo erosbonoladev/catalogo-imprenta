@@ -42,7 +42,6 @@ function makeRow(overrides: Partial<RawPiezaImportRow> = {}): RawPiezaImportRow 
     peso: "308.4",
     maquila: "5.00",
     coste: "30.84",
-    dimensionesEmpaque: "",
     linkImagen: "",
     ...overrides,
   };
@@ -61,6 +60,10 @@ function makeJuego(overrides: Partial<Product> = {}): Product {
     tipo_producto: "",
     codigo_barras_texto: "",
     presentacion_original: "",
+    dimensiones_empaque: "",
+    juegos_por_empaque: "",
+    peso_empaque: "",
+    volumen_empaque: "",
     creado_en: "",
     actualizado_en: "",
     ...overrides,
@@ -78,11 +81,11 @@ function makePieza(overrides: Partial<PlasticProduct> = {}): PlasticProduct {
     material: "ABS",
     dimension: "",
     peso: "308.4",
-    tipo_empaque: "Caja",
     maquila: "5.00",
     coste: "30.84",
     componentes_fabricacion: "6",
-    dimensiones_empaque: "",
+    precio_por_pieza: "",
+    precio_por_juego: "",
     imagen: null,
     creado_en: "",
     ...overrides,
@@ -227,7 +230,7 @@ describe("readPiezasWorkbook", () => {
     expect(result.rows.map((r) => r.maquila)).toEqual(["5.00", "5.00", "5.00"]);
   });
 
-  it("distingue 'Dimensiones' de 'DIMENSIONES EMPAQUE'", () => {
+  it("'Dimensiones' no confunde su valor con el de 'DIMENSIONES EMPAQUE' (columna ignorada deliberadamente)", () => {
     const bytes = buildXlsx([
       ["", "", "1000", "JUEGO", "", "PIEZA-10x5", "", "", "", "", "EMPAQUE-30x20", ""],
       ["", "BOD", "", "Pieza uno", "1", "5x5", "10", "", "1.00", "", "10x10", ""],
@@ -236,7 +239,7 @@ describe("readPiezasWorkbook", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.rows[0].dimension).toBe("5x5");
-    expect(result.rows[0].dimensionesEmpaque).toBe("10x10");
+    expect(result.rows[0]).not.toHaveProperty("dimensionesEmpaque");
   });
 
   it("una pieza con SKU propio (con guion) no se confunde con una fila de juego nueva", () => {
@@ -314,12 +317,12 @@ describe("readPiezasWorkbook: formato Desglose (export de SKU Master reimportado
     "Origen",
     "Dimensión",
     "Peso",
-    "Tipo de empaque",
     "Maquila",
     "Costo",
     "Componentes de fabricación",
-    "Dimensiones de empaque",
     "Vínculo producto y orden",
+    "Precio por pieza",
+    "Precio por juego",
   ];
 
   function buildDesgloseWorkbook(rows: (string | number)[][], sheetName = "Desglose"): Uint8Array {
@@ -333,8 +336,8 @@ describe("readPiezasWorkbook: formato Desglose (export de SKU Master reimportado
 
   it("detecta la hoja 'Desglose' por nombre (no por posición) y lee filas planas, un juego por fila", () => {
     const bytes = buildDesgloseWorkbook([
-      ["1000", "1000", "Ábaco Gigante", "1", "", "Codo 90° 2\"", "", "Codo 90° 2\"", "", "", "BOD", "", "308.4", "", "5.00", "30.84", "6", "", "1000:1"],
-      ["1000", "1000", "Ábaco Gigante", "2", "1138-1", "Tee 2\"", "", "Tee 2\"", "", "", "GIL", "", "237.6", "", "5.00", "23.76", "3", "", "1000:2"],
+      ["1000", "1000", "Ábaco Gigante", "1", "", "Codo 90° 2\"", "", "Codo 90° 2\"", "", "", "BOD", "", "308.4", "5.00", "30.84", "6", "1000:1"],
+      ["1000", "1000", "Ábaco Gigante", "2", "1138-1", "Tee 2\"", "", "Tee 2\"", "", "", "GIL", "", "237.6", "5.00", "23.76", "3", "1000:2"],
     ]);
     const result = readPiezasWorkbook(bytes);
     expect(result.ok).toBe(true);
@@ -346,7 +349,7 @@ describe("readPiezasWorkbook: formato Desglose (export de SKU Master reimportado
 
   it("no confunde la columna 'Orden' con 'Vínculo producto y orden' (ambas contienen el token 'orden')", () => {
     const bytes = buildDesgloseWorkbook([
-      ["1000", "1000", "Ábaco Gigante", "7", "", "Pieza", "", "Pieza", "", "", "BOD", "", "10", "", "1.00", "1.00", "1", "", "1000:7"],
+      ["1000", "1000", "Ábaco Gigante", "7", "", "Pieza", "", "Pieza", "", "", "BOD", "", "10", "1.00", "1.00", "1", "1000:7"],
     ]);
     const result = readPiezasWorkbook(bytes);
     expect(result.ok).toBe(true);
@@ -356,7 +359,7 @@ describe("readPiezasWorkbook: formato Desglose (export de SKU Master reimportado
 
   it("cuando 'Descripción' viene vacía, usa 'Nombre Pieza' tanto para nombre como para descripcion", () => {
     const bytes = buildDesgloseWorkbook([
-      ["1029", "1029", "Teatro Digital", "1", "", "Tela Teatro Digital", "", "", "", "", "EXTR", "", "247.2", "", "", "", "", "", "1029:1"],
+      ["1029", "1029", "Teatro Digital", "1", "", "Tela Teatro Digital", "", "", "", "", "EXTR", "", "247.2", "", "", "", "1029:1"],
     ]);
     const result = readPiezasWorkbook(bytes);
     expect(result.ok).toBe(true);
@@ -365,19 +368,36 @@ describe("readPiezasWorkbook: formato Desglose (export de SKU Master reimportado
     expect(result.rows[0].descripcion).toBe("Tela Teatro Digital");
   });
 
-  it("lee Material/Color/Tipo de empaque cuando la fila los trae", () => {
+  it("lee Material/Color cuando la fila los trae", () => {
     const bytes = buildDesgloseWorkbook([
-      ["1129", "1129", "Caja Mis Primeras Matemáticas", "1", "3075-1T", "No. Didáctico 1 Azul", "", "", "Plastico", "Azul", "BOD", "3.8x3.5x1", "0.004", "Madera", "", "", "", "", "1129:1"],
+      ["1129", "1129", "Caja Mis Primeras Matemáticas", "1", "3075-1T", "No. Didáctico 1 Azul", "", "", "Plastico", "Azul", "BOD", "3.8x3.5x1", "0.004", "", "", "", "1129:1"],
     ]);
     const result = readPiezasWorkbook(bytes);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.rows[0]).toMatchObject({ material: "Plastico", color: "Azul", tipoEmpaque: "Madera" });
+    expect(result.rows[0]).toMatchObject({ material: "Plastico", color: "Azul" });
+  });
+
+  it("lee Precio por pieza/Precio por juego cuando la fila los trae", () => {
+    const bytes = buildDesgloseWorkbook([
+      [
+        "1129", "1129", "Caja Mis Primeras Matemáticas", "1", "3075-1T", "No. Didáctico 1 Azul",
+        "", "", "", "", "BOD", "", "", "", "", "", "1129:1",
+        "20.00", "180.00",
+      ],
+    ]);
+    const result = readPiezasWorkbook(bytes);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows[0]).toMatchObject({
+      precioPorPieza: "20.00",
+      precioPorJuego: "180.00",
+    });
   });
 
   it("fila sin 'Producto (Clave)' (marcador de pieza sin relación, ej. 'SIN-PRODUCTO') queda con juegoSku vacío", () => {
     const bytes = buildDesgloseWorkbook([
-      ["", "", "", "", "", "Cubo", "", "", "Plástico", "Rojo", "BOD", "", "", "", "", "", "", "", "SIN-PRODUCTO:2669"],
+      ["", "", "", "", "", "Cubo", "", "", "Plástico", "Rojo", "BOD", "", "", "", "", "", "SIN-PRODUCTO:2669"],
     ]);
     const result = readPiezasWorkbook(bytes);
     expect(result.ok).toBe(true);
@@ -601,15 +621,14 @@ describe("classifyPiezaRows", () => {
 // --- buildPiezaInput ---
 
 describe("buildPiezaInput", () => {
-  it("en una actualización preserva sku/color/material/tipo_empaque existentes", () => {
+  it("en una actualización preserva sku/color/material existentes", () => {
     const row = makeRow();
-    const pieza = makePieza({ sku: "P-001", color: "Azul", material: "PVC", tipo_empaque: "Bolsa" });
+    const pieza = makePieza({ sku: "P-001", color: "Azul", material: "PVC" });
     const [classified] = classifyPiezaRows([row], new Map([[row.fila, { juego: makeJuego(), pieza }]]));
     const input = buildPiezaInput(classified, null);
     expect(input.sku).toBe("P-001");
     expect(input.color).toBe("Azul");
     expect(input.material).toBe("PVC");
-    expect(input.tipo_empaque).toBe("Bolsa");
     expect(input.nombre).toBe('Tubo 2"');
     expect(input.componentes_fabricacion).toBe("6");
   });
@@ -622,14 +641,13 @@ describe("buildPiezaInput", () => {
     expect(input.sku).toBe("1138-1");
   });
 
-  it("en un alta nueva, sku/color/material/tipo_empaque quedan vacíos", () => {
+  it("en un alta nueva, sku/color/material quedan vacíos", () => {
     const row = makeRow();
     const [classified] = classifyPiezaRows([row], new Map([[row.fila, { juego: makeJuego(), pieza: null }]]));
     const input = buildPiezaInput(classified, null);
     expect(input.sku).toBe("");
     expect(input.color).toBe("");
     expect(input.material).toBe("");
-    expect(input.tipo_empaque).toBe("");
   });
 
   it("usa la imagen descargada cuando se provee, en vez de la existente", () => {
@@ -648,24 +666,49 @@ describe("buildPiezaInput", () => {
     expect(input.nombre).toBe("No. Didáctico 1 Azul");
   });
 
-  it("formato Desglose: Material/Color/Tipo de empaque presentes en la fila reemplazan lo existente", () => {
-    const row = makeRow({ material: "Plastico", color: "Azul", tipoEmpaque: "Madera" });
-    const pieza = makePieza({ material: "ABS", color: "Rojo", tipo_empaque: "Caja" });
+  it("formato Desglose: Material/Color presentes en la fila reemplazan lo existente", () => {
+    const row = makeRow({ material: "Plastico", color: "Azul" });
+    const pieza = makePieza({ material: "ABS", color: "Rojo" });
     const [classified] = classifyPiezaRows([row], new Map([[row.fila, { juego: makeJuego(), pieza }]]));
     const input = buildPiezaInput(classified, null);
     expect(input.material).toBe("Plastico");
     expect(input.color).toBe("Azul");
-    expect(input.tipo_empaque).toBe("Madera");
   });
 
-  it("formato Desglose: Material/Color/Tipo de empaque vacíos (string vacío, no undefined) conservan lo existente", () => {
-    const row = makeRow({ material: "", color: "", tipoEmpaque: "" });
-    const pieza = makePieza({ material: "ABS", color: "Rojo", tipo_empaque: "Caja" });
+  it("formato Desglose: Material/Color vacíos (string vacío, no undefined) conservan lo existente", () => {
+    const row = makeRow({ material: "", color: "" });
+    const pieza = makePieza({ material: "ABS", color: "Rojo" });
     const [classified] = classifyPiezaRows([row], new Map([[row.fila, { juego: makeJuego(), pieza }]]));
     const input = buildPiezaInput(classified, null);
     expect(input.material).toBe("ABS");
     expect(input.color).toBe("Rojo");
-    expect(input.tipo_empaque).toBe("Caja");
+  });
+
+  it("formato Desglose: Precio por pieza/Precio por juego siguen el mismo criterio (valor presente gana, vacío conserva)", () => {
+    const row = makeRow({
+      precioPorPieza: "20.00",
+      precioPorJuego: "180.00",
+    });
+    const pieza = makePieza({
+      precio_por_pieza: "OLD-PP",
+      precio_por_juego: "OLD-PJ",
+    });
+    const [classified] = classifyPiezaRows([row], new Map([[row.fila, { juego: makeJuego(), pieza }]]));
+    const input = buildPiezaInput(classified, null);
+    expect(input.precio_por_pieza).toBe("20.00");
+    expect(input.precio_por_juego).toBe("180.00");
+
+    const rowVacio = makeRow({
+      precioPorPieza: "",
+      precioPorJuego: "",
+    });
+    const [classifiedVacio] = classifyPiezaRows(
+      [rowVacio],
+      new Map([[rowVacio.fila, { juego: makeJuego(), pieza }]]),
+    );
+    const inputVacio = buildPiezaInput(classifiedVacio, null);
+    expect(inputVacio.precio_por_pieza).toBe("OLD-PP");
+    expect(inputVacio.precio_por_juego).toBe("OLD-PJ");
   });
 });
 

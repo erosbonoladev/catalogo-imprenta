@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import { buildSkuMasterWorkbook, formatMoney, recetasSheetRows } from "../src/excelExport";
 import type { PiezaDesgloseExportRow } from "../src/db";
-import type { Precio } from "../src/types";
+import type { Precio, Product } from "../src/types";
 
 function pieza(overrides: Partial<PiezaDesgloseExportRow> = {}): PiezaDesgloseExportRow {
   return {
     producto_codigo: "2035",
     producto_nombre: "Juego del Granjero",
     orden: 1,
+    cantidad: "",
     pieza_id: 1,
     sku: "2035-1",
     nombre: "Caballo",
@@ -18,11 +19,11 @@ function pieza(overrides: Partial<PiezaDesgloseExportRow> = {}): PiezaDesgloseEx
     origen: "",
     dimension: "",
     peso: "0.02",
-    tipo_empaque: "",
     maquila: "",
     coste: "3.20",
     componentes_fabricacion: "5",
-    dimensiones_empaque: "",
+    precio_por_pieza: "",
+    precio_por_juego: "",
     ...overrides,
   };
 }
@@ -38,6 +39,29 @@ function precio(overrides: Partial<Precio> = {}): Precio {
     actualizado_por: null,
     creado_en: "",
     tipo: null,
+    ...overrides,
+  };
+}
+
+function producto(overrides: Partial<Product> = {}): Product {
+  return {
+    id: 1,
+    codigo: "2035",
+    nombre: "Juego del Granjero",
+    categoria: "",
+    material: "",
+    descripcion: "",
+    imagen: null,
+    imagen_codigo_barras: null,
+    tipo_producto: "",
+    codigo_barras_texto: "",
+    presentacion_original: "",
+    dimensiones_empaque: "",
+    juegos_por_empaque: "",
+    peso_empaque: "",
+    volumen_empaque: "",
+    creado_en: "",
+    actualizado_en: "",
     ...overrides,
   };
 }
@@ -74,6 +98,7 @@ describe("recetasSheetRows", () => {
         pieza({ sku: "2035-2", nombre: "Jinete", peso: "0.03", coste: "4.80", componentes_fabricacion: "5" }),
       ],
       [],
+      [],
     );
 
     // header + 1 fila de juego + 2 piezas
@@ -105,6 +130,7 @@ describe("recetasSheetRows", () => {
         pieza({ sku: "2035-2", nombre: "Instructivo", peso: "N/D", coste: "", componentes_fabricacion: "1" }),
       ],
       [],
+      [],
     );
     const [, juego, , piezaMala] = rows;
 
@@ -124,6 +150,7 @@ describe("recetasSheetRows", () => {
     const rows = recetasSheetRows(
       [pieza({ sku: "2035-1", peso: "0.02", coste: "3.20", componentes_fabricacion: "5" })],
       [precio({ sku: "2035", precio: 146.4 }), precio({ id: 2, sku: "2035-1", precio: 3.84 })],
+      [],
     );
     const [, juego, pieza1] = rows;
 
@@ -134,7 +161,7 @@ describe("recetasSheetRows", () => {
   });
 
   it("sin precio para ese SKU, la celda de precio queda vacía (no inventa un valor)", () => {
-    const rows = recetasSheetRows([pieza({ sku: "2035-1", componentes_fabricacion: "5" })], []);
+    const rows = recetasSheetRows([pieza({ sku: "2035-1", componentes_fabricacion: "5" })], [], []);
     const [, juego, pieza1] = rows;
     expect(juego[COL.precioJuego]).toBe("");
     expect(pieza1[COL.precioPieza]).toBe("");
@@ -145,13 +172,14 @@ describe("recetasSheetRows", () => {
     const rows = recetasSheetRows(
       [pieza({ sku: "2035-1", peso: "0.02", coste: "3.20", componentes_fabricacion: "5" })], // costo por juego = 16
       [precio({ sku: "2035", precio: 19.2 })], // factor = 19.2 / 16 = 1.2
+      [],
     );
     const [, juego] = rows;
     expect(juego[COL.factorPrecio]).toBe("1.20");
   });
 
   it("columnas sin ninguna fuente de datos (Juegos por empaque, Peso/Volumen empaque, Costo por Kg, Link imágenes) quedan vacías, con su encabezado", () => {
-    const rows = recetasSheetRows([pieza()], []);
+    const rows = recetasSheetRows([pieza()], [], []);
     const [header, juego, pieza1] = rows;
     expect(header[COL.juegosPorEmpaque]).toBe("Juegos por empaque");
     expect(header[COL.pesoEmpaque]).toBe("Peso empaque (Kg)");
@@ -171,22 +199,36 @@ describe("recetasSheetRows", () => {
     const rows = recetasSheetRows(
       [pieza({ producto_codigo: null, producto_nombre: null, sku: "8080", nombre: "Pieza suelta" })],
       [],
+      [],
     );
     expect(rows).toHaveLength(1); // solo el encabezado
   });
 
-  it("Origen/Maquila/Dimensiones de empaque son propios de cada pieza, vacíos en la fila del juego", () => {
-    const rows = recetasSheetRows(
-      [pieza({ origen: "BOD", maquila: "5.00", dimensiones_empaque: "10x10" })],
-      [],
-    );
+  it("Origen/Maquila son propios de cada pieza, vacíos en la fila del juego", () => {
+    const rows = recetasSheetRows([pieza({ origen: "BOD", maquila: "5.00" })], [], []);
     const [, juego, pieza1] = rows;
     expect(juego[COL.origen]).toBe("");
     expect(juego[COL.maquila]).toBe("");
-    expect(juego[COL.dimensionesEmpaque]).toBe("");
     expect(pieza1[COL.origen]).toBe("BOD");
     expect(pieza1[COL.maquila]).toBe("5.00");
-    expect(pieza1[COL.dimensionesEmpaque]).toBe("10x10");
+  });
+
+  it("Dimensiones de empaque viene de la ficha (products), no de la pieza — aparece una vez en la fila del juego, vacía en cada pieza", () => {
+    const rows = recetasSheetRows(
+      [pieza({ sku: "2035-1" }), pieza({ sku: "2035-2" })],
+      [],
+      [producto({ codigo: "2035", dimensiones_empaque: "10x10" })],
+    );
+    const [, juego, pieza1, pieza2] = rows;
+    expect(juego[COL.dimensionesEmpaque]).toBe("10x10");
+    expect(pieza1[COL.dimensionesEmpaque]).toBe("");
+    expect(pieza2[COL.dimensionesEmpaque]).toBe("");
+  });
+
+  it("sin ficha para ese código (no debería pasar, pero no inventa el dato) la fila del juego queda vacía", () => {
+    const rows = recetasSheetRows([pieza({ sku: "2035-1" })], [], []);
+    const [, juego] = rows;
+    expect(juego[COL.dimensionesEmpaque]).toBe("");
   });
 });
 

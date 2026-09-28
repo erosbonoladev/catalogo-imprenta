@@ -20,6 +20,16 @@ export interface Product {
   // ceros iniciales. "" cuando no se ha capturado.
   codigo_barras_texto: string;
   presentacion_original: string;
+  // Datos de empaque del juego (una caja, un valor por ficha) — vivían en
+  // Piezas (plastic_products) hasta 2026-09-24, donde se repetían idénticos
+  // en cada pieza del mismo juego; se movieron aquí a pedido del usuario
+  // porque describen el empaque del juego completo, no de cada pieza. Texto
+  // libre, no se fuerza a número aunque el nombre lo sugiera (mismo criterio
+  // que el resto de campos de esta tabla) — "" cuando no se ha capturado.
+  dimensiones_empaque: string;
+  juegos_por_empaque: string;
+  peso_empaque: string;
+  volumen_empaque: string;
   creado_en: string;
   actualizado_en: string;
 }
@@ -51,6 +61,10 @@ export interface ProductInput {
   imagen_codigo_barras: ImageBlob | null;
   tipo_producto: string;
   codigo_barras_texto: string;
+  dimensiones_empaque: string;
+  juegos_por_empaque: string;
+  peso_empaque: string;
+  volumen_empaque: string;
 }
 
 // Lista cerrada de valores para "Tipo de producto" — controlada a propósito
@@ -132,11 +146,25 @@ export interface PlasticProduct {
   material: string;
   dimension: string;
   peso: string;
-  tipo_empaque: string;
   maquila: string;
   coste: string;
   componentes_fabricacion: string;
-  dimensiones_empaque: string;
+  // Igual criterio que el resto de campos de arriba (texto libre, no
+  // forzado a número) — mismas columnas que la hoja de trabajo "Para
+  // recetas" del negocio, capturadas a mano por pieza. Independientes de las
+  // columnas de mismo nombre en la hoja "Recetas" del export de SKU Master
+  // (esas se calculan solas desde `coste`/`componentes_fabricacion`/`precios`
+  // — decisión explícita del usuario de no fusionarlas). `dimensiones_empaque`/
+  // `juegos_por_empaque`/`peso_empaque`/`volumen_empaque` (que vivían acá)
+  // se movieron a `Product`/`ProductInput` (2026-09-24, a pedido del
+  // usuario) — describen el empaque del juego completo, no de cada pieza, y
+  // se repetían idénticas en cada pieza de un mismo juego. `costo_por_juego`
+  // (que también vivía acá) se retiró del todo el mismo día, a pedido del
+  // usuario — sin dato real capturado (0 filas en Turso al momento del
+  // cambio). Las columnas correspondientes en `plastic_products` quedaron
+  // muertas, ver docs/DATABASE.md.
+  precio_por_pieza: string;
+  precio_por_juego: string;
   imagen: ImageBlob | null;
   creado_en: string;
 }
@@ -150,11 +178,11 @@ export interface PlasticProductInput {
   material: string;
   dimension: string;
   peso: string;
-  tipo_empaque: string;
   maquila: string;
   coste: string;
   componentes_fabricacion: string;
-  dimensiones_empaque: string;
+  precio_por_pieza: string;
+  precio_por_juego: string;
   imagen: ImageBlob | null;
 }
 
@@ -163,6 +191,12 @@ export interface PlasticItem {
   product_id?: number;
   plastic_product_id: number | null;
   orden: number;
+  // Cuántas piezas de esta se usan en este juego — vive en
+  // product_plastic_items (el vínculo ficha↔pieza), no en plastic_products
+  // (catálogo maestro reutilizable): la misma pieza puede necesitarse en
+  // cantidades distintas según el juego. Texto libre igual que
+  // numero_placas/numero_pliegos en PrintItem, no se fuerza a número.
+  cantidad: string;
   data: PlasticProductInput;
 }
 
@@ -329,6 +363,8 @@ export const PERMISOS = [
   "precios_modificar",
   "precios_venta_ver",
   "precios_venta_modificar",
+  "precios_produccion_ver",
+  "precios_produccion_modificar",
   "remisiones_acceso",
   "remisiones_crear",
   "remisiones_cancelar",
@@ -359,6 +395,8 @@ export const PERMISO_LABELS: Record<Permiso, string> = {
   precios_modificar: "Precios Imprenta: modificar",
   precios_venta_ver: "Precios Venta: ver",
   precios_venta_modificar: "Precios Venta: modificar",
+  precios_produccion_ver: "Precio de Producción: ver",
+  precios_produccion_modificar: "Precio de Producción: modificar",
   remisiones_acceso: "Remisiones: acceso",
   remisiones_crear: "Remisiones: crear",
   remisiones_cancelar: "Remisiones: borrar",
@@ -581,6 +619,21 @@ export interface PrecioVenta {
 export interface PrecioVentaEntradaInput {
   categoria: PrecioVentaCategoria;
   precio: number | null;
+}
+
+// --- Precio de Producción (independiente de Precios Imprenta/Precio Venta
+// arriba — no se mezcla con ninguno de los dos, mismo criterio que Precio
+// Venta respecto a Precios Imprenta) ---
+
+// Un solo valor por producto (a diferencia de Precio Venta, que tiene 5
+// categorías fijas) — capturado a mano, nunca calculado desde Piezas ni
+// desde ningún otro dato (decisión explícita del usuario, 2026-09-24).
+export interface PrecioProduccion {
+  product_id: number;
+  // null = todavía no se ha capturado — se muestra vacío, no 0.
+  precio: number | null;
+  actualizado_en: string | null;
+  actualizado_por: string | null;
 }
 
 // --- Remisiones ---
