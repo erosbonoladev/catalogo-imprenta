@@ -12,8 +12,8 @@ import {
 import type { PlasticProduct, PlasticProductInput } from "../types";
 import { hasPermission, useAuth } from "../auth";
 import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
-import AutoGrowInput from "./AutoGrowInput";
 import Toast from "./Toast";
+import PiezaNombreField, { pickTemplateFields } from "./PiezaNombreField";
 import PlasticProductFields, { EMPTY_PLASTIC_DATA } from "./PlasticProductFields";
 import Pagination from "./Pagination";
 import basuraIcon from "../../Assets/basura.svg";
@@ -324,10 +324,12 @@ export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalPro
 
         <label className="plastic-item-field" style={{ marginBottom: "0.9rem" }}>
           <span>Nombre de la pieza</span>
-          <AutoGrowInput
+          <PiezaNombreField
             placeholder="Nombre"
             value={data.nombre}
             onChange={(v) => update({ nombre: v })}
+            excludeId={existing?.id ?? null}
+            onSelectMatch={existing ? undefined : (p) => update(pickTemplateFields(p))}
           />
         </label>
 

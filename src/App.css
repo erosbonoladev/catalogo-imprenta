@@ -1712,12 +1712,56 @@ body,
 }
 
 .plastic-item-card {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 1.1rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  transition:
+    opacity var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+/* Reordenar piezas arrastrando (solo en modo Editar, ver PlasticosSection).
+   No usa el HTML5 Drag and Drop nativo (draggable/dragstart) porque no es
+   confiable dentro del webview de Tauri (WKWebView en macOS no lo soporta
+   bien para reordenar dentro de la misma página) — el arrastre se arma a
+   mano con Pointer Events, iniciado solo desde .plastic-item-drag-handle. */
+.plastic-item-card.is-dragging {
+  opacity: 0.5;
+}
+
+.plastic-item-card.is-drag-over {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.plastic-item-drag-handle {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.plastic-item-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* Marca una pieza vinculada al catálogo maestro (plastic_product_id no
+   nulo) para distinguirla de un "+ Agregar producto nuevo" a simple vista
+   al ir armando varias piezas seguidas. */
+.plastic-item-existing-badge {
+  position: absolute;
+  bottom: 0.6rem;
+  right: 0.6rem;
+  display: flex;
+  color: var(--warning);
+  cursor: default;
 }
 
 .plastic-item-card-header {
@@ -1731,9 +1775,74 @@ body,
   margin: 0;
 }
 
-.plastic-item-card-header .print-item-name-input {
+.plastic-item-card-header .print-item-name-input,
+.plastic-item-card-header .pieza-nombre-field-wrap {
   flex: 1;
+}
+
+.plastic-item-card-header .print-item-name-input {
   font-weight: 600;
+}
+
+/* PiezaNombreField: dropdown de coincidencias de nombre, navegable con
+   teclado, bajo el campo "Nombre" de una pieza (PiezaFormModal y
+   PlasticItemCard). El wrapper no es flex, así que el textarea de
+   AutoGrowInput (inline-block por default) necesita width:100% explícito
+   para seguir ocupando todo el ancho disponible como antes de envolverlo. */
+.pieza-nombre-field-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.pieza-nombre-field-wrap textarea {
+  width: 100%;
+}
+
+.pieza-nombre-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 0.3rem 0 0;
+  padding: 0.3rem;
+  list-style: none;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.pieza-nombre-suggestions-hint {
+  padding: 0.3rem 0.6rem 0.45rem;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.2rem;
+}
+
+.pieza-nombre-suggestion {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.pieza-nombre-suggestion:hover,
+.pieza-nombre-suggestion.is-active {
+  background-color: var(--bg);
+}
+
+.pieza-nombre-suggestion-sku {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 /* Ficha de pieza: columna de imágenes (izquierda) + columna de datos (derecha) */

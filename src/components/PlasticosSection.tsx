@@ -1,18 +1,13 @@
-import { useEffect, useState } from "react";
-import {
-  getImageSrc,
-  getPlasticItems,
-  logEventAsActor,
-  pickImage,
-  savePlasticItems,
-} from "../db";
+import { useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
+import { getImageSrc, getPlasticItems, logEventAsActor, pickImage, savePlasticItems } from "../db";
 import type { PlasticItem, PlasticProduct, PlasticProductInput } from "../types";
 import { hasPermission, useAuth } from "../auth";
 import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
-import AutoGrowInput from "./AutoGrowInput";
 import Toast from "./Toast";
 import PlasticProductPicker from "./PlasticProductPicker";
 import PlasticProductFields, { EMPTY_PLASTIC_DATA } from "./PlasticProductFields";
+import PiezaNombreField, { pickTemplateFields } from "./PiezaNombreField";
 import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
@@ -46,6 +41,17 @@ export default function PlasticosSection({ productId, onDirtyChange }: Props) {
   const [showPicker, setShowPicker] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  // El HTML5 Drag and Drop nativo (draggable/dragstart) no es confiable
+  // dentro del webview de Tauri (WKWebView en macOS no lo soporta bien para
+  // reordenar dentro de la misma página) — por eso el reordenado de piezas
+  // se arma a mano con Pointer Events en vez de la API nativa. Los refs
+  // llevan el valor "en vivo" para que los listeners de pointermove/pointerup
+  // (agregados a document, fuera del ciclo de render de React) no lean
+  // closures viejas del state.
+  const draggedIndexRef = useRef<number | null>(null);
+  const dragOverIndexRef = useRef<number | null>(null);
 
   function loadItems() {
     setLoading(true);
@@ -126,6 +132,50 @@ export default function PlasticosSection({ productId, onDirtyChange }: Props) {
   function removeItem(index: number) {
     setDirty(true);
     setItems((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  // savePlasticItems recalcula `orden` desde la posición en el array al
+  // guardar (ver db.ts) — reordenar acá alcanza, no hace falta tocar
+  // item.orden a mano.
+  function reorderItems(fromIndex: number, toIndex: number) {
+    if (fromIndex === toIndex) return;
+    setDirty(true);
+    setItems((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  }
+
+  function handlePointerMove(e: PointerEvent) {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const card = el instanceof Element ? el.closest<HTMLElement>("[data-plastic-item-index]") : null;
+    const idx = card ? Number(card.dataset.plasticItemIndex) : null;
+    if (idx !== dragOverIndexRef.current) {
+      dragOverIndexRef.current = idx;
+      setDragOverIndex(idx);
+    }
+  }
+
+  function handlePointerUp() {
+    document.removeEventListener("pointermove", handlePointerMove);
+    document.removeEventListener("pointerup", handlePointerUp);
+    const from = draggedIndexRef.current;
+    const to = dragOverIndexRef.current;
+    draggedIndexRef.current = null;
+    dragOverIndexRef.current = null;
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+    if (from !== null && to !== null) reorderItems(from, to);
+  }
+
+  function handleDragHandlePointerDown(index: number, e: ReactPointerEvent) {
+    e.preventDefault();
+    draggedIndexRef.current = index;
+    setDraggedIndex(index);
+    document.addEventListener("pointermove", handlePointerMove);
+    document.addEventListener("pointerup", handlePointerUp);
   }
 
   async function pickProductImage(index: number) {
@@ -219,7 +269,11 @@ export default function PlasticosSection({ productId, onDirtyChange }: Props) {
           <PlasticItemCard
             key={item.id ?? `new-${index}`}
             item={item}
+            index={index}
             editMode={editMode}
+            isDragging={draggedIndex === index}
+            isDragOver={dragOverIndex === index && draggedIndex !== null && draggedIndex !== index}
+            onDragHandlePointerDown={(e) => handleDragHandlePointerDown(index, e)}
             onChange={(patch) => updateItemData(index, patch)}
             onCantidadChange={(v) => updateItemCantidad(index, v)}
             onPickImage={() => pickProductImage(index)}
@@ -267,7 +321,11 @@ export default function PlasticosSection({ productId, onDirtyChange }: Props) {
 
 interface PlasticItemCardProps {
   item: PlasticItem;
+  index: number;
   editMode: boolean;
+  isDragging: boolean;
+  isDragOver: boolean;
+  onDragHandlePointerDown: (e: ReactPointerEvent) => void;
   onChange: (patch: Partial<PlasticProductInput>) => void;
   onCantidadChange: (value: string) => void;
   onPickImage: () => void;
@@ -276,7 +334,11 @@ interface PlasticItemCardProps {
 
 function PlasticItemCard({
   item,
+  index,
   editMode,
+  isDragging,
+  isDragOver,
+  onDragHandlePointerDown,
   onChange,
   onCantidadChange,
   onPickImage,
@@ -300,14 +362,46 @@ function PlasticItemCard({
   }, [item.data.imagen]);
 
   return (
-    <div className="plastic-item-card">
+    <div
+      className={`plastic-item-card${isDragging ? " is-dragging" : ""}${isDragOver ? " is-drag-over" : ""}`}
+      data-plastic-item-index={index}
+    >
+      {item.plastic_product_id !== null && (
+        <span
+          className="plastic-item-existing-badge"
+          title="Producto ya existente"
+          aria-label="Producto ya existente"
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+          </svg>
+        </span>
+      )}
       <div className="plastic-item-card-header">
+        {editMode && (
+          <span
+            className="plastic-item-drag-handle"
+            title="Arrastrar para reordenar"
+            onPointerDown={onDragHandlePointerDown}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+              <circle cx="9" cy="5" r="1.5" />
+              <circle cx="9" cy="12" r="1.5" />
+              <circle cx="9" cy="19" r="1.5" />
+              <circle cx="15" cy="5" r="1.5" />
+              <circle cx="15" cy="12" r="1.5" />
+              <circle cx="15" cy="19" r="1.5" />
+            </svg>
+          </span>
+        )}
         {editMode ? (
-          <AutoGrowInput
+          <PiezaNombreField
             className="print-item-name-input"
             placeholder="Nombre"
             value={item.data.nombre}
             onChange={(v) => onChange({ nombre: v })}
+            excludeId={item.plastic_product_id}
+            onSelectMatch={item.plastic_product_id === null ? (p) => onChange(pickTemplateFields(p)) : undefined}
           />
         ) : (
           <h3>{item.data.nombre || "(sin nombre)"}</h3>
