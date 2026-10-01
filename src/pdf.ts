@@ -141,7 +141,7 @@ export async function buildOrderPdf(
     ensureSpace(1);
     doc.text(`Total de tamaños a imprimir con merma: ${entry.totalPliegos}`, marginX, y);
     y += 15;
-    doc.text(`Total de cambios a imprimir: ${entry.totalPorPliego}`, marginX, y);
+    doc.text(`Total por cambios a Imprimir: ${entry.totalPorPliego}`, marginX, y);
     y += 18;
 
     doc.setFont("helvetica", "normal");
@@ -221,12 +221,11 @@ export async function buildPurchasePdf(
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10.5);
 
-    doc.setFont("helvetica", "bold");
     doc.text(`Cantidad: ${entry.cantidad}`, marginX, y);
     y += 15;
-
-    doc.setFont("helvetica", "normal");
     doc.text(`Papel: ${entry.papel || "—"}`, marginX, y);
+    y += 15;
+    doc.text(`Gramos o puntos: ${entry.item.gramos_puntos || "—"}`, marginX, y);
     y += 15;
     doc.text(`Pliego: ${entry.pliego || "—"}`, marginX, y);
     y += 15;
@@ -234,7 +233,7 @@ export async function buildPurchasePdf(
     y += 15;
     doc.text(`Máquina: ${entry.maquina || "—"}`, marginX, y);
     y += 15;
-    doc.text(`Gramos o puntos: ${entry.item.gramos_puntos || "—"}`, marginX, y);
+    doc.text(`Total de tamaños a imprimir: ${entry.totalTamanos}`, marginX, y);
     y += 22;
   }
 
