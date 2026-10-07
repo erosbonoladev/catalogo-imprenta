@@ -46,7 +46,7 @@ Los backups disparados desde la propia app (manual, pre-importación, pre-restau
 
 ## Empaquetado
 
-Build local = solo el instalador del SO anfitrión. Ambas plataformas se compilan por GitHub Actions (`.github/workflows/build.yml`, disparado por `gh workflow run build.yml` o un tag `app-v*`), produce un GitHub Release en draft con `.dmg`/`.exe`/`.msi`. Firma de macOS necesita los secrets `APPLE_*` en el repo (sin ellos, build sin firmar — instalar local con Control-click→Open o `xattr -cr`). Windows sin certificado de firma. El workflow necesita `VITE_TURSO_URL`/`VITE_TURSO_AUTH_TOKEN` como repo secrets (mismos valores que `.env` local).
+Build local = solo el instalador del SO anfitrión. Ambas plataformas se compilan por GitHub Actions (`.github/workflows/build.yml`, disparado por `gh workflow run build.yml` o un tag `app-v*`), produce un GitHub Release en draft con `.dmg`/`.exe`/`.msi`. Firma de macOS necesita los secrets `APPLE_*` en el repo. Sin ellos, `bundle.macOS.signingIdentity: "-"` en `tauri.conf.json` firma ad-hoc el `.app` completo (sin eso la firma del linker queda rota y macOS dice "Clio está dañado"); la primera instalación en cada Mac se habilita en Ajustes del Sistema → Privacidad y seguridad → "Abrir de todos modos" (o `xattr -cr /Applications/Clio.app`). Windows sin certificado de firma. El workflow necesita `VITE_TURSO_URL`/`VITE_TURSO_AUTH_TOKEN` como repo secrets (mismos valores que `.env` local).
 
 ## Constraints aceptados (no son descuidos)
 
