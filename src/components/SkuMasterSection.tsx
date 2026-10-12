@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   getPreciosList,
+  getReporteDiarioData,
   getSkuMasterExportData,
   listPlasticProductsSummary,
   logEventAsActor,
@@ -10,7 +11,12 @@ import {
 } from "../db";
 import type { PlasticProduct, Precio, Product } from "../types";
 import { computeSkuPrincipal } from "../precios";
-import { buildSkuMasterWorkbook } from "../excelExport";
+import {
+  buildReporteDiarioWorkbook,
+  buildSkuMasterWorkbook,
+  localDayRangeUtc,
+  reporteDiarioFileName,
+} from "../excelExport";
 import { hasPermission, useAuth } from "../auth";
 import Pagination from "./Pagination";
 import Toast from "./Toast";
@@ -60,6 +66,31 @@ export default function SkuMasterSection({ onOpenProduct, onOpenPieza }: Props) 
     setPiezas(piezaList);
     setPrecios(precioList);
     setLoading(false);
+  }
+
+  async function handleExportarAvanceDelDia() {
+    if (!user || !token || exporting) return;
+    const actor = { id: user.id, token };
+    setExporting(true);
+    try {
+      const hoy = new Date();
+      const { desde, hasta } = localDayRangeUtc(hoy);
+      const data = await getReporteDiarioData(actor, desde, hasta);
+      if (data.piezas.length === 0) {
+        setToastMessage("Hoy no hay juegos agregados ni modificados.");
+        return;
+      }
+      const bytes = buildReporteDiarioWorkbook(data);
+      const saved = await saveBackupFileAs(reporteDiarioFileName(hoy), bytes);
+      if (saved) {
+        await logEventAsActor(actor, "INFO", "Avance del día de SKU Master exportado a Excel.");
+        setToastMessage("Reporte del día generado.");
+      }
+    } catch (err) {
+      setToastMessage(`No se pudo exportar: ${String(err)}`);
+    } finally {
+      setExporting(false);
+    }
   }
 
   async function handleExportar() {
@@ -209,6 +240,14 @@ export default function SkuMasterSection({ onOpenProduct, onOpenPieza }: Props) 
       <div className="form-actions">
         <button type="button" className="btn btn-secondary" onClick={handleExportar} disabled={exporting}>
           {exporting ? "Generando…" : "Exportar a Excel"}
+        </button>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={handleExportarAvanceDelDia}
+          disabled={exporting}
+        >
+          Exportar avance del día
         </button>
       </div>
 

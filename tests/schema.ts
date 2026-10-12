@@ -84,7 +84,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     precio_por_juego TEXT,
     imagen BLOB,
     imagen_mime TEXT,
-    creado_en TEXT NOT NULL DEFAULT (datetime('now'))
+    creado_en TEXT NOT NULL DEFAULT (datetime('now')),
+    actualizado_en TEXT
   )`,
   // Tabla muerta (ver docs/DATABASE.md "Tablas y columnas muertas") —
   // reemplazada por plastic_products/product_plastic_items, pero sigue

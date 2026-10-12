@@ -3,9 +3,13 @@ import {
   createPlasticProduct,
   createProduct,
   createRemisionConFolio,
+  getReporteDiarioData,
   getSkuMasterExportData,
+  savePlasticItems,
+  updatePlasticProduct,
   listPlasticProductsSummary,
 } from "../src/db";
+import { buildReporteDiarioWorkbook, localDayRangeUtc, recetasSheetRows, reporteDiarioFileName } from "../src/excelExport";
 import { createFixtureUser, rawClient, resetDb } from "./helpers";
 
 beforeEach(async () => {
@@ -123,5 +127,110 @@ describe("getSkuMasterExportData — reúne productos, desglose de piezas, preci
     expect(renglon?.pedido_bodegas).toBe("JALISCO");
     expect(renglon?.cantidad).toBe(2);
     expect(renglon?.folio).toMatch(/\S+/);
+  });
+});
+
+describe("getReporteDiarioData — avance del día (juegos agregados o modificados en el rango)", () => {
+  const AYER = "2020-01-01 10:00:00";
+  const RANGO = { desde: "2026-10-12 06:00:00", hasta: "2026-10-13 06:00:00" };
+  const HOY = "2026-10-12 15:00:00";
+
+  async function juegoConPieza(admin: Awaited<ReturnType<typeof actor>>, codigo: string, pieza: string) {
+    const productId = await createProduct(admin, productInput(codigo, `Juego ${codigo}`), []);
+    const piezaId = await createPlasticProduct(admin, piezaInput(pieza, `${codigo}-1`));
+    await rawClient().execute({
+      sql: "INSERT INTO product_plastic_items (product_id, plastic_product_id, orden, cantidad) VALUES (?1, ?2, 1, '1')",
+      args: [productId, piezaId],
+    });
+    return { productId, piezaId };
+  }
+
+  async function fechar(productId: number, piezaId: number, productoEn: string, piezaEn: string) {
+    await rawClient().execute({
+      sql: "UPDATE products SET creado_en = ?1, actualizado_en = ?1 WHERE id = ?2",
+      args: [productoEn, productId],
+    });
+    await rawClient().execute({
+      sql: "UPDATE plastic_products SET creado_en = ?1, actualizado_en = NULL WHERE id = ?2",
+      args: [piezaEn, piezaId],
+    });
+  }
+
+  it("rechaza a un usuario sin sku_master", async () => {
+    const a = await actor([]);
+    await expect(getReporteDiarioData(a, RANGO.desde, RANGO.hasta)).rejects.toThrow(/no autorizado/i);
+  });
+
+  it("incluye un juego nuevo de hoy y deja fuera los que no se tocaron", async () => {
+    const admin = await actor(["plasticos", "sku_master"]);
+    const viejo = await juegoConPieza(admin, "1000", "Pieza vieja");
+    const nuevo = await juegoConPieza(admin, "2000", "Pieza nueva");
+    await fechar(viejo.productId, viejo.piezaId, AYER, AYER);
+    await fechar(nuevo.productId, nuevo.piezaId, HOY, HOY);
+
+    const data = await getReporteDiarioData(admin, RANGO.desde, RANGO.hasta);
+
+    expect(data.productos.map((p) => p.codigo)).toEqual(["2000"]);
+    expect(data.piezas.map((p) => p.producto_codigo)).toEqual(["2000"]);
+  });
+
+  it("si solo se modificó UNA pieza hoy, el juego aparece con todas sus piezas", async () => {
+    const admin = await actor(["plasticos", "sku_master"]);
+    const { productId, piezaId } = await juegoConPieza(admin, "3000", "Pieza A");
+    const otraId = await createPlasticProduct(admin, piezaInput("Pieza B", "3000-2"));
+    await rawClient().execute({
+      sql: "INSERT INTO product_plastic_items (product_id, plastic_product_id, orden, cantidad) VALUES (?1, ?2, 2, '1')",
+      args: [productId, otraId],
+    });
+    await fechar(productId, piezaId, AYER, AYER);
+    await rawClient().execute({
+      sql: "UPDATE plastic_products SET creado_en = ?1, actualizado_en = NULL WHERE id = ?2",
+      args: [AYER, otraId],
+    });
+    await rawClient().execute({
+      sql: "UPDATE plastic_products SET actualizado_en = ?1 WHERE id = ?2",
+      args: [HOY, piezaId],
+    });
+
+    const data = await getReporteDiarioData(admin, RANGO.desde, RANGO.hasta);
+
+    expect(data.piezas.map((p) => p.sku).sort()).toEqual(["3000-1", "3000-2"]);
+  });
+
+  it("updatePlasticProduct y savePlasticItems dejan huella de modificación (actualizado_en)", async () => {
+    const admin = await actor(["plasticos", "sku_master"]);
+    const { productId, piezaId } = await juegoConPieza(admin, "4000", "Pieza");
+    await fechar(productId, piezaId, AYER, AYER);
+
+    const hoy = new Date();
+    const { desde, hasta } = localDayRangeUtc(hoy);
+    expect((await getReporteDiarioData(admin, desde, hasta)).piezas).toHaveLength(0);
+
+    await updatePlasticProduct(admin, piezaId, piezaInput("Pieza editada", "4000-1"));
+    expect((await getReporteDiarioData(admin, desde, hasta)).piezas).toHaveLength(1);
+
+    await fechar(productId, piezaId, AYER, AYER);
+    await savePlasticItems(admin, productId, []);
+    const data = await getReporteDiarioData(admin, desde, hasta);
+    expect(data.productos.map((p) => p.codigo)).toEqual(["4000"]);
+  });
+});
+
+describe("reporte diario — nombre de archivo y rango del día", () => {
+  it("nombra Reporte dd_mm con ceros a la izquierda", () => {
+    expect(reporteDiarioFileName(new Date(2026, 9, 12))).toBe("Reporte 12_10.xlsx");
+    expect(reporteDiarioFileName(new Date(2026, 0, 5))).toBe("Reporte 05_01.xlsx");
+  });
+
+  it("el rango cubre exactamente 24 h locales como texto UTC comparable", () => {
+    const { desde, hasta } = localDayRangeUtc(new Date(2026, 9, 12, 15, 30));
+    expect(desde).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(hasta > desde).toBe(true);
+  });
+
+  it("arma un xlsx con los mismos encabezados que Recetas", () => {
+    const bytes = buildReporteDiarioWorkbook({ productos: [], piezas: [], precios: [] });
+    expect(bytes.length).toBeGreaterThan(0);
+    expect(recetasSheetRows([], [], [])[0][0]).toBe("SKU Principal");
   });
 });

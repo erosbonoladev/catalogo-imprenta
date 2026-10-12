@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import type { Precio, Product, RemisionHistorialRow } from "./types";
-import type { PiezaDesgloseExportRow, SkuMasterExportData } from "./db";
+import type { PiezaDesgloseExportRow, ReporteDiarioData, SkuMasterExportData } from "./db";
 import { computeSkuPrincipal, parseAmount } from "./precios";
 
 const moneyFormatter = new Intl.NumberFormat("es-MX", {
@@ -380,6 +380,27 @@ export function buildSkuMasterWorkbook(data: SkuMasterExportData): Uint8Array {
     { name: "Precios Imprenta", aoa: preciosExportSheetRows(data.precios) },
     { name: "Remisiones", aoa: remisionesExportSheetRows(data.remisiones) },
   ]);
+}
+
+// El día de trabajo es el día LOCAL de quien exporta, pero las fechas en la BD
+// están en UTC (datetime('now')) — se convierte el [00:00, 24:00) local a su
+// equivalente UTC en el mismo formato 'YYYY-MM-DD HH:MM:SS' para comparar
+// como texto.
+export function localDayRangeUtc(day: Date): { desde: string; hasta: string } {
+  const start = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+  const end = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+  const toSql = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
+  return { desde: toSql(start), hasta: toSql(end) };
+}
+
+export function reporteDiarioFileName(day: Date): string {
+  const dd = String(day.getDate()).padStart(2, "0");
+  const mm = String(day.getMonth() + 1).padStart(2, "0");
+  return `Reporte ${dd}_${mm}.xlsx`;
+}
+
+export function buildReporteDiarioWorkbook(data: ReporteDiarioData): Uint8Array {
+  return buildWorkbookBytes("Recetas", recetasSheetRows(data.piezas, data.precios, data.productos));
 }
 
 export function buildRemisionesHistorialWorkbook(rows: RemisionHistorialRow[]): Uint8Array {

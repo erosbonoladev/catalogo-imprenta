@@ -1698,8 +1698,8 @@ export async function createPlasticProduct(
   await assertActorAuthorized(actor, "plasticos");
   const result = await executor.execute({
     sql: `INSERT INTO plastic_products
-          (nombre, sku, color, origen, descripcion, armado, dimension, peso, maquila, coste, componentes_fabricacion, precio_por_pieza, precio_por_juego, imagen, imagen_mime)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)`,
+          (nombre, sku, color, origen, descripcion, armado, dimension, peso, maquila, coste, componentes_fabricacion, precio_por_pieza, precio_por_juego, imagen, imagen_mime, actualizado_en)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, datetime('now'))`,
     args: [
       input.nombre.trim(),
       input.sku.trim(),
@@ -1734,7 +1734,8 @@ export async function updatePlasticProduct(
           SET nombre = ?1, sku = ?2, color = ?3, origen = ?4, descripcion = ?5, armado = ?6,
               dimension = ?7, peso = ?8, maquila = ?9, coste = ?10,
               componentes_fabricacion = ?11, precio_por_pieza = ?12,
-              precio_por_juego = ?13, imagen = ?14, imagen_mime = ?15
+              precio_por_juego = ?13, imagen = ?14, imagen_mime = ?15,
+              actualizado_en = datetime('now')
           WHERE id = ?16`,
     args: [
       input.nombre.trim(),
@@ -1769,7 +1770,7 @@ export async function updatePlasticProduct(
 export async function updatePlasticProductSku(actor: Actor, id: number, sku: string): Promise<void> {
   await assertActorAuthorized(actor, "sku_master");
   await client.execute({
-    sql: "UPDATE plastic_products SET sku = ?1 WHERE id = ?2",
+    sql: "UPDATE plastic_products SET sku = ?1, actualizado_en = datetime('now') WHERE id = ?2",
     args: [sku.trim(), id],
   });
   cacheInvalidate(PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY);
@@ -1832,6 +1833,10 @@ export async function savePlasticItems(
         args: [productId, plasticProductId, itemOrden, cantidad],
       });
     }
+    await tx.execute({
+      sql: "UPDATE products SET actualizado_en = datetime('now') WHERE id = ?1",
+      args: [productId],
+    });
     await tx.commit();
   } catch (err) {
     await tx.rollback();
@@ -4579,8 +4584,25 @@ export interface PiezaDesgloseExportRow {
   precio_por_juego: string;
 }
 
-async function fetchPiezasDesgloseParaExport(): Promise<PiezaDesgloseExportRow[]> {
-  const result = await client.execute(`
+// Juegos "trabajados" en un rango (UTC, mismo formato que datetime('now')):
+// la ficha se creó/editó, o una de sus piezas se creó/editó (incluye cambios
+// hechos desde Piezas General o al asignar SKU, que no tocan la ficha).
+const JUEGOS_TOCADOS_EN_RANGO_SQL = `
+  SELECT id FROM products
+  WHERE (creado_en >= ?1 AND creado_en < ?2) OR (actualizado_en >= ?1 AND actualizado_en < ?2)
+  UNION
+  SELECT ppi.product_id FROM product_plastic_items ppi
+  JOIN plastic_products pp ON pp.id = ppi.plastic_product_id
+  WHERE (pp.creado_en >= ?1 AND pp.creado_en < ?2) OR (pp.actualizado_en >= ?1 AND pp.actualizado_en < ?2)`;
+
+interface RangoUtc {
+  desde: string;
+  hasta: string;
+}
+
+async function fetchPiezasDesgloseParaExport(rango?: RangoUtc): Promise<PiezaDesgloseExportRow[]> {
+  const result = await client.execute({
+    sql: `
     SELECT
       p.codigo AS producto_codigo, p.nombre AS producto_nombre, ppi.orden AS orden,
       ppi.cantidad AS cantidad,
@@ -4592,8 +4614,11 @@ async function fetchPiezasDesgloseParaExport(): Promise<PiezaDesgloseExportRow[]
     FROM plastic_products pp
     LEFT JOIN product_plastic_items ppi ON ppi.plastic_product_id = pp.id
     LEFT JOIN products p ON p.id = ppi.product_id
+    ${rango ? `WHERE p.id IN (${JUEGOS_TOCADOS_EN_RANGO_SQL})` : ""}
     ORDER BY (p.codigo IS NULL), p.codigo, pp.nombre
-  `);
+  `,
+    args: rango ? [rango.desde, rango.hasta] : [],
+  });
   return result.rows as unknown as PiezaDesgloseExportRow[];
 }
 
@@ -4617,4 +4642,38 @@ export async function getSkuMasterExportData(actor: Actor): Promise<SkuMasterExp
     fetchRemisionRenglonesHistorial(),
   ]);
   return { productos, piezas, precios, remisiones };
+}
+
+export interface ReporteDiarioData {
+  productos: Product[];
+  piezas: PiezaDesgloseExportRow[];
+  precios: Precio[];
+}
+
+// Alimenta "Exportar avance del día" (hoja Recetas solo de los juegos
+// trabajados en el rango). `desde`/`hasta` son UTC 'YYYY-MM-DD HH:MM:SS'
+// (hasta exclusivo) — el llamador convierte el día local a UTC, ver
+// localDayRangeUtc en excelExport.ts. Trae TODAS las piezas de cada juego
+// tocado, no solo las modificadas, para que la receta salga completa.
+export async function getReporteDiarioData(
+  actor: Actor,
+  desde: string,
+  hasta: string,
+): Promise<ReporteDiarioData> {
+  await assertActorAuthorized(actor, "sku_master");
+  const rango = { desde, hasta };
+  const [productosResult, piezas, precios] = await Promise.all([
+    client.execute({
+      sql: `SELECT ${PRODUCT_LIST_COLUMNS}, dimensiones_empaque, juegos_por_empaque, peso_empaque, volumen_empaque
+            FROM products WHERE id IN (${JUEGOS_TOCADOS_EN_RANGO_SQL}) ORDER BY codigo`,
+      args: [desde, hasta],
+    }),
+    fetchPiezasDesgloseParaExport(rango),
+    getPreciosList(actor),
+  ]);
+  return {
+    productos: (productosResult.rows as unknown as ProductRow[]).map(rowToProduct),
+    piezas,
+    precios,
+  };
 }
