@@ -1722,6 +1722,9 @@ export async function createPlasticProduct(
   return Number(result.lastInsertRowid);
 }
 
+// Solo refresca actualizado_en si algún campo cambió de verdad: savePlasticItems
+// reenvía todas las piezas del formulario aunque no se hayan tocado, y sin esta
+// comparación "Exportar avance del día" listaría juegos que nadie editó.
 export async function updatePlasticProduct(
   actor: Actor,
   id: number,
@@ -1735,7 +1738,14 @@ export async function updatePlasticProduct(
               dimension = ?7, peso = ?8, maquila = ?9, coste = ?10,
               componentes_fabricacion = ?11, precio_por_pieza = ?12,
               precio_por_juego = ?13, imagen = ?14, imagen_mime = ?15,
-              actualizado_en = datetime('now')
+              actualizado_en = CASE WHEN
+                COALESCE(nombre, '') = ?1 AND COALESCE(sku, '') = ?2 AND COALESCE(color, '') = ?3
+                AND COALESCE(origen, '') = ?4 AND COALESCE(descripcion, '') = ?5 AND COALESCE(armado, '') = ?6
+                AND COALESCE(dimension, '') = ?7 AND COALESCE(peso, '') = ?8 AND COALESCE(maquila, '') = ?9
+                AND COALESCE(coste, '') = ?10 AND COALESCE(componentes_fabricacion, '') = ?11
+                AND COALESCE(precio_por_pieza, '') = ?12 AND COALESCE(precio_por_juego, '') = ?13
+                AND imagen IS ?14 AND imagen_mime IS ?15
+              THEN actualizado_en ELSE datetime('now') END
           WHERE id = ?16`,
     args: [
       input.nombre.trim(),

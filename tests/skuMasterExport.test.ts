@@ -214,6 +214,24 @@ describe("getReporteDiarioData — avance del día (juegos agregados o modificad
     const data = await getReporteDiarioData(admin, desde, hasta);
     expect(data.productos.map((p) => p.codigo)).toEqual(["4000"]);
   });
+
+  it("guardar una pieza sin cambios no la marca como modificada, pero cambiar un campo sí", async () => {
+    const admin = await actor(["plasticos", "sku_master"]);
+    const { productId, piezaId } = await juegoConPieza(admin, "5000", "Pieza");
+    await fechar(productId, piezaId, AYER, AYER);
+    const { desde, hasta } = localDayRangeUtc(new Date());
+
+    await updatePlasticProduct(admin, piezaId, piezaInput("Pieza", "5000-1"));
+    const fila = await rawClient().execute({
+      sql: "SELECT actualizado_en FROM plastic_products WHERE id = ?1",
+      args: [piezaId],
+    });
+    expect(fila.rows[0].actualizado_en).toBeNull();
+    expect((await getReporteDiarioData(admin, desde, hasta)).piezas).toHaveLength(0);
+
+    await updatePlasticProduct(admin, piezaId, { ...piezaInput("Pieza", "5000-1"), color: "Rojo" });
+    expect((await getReporteDiarioData(admin, desde, hasta)).piezas).toHaveLength(1);
+  });
 });
 
 describe("reporte diario — nombre de archivo y rango del día", () => {
