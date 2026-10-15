@@ -1,4 +1,4 @@
-import { createClient, type Client, type Transaction } from "@libsql/client/web";
+import { createClient, type Client, type InStatement, type Transaction } from "@libsql/client/web";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { exists, mkdir, open as fsOpen, readDir, readFile, remove, writeFile } from "@tauri-apps/plugin-fs";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
@@ -69,12 +69,15 @@ import {
   validateRestoreStatements,
 } from "./backup";
 import { buildBackupArchive } from "./backupWorkerClient";
+import { withNetworkResilience } from "./dbResilience";
 
-const client = createClient({
-  url: import.meta.env.VITE_TURSO_URL,
-  authToken: import.meta.env.VITE_TURSO_AUTH_TOKEN,
-  intMode: "number",
-});
+const client = withNetworkResilience(
+  createClient({
+    url: import.meta.env.VITE_TURSO_URL,
+    authToken: import.meta.env.VITE_TURSO_AUTH_TOKEN,
+    intMode: "number",
+  }),
+);
 
 // Firma común entre Client y Transaction — funciones de un solo statement
 // que también se llaman desde dentro de una transacción más grande (p.ej.
@@ -84,7 +87,7 @@ const client = createClient({
 type Executor = Pick<Transaction, "execute">;
 
 // Cache en memoria para los listados completos de pantallas que no cambian
-// seguido (Catálogo, Remisiones recientes, SKU Master, Piezas General) — sin
+// seguido (Catálogo, Historial de remisiones, SKU Master, Piezas General) — sin
 // esto, cada vez que se vuelve a una de esas pantallas (típicamente con la
 // píldora de regresar, después de solo ir a ver el detalle de algo) se
 // repetía el viaje de red completo a Turso aunque nada hubiera cambiado. Se
@@ -1690,13 +1693,8 @@ export async function deletePlasticProduct(actor: Actor, id: number): Promise<vo
   }
 }
 
-export async function createPlasticProduct(
-  actor: Actor,
-  input: PlasticProductInput,
-  executor: Executor = client,
-): Promise<number> {
-  await assertActorAuthorized(actor, "plasticos");
-  const result = await executor.execute({
+function buildCreatePlasticProductStatement(input: PlasticProductInput): InStatement {
+  return {
     sql: `INSERT INTO plastic_products
           (nombre, sku, color, origen, descripcion, armado, dimension, peso, maquila, coste, componentes_fabricacion, precio_por_pieza, precio_por_juego, imagen, imagen_mime, actualizado_en)
           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, datetime('now'))`,
@@ -1717,7 +1715,16 @@ export async function createPlasticProduct(
       input.imagen?.data ?? null,
       input.imagen?.mime ?? null,
     ],
-  });
+  };
+}
+
+export async function createPlasticProduct(
+  actor: Actor,
+  input: PlasticProductInput,
+  executor: Executor = client,
+): Promise<number> {
+  await assertActorAuthorized(actor, "plasticos");
+  const result = await executor.execute(buildCreatePlasticProductStatement(input));
   cacheInvalidate(PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY);
   return Number(result.lastInsertRowid);
 }
@@ -1725,14 +1732,8 @@ export async function createPlasticProduct(
 // Solo refresca actualizado_en si algún campo cambió de verdad: savePlasticItems
 // reenvía todas las piezas del formulario aunque no se hayan tocado, y sin esta
 // comparación "Exportar avance del día" listaría juegos que nadie editó.
-export async function updatePlasticProduct(
-  actor: Actor,
-  id: number,
-  input: PlasticProductInput,
-  executor: Executor = client,
-): Promise<void> {
-  await assertActorAuthorized(actor, "plasticos");
-  await executor.execute({
+function buildUpdatePlasticProductStatement(id: number, input: PlasticProductInput): InStatement {
+  return {
     sql: `UPDATE plastic_products
           SET nombre = ?1, sku = ?2, color = ?3, origen = ?4, descripcion = ?5, armado = ?6,
               dimension = ?7, peso = ?8, maquila = ?9, coste = ?10,
@@ -1765,7 +1766,17 @@ export async function updatePlasticProduct(
       input.imagen?.mime ?? null,
       id,
     ],
-  });
+  };
+}
+
+export async function updatePlasticProduct(
+  actor: Actor,
+  id: number,
+  input: PlasticProductInput,
+  executor: Executor = client,
+): Promise<void> {
+  await assertActorAuthorized(actor, "plasticos");
+  await executor.execute(buildUpdatePlasticProductStatement(id, input));
   cacheInvalidate(PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY);
 }
 
@@ -1811,49 +1822,50 @@ export async function getPlasticItems(productId: number): Promise<PlasticItem[]>
   }));
 }
 
+// Todo el guardado viaja en UN solo batch atómico (una petición HTTP), no en
+// una transacción interactiva: con ~90-400ms por viaje a Turso, una ficha de
+// 16 piezas eran ~70 viajes con el bloqueo de escritura de TODA la base
+// tomado todo ese tiempo — cualquier microcorte de red o el timeout de
+// stream idle de Turso (ver BACKUP_TABLES_FUERA_DE_TRANSACCION) la tumbaba
+// a mitad ("TypeError: Load failed", "cannot rollback - no transaction is
+// active"). El permiso se verifica una sola vez arriba; las sentencias
+// internas no lo repiten. El id de una pieza recién insertada se toma con
+// last_insert_rowid() en la sentencia inmediata siguiente, porque dentro de
+// un batch no se puede leer el resultado de una sentencia anterior.
 export async function savePlasticItems(
   actor: Actor,
   productId: number,
   items: PlasticItem[],
 ): Promise<void> {
   await assertActorAuthorized(actor, "plasticos");
-  const tx = await client.transaction("write");
-  try {
-    const resolved: { plasticProductId: number; orden: number; cantidad: string }[] = [];
-    let orden = 1;
-    for (const item of items) {
-      if (!item.data.nombre.trim() && !item.data.sku.trim()) continue;
-      let plasticProductId: number;
-      if (item.plastic_product_id) {
-        plasticProductId = item.plastic_product_id;
-        await updatePlasticProduct(actor, plasticProductId, item.data, tx);
-      } else {
-        plasticProductId = await createPlasticProduct(actor, item.data, tx);
-      }
-      resolved.push({ plasticProductId, orden, cantidad: item.cantidad.trim() });
-      orden += 1;
-    }
-    await tx.execute({
-      sql: "DELETE FROM product_plastic_items WHERE product_id = ?1",
-      args: [productId],
-    });
-    for (const { plasticProductId, orden: itemOrden, cantidad } of resolved) {
-      await tx.execute({
+  const statements: InStatement[] = [
+    { sql: "DELETE FROM product_plastic_items WHERE product_id = ?1", args: [productId] },
+  ];
+  let orden = 1;
+  for (const item of items) {
+    if (!item.data.nombre.trim() && !item.data.sku.trim()) continue;
+    const cantidad = item.cantidad.trim();
+    if (item.plastic_product_id) {
+      statements.push(buildUpdatePlasticProductStatement(item.plastic_product_id, item.data));
+      statements.push({
         sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden, cantidad) VALUES (?1, ?2, ?3, ?4)`,
-        args: [productId, plasticProductId, itemOrden, cantidad],
+        args: [productId, item.plastic_product_id, orden, cantidad],
+      });
+    } else {
+      statements.push(buildCreatePlasticProductStatement(item.data));
+      statements.push({
+        sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden, cantidad) VALUES (?1, last_insert_rowid(), ?2, ?3)`,
+        args: [productId, orden, cantidad],
       });
     }
-    await tx.execute({
-      sql: "UPDATE products SET actualizado_en = datetime('now') WHERE id = ?1",
-      args: [productId],
-    });
-    await tx.commit();
-  } catch (err) {
-    await tx.rollback();
-    throw err;
-  } finally {
-    tx.close();
+    orden += 1;
   }
+  statements.push({
+    sql: "UPDATE products SET actualizado_en = datetime('now') WHERE id = ?1",
+    args: [productId],
+  });
+  await client.batch(statements, "write");
+  cacheInvalidate(PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY);
 }
 
 // Quita una pieza de una ficha por el id de su vínculo (product_plastic_items),
@@ -4493,15 +4505,15 @@ export async function updateRemisionConRenglones(
   }
 }
 
-export async function listRemisiones(actor: Actor, limit = 30): Promise<Remision[]> {
+export async function listRemisiones(actor: Actor, limit?: number): Promise<Remision[]> {
   await assertActorAuthorized(actor, "remisiones_acceso");
-  const cacheKey = `remisiones|${limit}`;
+  const cacheKey = `remisiones|${limit ?? "all"}`;
   const cached = cacheGet<Remision[]>(cacheKey);
   if (cached) return cached.slice();
-  const result = await client.execute({
-    sql: "SELECT * FROM remisiones ORDER BY id DESC LIMIT ?1",
-    args: [limit],
-  });
+  const result =
+    limit === undefined
+      ? await client.execute("SELECT * FROM remisiones ORDER BY id DESC")
+      : await client.execute({ sql: "SELECT * FROM remisiones ORDER BY id DESC LIMIT ?1", args: [limit] });
   return cacheSet(cacheKey, (result.rows as unknown as RemisionRow[]).map(rowToRemision));
 }
 

@@ -8,6 +8,8 @@ Tauri v2 (Rust shell + webview OS) + React 19 + TypeScript. DB: Turso (libSQL ho
 
 Todo pasa por `src/db.ts` (único archivo que importa `@libsql/client`). Cliente único a nivel de módulo desde `VITE_TURSO_URL`/`VITE_TURSO_AUTH_TOKEN`. Sin fallback local — sin internet no hay DB, punto. Ver [DATABASE.md](DATABASE.md) para esquema y funciones.
 
+**Resiliencia de red** (`src/dbResilience.ts`, aplicada al cliente en `db.ts`): cada viaje a Turso cuesta ~90–400 ms, así que (1) los `SELECT` sueltos se reintentan 2 veces ante un corte de red, las escrituras nunca (podrían duplicarse); (2) el `TypeError: Load failed`/`Failed to fetch` del webview se traduce a un mensaje claro; (3) `tx.rollback()` nunca lanza, para que los `catch { await tx.rollback(); throw err }` no tapen el error real. Escrituras con muchas filas (ej. `savePlasticItems`) deben ir en un solo `client.batch(..., "write")`, no en una transacción interactiva con un viaje por fila: esa mantiene el bloqueo de escritura de toda la base durante decenas de segundos y se cae por timeout de stream idle o cualquier microcorte. Dentro de un batch, el id de una fila recién insertada se toma con `last_insert_rowid()` en la sentencia siguiente.
+
 ## Navegación
 
 Sin router. `App.tsx` primero revisa `useAuth()` (`user`/`loading`); sin sesión válida renderiza `LoginScreen` y bloquea todo lo demás. Con sesión, un `useState<View>` intercambia componentes — `View` es una unión discriminada con payload (`{name: "detail", productId}`, etc.), no strings sueltos. No introducir `react-router` sin una razón de peso.

@@ -1,14 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { hasPermission, useAuth } from "../auth";
 import { deleteRemision, listRemisiones, logEventAsActor } from "../db";
 import { formatMoney } from "../excelExport";
 import type { Remision } from "../types";
 import RemisionDetalleModal from "./RemisionDetalleModal";
+import Pagination from "./Pagination";
 import RemisionForm from "./RemisionForm";
 import Toast from "./Toast";
 import basuraIcon from "../../Assets/basura.svg";
 
 type TipoSel = "interna" | "externa";
+
+const PAGE_SIZE = 15;
+
+function normalizeSearch(text: string): string {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
 
 function formatFechaCorta(fechaIso: string): string {
   const [y, m, d] = fechaIso.split("-");
@@ -28,6 +35,8 @@ export default function RemisionesSection() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [verRemision, setVerRemision] = useState<Remision | null>(null);
+  const [query, setQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     if (!allowed) {
@@ -42,10 +51,24 @@ export default function RemisionesSection() {
   async function refreshRecientes() {
     if (!user || !token) return;
     setLoadingRecientes(true);
-    const list = await listRemisiones({ id: user.id, token }, 30);
+    const list = await listRemisiones({ id: user.id, token });
     setRecientes(list);
     setLoadingRecientes(false);
   }
+
+  const filtradas = useMemo(() => {
+    const q = normalizeSearch(query);
+    if (!q) return recientes;
+    return recientes.filter((r) =>
+      normalizeSearch(`${r.folio} ${r.pedido_bodegas} ${r.fecha} ${formatFechaCorta(r.fecha)}`).includes(q),
+    );
+  }, [recientes, query]);
+
+  const totalPages = Math.max(1, Math.ceil(filtradas.length / PAGE_SIZE));
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
 
   if (!allowed) {
     return (
@@ -96,15 +119,27 @@ export default function RemisionesSection() {
           )}
 
           <div className="remisiones-recientes">
-            <h2>Remisiones recientes</h2>
+            <h2>Historial de remisiones</h2>
+            <input
+              className="search-input"
+              type="text"
+              placeholder="Buscar por folio, bodega o fecha (dd/mm/aaaa)…"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setCurrentPage(1);
+              }}
+            />
             {loadingRecientes ? (
               <p className="hint">Cargando…</p>
             ) : recientes.length === 0 ? (
               <p className="hint">Aún no hay remisiones.</p>
+            ) : filtradas.length === 0 ? (
+              <p className="hint">Sin resultados para esa búsqueda.</p>
             ) : (
               <table className="backups-history-table">
                 <tbody>
-                  {recientes.map((r) => (
+                  {filtradas.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE).map((r) => (
                     <tr key={r.id}>
                       <td>{r.folio}</td>
                       <td>{formatFechaCorta(r.fecha)}</td>
@@ -142,6 +177,9 @@ export default function RemisionesSection() {
                   ))}
                 </tbody>
               </table>
+            )}
+            {!loadingRecientes && totalPages > 1 && (
+              <Pagination currentPage={currentPage} totalPages={totalPages} onChange={setCurrentPage} />
             )}
           </div>
         </>

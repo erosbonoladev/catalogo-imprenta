@@ -84,6 +84,74 @@ describe("savePlasticItems/getPlasticItems — cantidad por vínculo ficha↔pie
   });
 });
 
+describe("savePlasticItems — guardado atómico en un solo batch", () => {
+  it("mezcla de piezas existentes y nuevas: cada vínculo apunta a SU pieza y conserva el orden del arreglo", async () => {
+    const productId = await seedProduct("PIEZAS-BATCH-1");
+    const a = await actor();
+    await savePlasticItems(a, productId, [newItem("Vieja", "V-1", "1")]);
+    const [vieja] = await getPlasticItems(productId);
+
+    await savePlasticItems(a, productId, [
+      newItem("Nueva A", "N-A", "2"),
+      { ...vieja, data: { ...vieja.data, color: "Rojo" } },
+      newItem("", "", "9"),
+      newItem("Nueva B", "N-B", "3"),
+    ]);
+
+    const items = await getPlasticItems(productId);
+    expect(items.map((i) => [i.data.nombre, i.orden, i.cantidad])).toEqual([
+      ["Nueva A", 1, "2"],
+      ["Vieja", 2, "1"],
+      ["Nueva B", 3, "3"],
+    ]);
+    expect(items[1].plastic_product_id).toBe(vieja.plastic_product_id);
+    expect(items[1].data.color).toBe("Rojo");
+    expect(new Set(items.map((i) => i.plastic_product_id)).size).toBe(3);
+    expect(await countRows("plastic_products")).toBe(3);
+  });
+
+  it("si una pieza falla, no queda nada a medias (ni piezas nuevas ni el vínculo viejo borrado)", async () => {
+    const productId = await seedProduct("PIEZAS-BATCH-2");
+    const a = await actor();
+    await savePlasticItems(a, productId, [newItem("Original", "O-1", "1")]);
+
+    // El esquema de pruebas no tiene FKs: un trigger fuerza el fallo en el
+    // INSERT del segundo vínculo, con la pieza nueva ya insertada antes.
+    await rawClient().execute(
+      "CREATE TRIGGER fail_link BEFORE INSERT ON product_plastic_items WHEN NEW.cantidad = 'BOOM' BEGIN SELECT RAISE(ABORT, 'boom'); END",
+    );
+    try {
+      await expect(
+        savePlasticItems(a, productId, [newItem("No debe quedar", "X-1", "1"), newItem("Falla", "X-2", "BOOM")]),
+      ).rejects.toThrow(/boom/);
+    } finally {
+      await rawClient().execute("DROP TRIGGER fail_link");
+    }
+
+    const items = await getPlasticItems(productId);
+    expect(items.map((i) => i.data.nombre)).toEqual(["Original"]);
+    expect(await countRows("plastic_products")).toBe(1);
+  });
+
+  it("rechaza a un actor sin `plasticos` y no escribe nada", async () => {
+    const productId = await seedProduct("PIEZAS-BATCH-3");
+    const sin = await actor([]);
+    await expect(savePlasticItems(sin, productId, [newItem("X", "X-1", "1")])).rejects.toThrow(/no autorizado/i);
+    expect(await countRows("plastic_products")).toBe(0);
+  });
+
+  it("guarda una ficha grande (60 piezas) completa y en orden", async () => {
+    const productId = await seedProduct("PIEZAS-BATCH-4");
+    const a = await actor();
+    const items = Array.from({ length: 60 }, (_, i) => newItem(`Pieza ${i + 1}`, `P-${i + 1}`, String(i + 1)));
+    await savePlasticItems(a, productId, items);
+
+    const saved = await getPlasticItems(productId);
+    expect(saved).toHaveLength(60);
+    expect(saved.map((i) => i.data.nombre)).toEqual(items.map((i) => i.data.nombre));
+  });
+});
+
 describe("deletePlasticItem — quita una pieza de una ficha sin borrarla del catálogo", () => {
   it("quita solo el vínculo pedido, deja la pieza maestra y el resto de vínculos de la ficha intactos", async () => {
     const productId = await seedProduct("IMPRENTA-QUITAR-1");

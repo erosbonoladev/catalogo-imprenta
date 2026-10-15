@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { computeRemisionMontos, createRemisionConFolio, deleteRemision, updateRemisionConRenglones } from "../src/db";
+import {
+  computeRemisionMontos,
+  createRemisionConFolio,
+  deleteRemision,
+  listRemisiones,
+  updateRemisionConRenglones,
+} from "../src/db";
 import { countRows, createFixtureUser, rawClient, resetDb } from "./helpers";
 
 beforeEach(async () => {
@@ -186,5 +192,17 @@ describe("deleteRemision", () => {
     expect(logs.rows).toHaveLength(1);
     expect(logs.rows[0].nivel).toBe("WARNING");
     expect(logs.rows[0].usuario).toBe(a.username);
+  });
+});
+
+describe("listRemisiones", () => {
+  it("sin límite devuelve TODAS las remisiones (historial), la más reciente primero", async () => {
+    const a = await actor(["remisiones_crear", "remisiones_acceso"]);
+    for (let i = 0; i < 35; i++) await createRemisionConFolio(a, "R1", baseInput, [renglon]);
+
+    const todas = await listRemisiones(a);
+    expect(todas).toHaveLength(35);
+    expect(todas[0].id).toBeGreaterThan(todas[34].id);
+    expect(await listRemisiones(a, 30)).toHaveLength(30);
   });
 });
