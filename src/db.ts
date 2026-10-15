@@ -4517,6 +4517,24 @@ export async function listRemisiones(actor: Actor, limit?: number): Promise<Remi
   return cacheSet(cacheKey, (result.rows as unknown as RemisionRow[]).map(rowToRemision));
 }
 
+// Índice mínimo (remisión → SKU/nombre de sus productos) para que el buscador
+// del Historial de remisiones encuentre todas las remisiones donde aparece un
+// producto, sin cargar renglones completos ni abrir cada remisión. Usa el
+// snapshot de remision_renglones, igual que el resto del historial.
+export async function listRemisionProductosIndex(
+  actor: Actor,
+): Promise<{ remision_id: number; sku: string; producto_nombre: string }[]> {
+  await assertActorAuthorized(actor, "remisiones_acceso");
+  const cacheKey = "remisiones|productos-index";
+  const cached = cacheGet<{ remision_id: number; sku: string; producto_nombre: string }[]>(cacheKey);
+  if (cached) return cached.slice();
+  const result = await client.execute("SELECT remision_id, sku, producto_nombre FROM remision_renglones");
+  return cacheSet(
+    cacheKey,
+    result.rows as unknown as { remision_id: number; sku: string; producto_nombre: string }[],
+  );
+}
+
 export async function getRemisionRenglones(actor: Actor, remisionId: number): Promise<RemisionRenglon[]> {
   await assertActorAuthorized(actor, "remisiones_acceso");
   const result = await client.execute({

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { hasPermission, useAuth } from "../auth";
-import { deleteRemision, listRemisiones, logEventAsActor } from "../db";
+import { deleteRemision, listRemisionProductosIndex, listRemisiones, logEventAsActor } from "../db";
 import { formatMoney } from "../excelExport";
 import type { Remision } from "../types";
 import RemisionDetalleModal from "./RemisionDetalleModal";
@@ -35,6 +35,7 @@ export default function RemisionesSection() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [verRemision, setVerRemision] = useState<Remision | null>(null);
+  const [productosPorRemision, setProductosPorRemision] = useState<Map<number, string>>(new Map());
   const [query, setQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -51,7 +52,16 @@ export default function RemisionesSection() {
   async function refreshRecientes() {
     if (!user || !token) return;
     setLoadingRecientes(true);
-    const list = await listRemisiones({ id: user.id, token });
+    const actor = { id: user.id, token };
+    const [list, productos] = await Promise.all([
+      listRemisiones(actor),
+      listRemisionProductosIndex(actor).catch(() => []),
+    ]);
+    const index = new Map<number, string>();
+    for (const p of productos) {
+      index.set(p.remision_id, `${index.get(p.remision_id) ?? ""} ${normalizeSearch(`${p.sku} ${p.producto_nombre}`)}`);
+    }
+    setProductosPorRemision(index);
     setRecientes(list);
     setLoadingRecientes(false);
   }
@@ -59,10 +69,12 @@ export default function RemisionesSection() {
   const filtradas = useMemo(() => {
     const q = normalizeSearch(query);
     if (!q) return recientes;
-    return recientes.filter((r) =>
-      normalizeSearch(`${r.folio} ${r.pedido_bodegas} ${r.fecha} ${formatFechaCorta(r.fecha)}`).includes(q),
+    return recientes.filter(
+      (r) =>
+        normalizeSearch(`${r.folio} ${r.pedido_bodegas} ${r.fecha} ${formatFechaCorta(r.fecha)}`).includes(q) ||
+        (productosPorRemision.get(r.id) ?? "").includes(q),
     );
-  }, [recientes, query]);
+  }, [recientes, productosPorRemision, query]);
 
   const totalPages = Math.max(1, Math.ceil(filtradas.length / PAGE_SIZE));
 
@@ -123,7 +135,7 @@ export default function RemisionesSection() {
             <input
               className="search-input"
               type="text"
-              placeholder="Buscar por folio, bodega o fecha (dd/mm/aaaa)…"
+              placeholder="Buscar por folio, bodega, fecha (dd/mm/aaaa), SKU o nombre de producto…"
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);

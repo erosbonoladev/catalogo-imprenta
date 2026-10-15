@@ -3,6 +3,7 @@ import {
   computeRemisionMontos,
   createRemisionConFolio,
   deleteRemision,
+  listRemisionProductosIndex,
   listRemisiones,
   updateRemisionConRenglones,
 } from "../src/db";
@@ -204,5 +205,30 @@ describe("listRemisiones", () => {
     expect(todas).toHaveLength(35);
     expect(todas[0].id).toBeGreaterThan(todas[34].id);
     expect(await listRemisiones(a, 30)).toHaveLength(30);
+  });
+});
+
+describe("listRemisionProductosIndex", () => {
+  it("lista SKU y nombre de los productos de cada remisión, para buscar remisiones por producto", async () => {
+    const a = await actor(["remisiones_crear", "remisiones_acceso"]);
+    const r1 = await createRemisionConFolio(a, "R1", baseInput, [
+      renglon,
+      { ...renglon, sku: "R2", producto_nombre: "Camión Rojo" },
+    ]);
+    const r2 = await createRemisionConFolio(a, "R3", baseInput, [{ ...renglon, sku: "R3", producto_nombre: "Muñeca" }]);
+
+    const index = await listRemisionProductosIndex(a);
+    expect(index.filter((p) => p.remision_id === r1.id).map((p) => p.sku).sort()).toEqual(["R1", "R2"]);
+    expect(index.filter((p) => p.remision_id === r2.id).map((p) => p.producto_nombre)).toEqual(["Muñeca"]);
+  });
+
+  it("se invalida al crear una remisión nueva y rechaza sin remisiones_acceso", async () => {
+    const a = await actor(["remisiones_crear", "remisiones_acceso"]);
+    expect(await listRemisionProductosIndex(a)).toHaveLength(0);
+    await createRemisionConFolio(a, "R1", baseInput, [renglon]);
+    expect(await listRemisionProductosIndex(a)).toHaveLength(1);
+
+    const sin = await actor([]);
+    await expect(listRemisionProductosIndex(sin)).rejects.toThrow(/no autorizado/i);
   });
 });
