@@ -3,6 +3,7 @@ import {
   createPlasticProduct,
   createProduct,
   createRemisionConFolio,
+  getCatalogoProgreso,
   getReporteDiarioData,
   getSkuMasterExportData,
   savePlasticItems,
@@ -250,5 +251,36 @@ describe("reporte diario — nombre de archivo y rango del día", () => {
     const bytes = buildReporteDiarioWorkbook({ productos: [], piezas: [], precios: [] });
     expect(bytes.length).toBeGreaterThan(0);
     expect(recetasSheetRows([], [], [])[0][0]).toBe("SKU Principal");
+  });
+});
+
+describe("getCatalogoProgreso — fichas sin piezas / sin precios de venta", () => {
+  it("rechaza a un usuario sin sku_master", async () => {
+    const a = await actor([]);
+    await expect(getCatalogoProgreso(a)).rejects.toThrow(/no autorizado/i);
+  });
+
+  it("cuenta como faltantes las fichas sin piezas y las sin ningún precio de venta con valor", async () => {
+    const admin = await actor(["plasticos", "sku_master"]);
+    const conTodo = await createProduct(admin, productInput("1", "Completo"), []);
+    const soloPiezas = await createProduct(admin, productInput("2", "Solo piezas"), []);
+    const preciosNulos = await createProduct(admin, productInput("3", "Precio por definir"), []);
+    const piezaId = await createPlasticProduct(admin, piezaInput("P", "1-1"));
+    for (const id of [conTodo, soloPiezas]) {
+      await rawClient().execute({
+        sql: "INSERT INTO product_plastic_items (product_id, plastic_product_id, orden, cantidad) VALUES (?1, ?2, 1, '1')",
+        args: [id, piezaId],
+      });
+    }
+    await rawClient().execute({
+      sql: "INSERT INTO precios_venta (product_id, categoria, precio) VALUES (?1, 'Gobierno', 10), (?2, 'Gobierno', NULL)",
+      args: [conTodo, preciosNulos],
+    });
+
+    const progreso = await getCatalogoProgreso(admin);
+
+    expect(progreso.total).toBe(3);
+    expect(progreso.sinPiezas).toEqual([preciosNulos]);
+    expect(progreso.sinPreciosVenta).toEqual([soloPiezas, preciosNulos]);
   });
 });

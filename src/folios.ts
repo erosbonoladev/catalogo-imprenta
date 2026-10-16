@@ -9,6 +9,7 @@ export const FOLIO_PREFIJOS: Record<TipoFolio, string> = {
   compra: "COM",
   produccion: "PRO",
   remision: "REM",
+  remision_externa: "REMEX",
 };
 
 // Fecha local (día del taller, no UTC) — movida aquí desde db.ts para que

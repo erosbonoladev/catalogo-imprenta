@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { searchProducts } from "../db";
-import type { Product, SearchFilter } from "../types";
+import { getCatalogoProgreso, searchProducts } from "../db";
+import { useAuth } from "../auth";
+import type { CatalogoFaltante, Product, SearchFilter } from "../types";
 import ProductCard from "./ProductCard";
 import Pagination from "./Pagination";
 
@@ -10,6 +11,8 @@ interface Props {
   page: number;
   onQueryChange: (query: string) => void;
   onFilterChange: (filter: SearchFilter) => void;
+  faltantes: CatalogoFaltante | null;
+  onFaltantesChange: (faltantes: CatalogoFaltante | null) => void;
   onPageChange: (page: number) => void;
   onSelect: (id: number) => void;
   onNew: () => void;
@@ -23,6 +26,11 @@ const FILTROS: { value: SearchFilter; label: string }[] = [
   { value: "codigo_barras", label: "Código de barras" },
 ];
 
+const FALTANTES_LABEL: Record<CatalogoFaltante, string> = {
+  piezas: "Artículos sin piezas",
+  precios_venta: "Artículos sin precios de venta",
+};
+
 const PAGE_SIZE = 20; // 5 filas x 4 columnas por página
 
 export default function SearchScreen({
@@ -31,10 +39,13 @@ export default function SearchScreen({
   page,
   onQueryChange,
   onFilterChange,
+  faltantes,
+  onFaltantesChange,
   onPageChange,
   onSelect,
   onNew,
 }: Props) {
+  const { user, token } = useAuth();
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -45,7 +56,12 @@ export default function SearchScreen({
     setLoadError(null);
     const timer = setTimeout(async () => {
       try {
-        const products = await searchProducts(query, filter);
+        let products = await searchProducts(query, filter);
+        if (faltantes && user && token) {
+          const progreso = await getCatalogoProgreso({ id: user.id, token });
+          const ids = new Set(faltantes === "piezas" ? progreso.sinPiezas : progreso.sinPreciosVenta);
+          products = products.filter((p) => ids.has(p.id));
+        }
         if (!cancelled) {
           setResults(products);
           onPageChange(1);
@@ -61,7 +77,7 @@ export default function SearchScreen({
       clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, filter]);
+  }, [query, filter, faltantes]);
 
   const totalPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
 
@@ -108,13 +124,28 @@ export default function SearchScreen({
         ))}
       </div>
 
+      {faltantes && (
+        <div className="search-filters" role="group" aria-label="Filtro de faltantes">
+          <button
+            type="button"
+            className="filter-chip filter-chip-active"
+            title="Quitar filtro"
+            onClick={() => onFaltantesChange(null)}
+          >
+            {FALTANTES_LABEL[faltantes]} ✕
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <p className="hint">Buscando…</p>
       ) : loadError ? (
         <p className="form-error">{loadError}</p>
       ) : results.length === 0 ? (
         <p className="hint">
-          {query.trim()
+          {faltantes && !query.trim()
+            ? "¡Listo! No hay artículos pendientes en este filtro."
+            : query.trim()
             ? `No se encontraron productos para "${query.trim()}".`
             : "Aún no hay productos en el catálogo. Agrega el primero."}
         </p>

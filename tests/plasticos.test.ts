@@ -1,5 +1,15 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { deletePlasticItem, getPlasticItems, getPlasticProduct, savePlasticItems } from "../src/db";
+import {
+  createPlasticProduct,
+  deletePlasticItem,
+  getConteoPiezasFicha,
+  getPlasticItems,
+  getPlasticProduct,
+  importPiezaRow,
+  savePlasticItems,
+  updatePlasticProduct,
+  updateProductBodega,
+} from "../src/db";
 import type { PlasticItem, PlasticProductInput } from "../src/types";
 import { countRows, createFixtureUser, rawClient, resetDb } from "./helpers";
 
@@ -200,5 +210,172 @@ describe("deletePlasticItem — quita una pieza de una ficha sin borrarla del ca
     const sinPermiso = await actor(["imprenta"]);
     await expect(deletePlasticItem(sinPermiso, linked.id!)).rejects.toThrow(/no autorizado/i);
     expect(await countRows("product_plastic_items", "id = ?1", [linked.id])).toBe(1);
+  });
+});
+
+
+function insumoItem(nombre: string, cantidad: string, sku = ""): PlasticItem {
+  return {
+    plastic_product_id: null,
+    orden: 1,
+    cantidad,
+    data: { ...emptyData(), nombre, sku, es_insumo: true },
+  };
+}
+
+describe("Insumos — SKU INS-NNNN asignado por la app", () => {
+  it("el primer insumo recibe INS-0001 y se marca es_insumo", async () => {
+    const a = await actor();
+    const id = await createPlasticProduct(a, { ...emptyData(), nombre: "Bolsa", es_insumo: true });
+    const pieza = await getPlasticProduct(id);
+    expect(pieza?.sku).toBe("INS-0001");
+    expect(pieza?.es_insumo).toBe(true);
+  });
+
+  it("sigue la numeración del máximo ocupado, sin reusar ni rellenar huecos", async () => {
+    const a = await actor();
+    await createPlasticProduct(a, { ...emptyData(), nombre: "Bolsa 40 x 60", sku: "INS-0024" });
+    await createPlasticProduct(a, { ...emptyData(), nombre: "Bolsa 18 x 25", sku: "INS-0048" });
+    const id = await createPlasticProduct(a, { ...emptyData(), nombre: "Etiqueta", es_insumo: true });
+    expect((await getPlasticProduct(id))?.sku).toBe("INS-0049");
+  });
+
+  it("un SKU INS-NNNN que llega de fuera (ej. importación) queda marcado como insumo", async () => {
+    const a = await actor();
+    const id = await createPlasticProduct(a, { ...emptyData(), nombre: "Bolsa", sku: "INS-0007" });
+    const pieza = await getPlasticProduct(id);
+    expect(pieza?.sku).toBe("INS-0007");
+    expect(pieza?.es_insumo).toBe(true);
+  });
+
+  it("dos insumos nuevos en un mismo guardado de ficha reciben números distintos", async () => {
+    const productId = await seedProduct("INS-FICHA-1");
+    const a = await actor();
+    await savePlasticItems(a, productId, [
+      newItem("Caballo", "C-1", "2"),
+      insumoItem("Bolsa A", "1"),
+      insumoItem("Bolsa B", "1"),
+    ]);
+    const items = await getPlasticItems(productId);
+    const skus = items.map((i) => i.data.sku).sort();
+    expect(skus).toEqual(["C-1", "INS-0001", "INS-0002"]);
+    expect(items.filter((i) => i.data.es_insumo)).toHaveLength(2);
+  });
+
+  it("una pieza normal marcada como insumo pasa a INS-NNNN; la pieza ya guardada no cambia de SKU al reeditarse", async () => {
+    const a = await actor();
+    const id = await createPlasticProduct(a, { ...emptyData(), nombre: "Bolsa", sku: "B-1" });
+    await updatePlasticProduct(a, id, { ...emptyData(), nombre: "Bolsa", sku: "B-1", es_insumo: true });
+    const convertida = await getPlasticProduct(id);
+    expect(convertida?.sku).toBe("INS-0001");
+    expect(convertida?.es_insumo).toBe(true);
+
+    await updatePlasticProduct(a, id, { ...emptyData(), nombre: "Bolsa grande", sku: "OTRO", es_insumo: false });
+    const reeditada = await getPlasticProduct(id);
+    expect(reeditada?.sku).toBe("INS-0001");
+    expect(reeditada?.es_insumo).toBe(true);
+    expect(reeditada?.nombre).toBe("Bolsa grande");
+  });
+
+  it("el índice único impide dos insumos con el mismo SKU", async () => {
+    const a = await actor();
+    await createPlasticProduct(a, { ...emptyData(), nombre: "Bolsa", sku: "INS-0024" });
+    await expect(
+      createPlasticProduct(a, { ...emptyData(), nombre: "Bolsa otra vez", sku: "INS-0024" }),
+    ).rejects.toThrow();
+  });
+
+  it("exige el permiso plasticos", async () => {
+    const sinPermiso = await actor([]);
+    await expect(
+      createPlasticProduct(sinPermiso, { ...emptyData(), nombre: "Bolsa", es_insumo: true }),
+    ).rejects.toThrow(/No autorizado/);
+  });
+});
+
+describe("getConteoPiezasFicha", () => {
+  it("separa la cantidad de piezas de la de insumos y reporta los vínculos sin cantidad", async () => {
+    const productId = await seedProduct("CONTEO-1");
+    const a = await actor();
+    await savePlasticItems(a, productId, [
+      newItem("Caballo", "C-1", "4"),
+      newItem("Jinete", "C-2", "6"),
+      newItem("Corral", "C-3", ""),
+      insumoItem("Bolsa", "2"),
+      insumoItem("Instructivo", "1"),
+    ]);
+    expect(await getConteoPiezasFicha(productId)).toEqual({ piezas: 10, insumos: 3, sinCantidad: 1 });
+  });
+
+  it("una ficha sin piezas cuenta cero", async () => {
+    const productId = await seedProduct("CONTEO-2");
+    expect(await getConteoPiezasFicha(productId)).toEqual({ piezas: 0, insumos: 0, sinCantidad: 0 });
+  });
+});
+
+describe("updateProductBodega", () => {
+  it("guarda tipo y datos de empaque sin tocar el resto de la ficha", async () => {
+    const productId = await seedProduct("BODEGA-1");
+    const a = await actor([]);
+    await updateProductBodega(a, productId, {
+      tipo_producto: "",
+      dimensiones_empaque: " 28 x 28 cm ",
+      juegos_por_empaque: "12",
+      peso_empaque: "3.5",
+      volumen_empaque: "",
+    });
+    const row = (
+      await rawClient().execute({ sql: "SELECT * FROM products WHERE id = ?1", args: [productId] })
+    ).rows[0] as unknown as Record<string, unknown>;
+    expect(row.dimensiones_empaque).toBe("28 x 28 cm");
+    expect(row.juegos_por_empaque).toBe("12");
+    expect(row.peso_empaque).toBe("3.5");
+    expect(row.volumen_empaque).toBeNull();
+    expect(row.nombre).toBe("Producto de prueba");
+  });
+
+  it("rechaza un tipo de producto fuera de la lista", async () => {
+    const productId = await seedProduct("BODEGA-2");
+    const a = await actor([]);
+    await expect(
+      updateProductBodega(a, productId, {
+        tipo_producto: "Inventado",
+        dimensiones_empaque: "",
+        juegos_por_empaque: "",
+        peso_empaque: "",
+        volumen_empaque: "",
+      }),
+    ).rejects.toThrow(/Tipo de producto inválido/);
+  });
+
+  it("rechaza una sesión inválida", async () => {
+    const productId = await seedProduct("BODEGA-3");
+    await expect(
+      updateProductBodega({ id: 999999, token: "nope" }, productId, {
+        tipo_producto: "",
+        dimensiones_empaque: "",
+        juegos_por_empaque: "",
+        peso_empaque: "",
+        volumen_empaque: "",
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+describe("importPiezaRow — Cantidad del vínculo nuevo", () => {
+  it("toma Componentes de fabricación como Cantidad al crear el vínculo, sin pisar una Cantidad ya capturada", async () => {
+    const productId = await seedProduct("IMPORT-CANT-1");
+    const a = await actor();
+    const conComponentes = { ...emptyData(), nombre: "Rueda", sku: "R-1", componentes_fabricacion: " 4 " };
+
+    const id = await importPiezaRow(a, productId, null, conComponentes, 1);
+    expect((await getPlasticItems(productId))[0].cantidad).toBe("4");
+
+    await rawClient().execute({
+      sql: "UPDATE product_plastic_items SET cantidad = '9' WHERE product_id = ?1",
+      args: [productId],
+    });
+    await importPiezaRow(a, productId, id, { ...conComponentes, componentes_fabricacion: "2" }, 1);
+    expect((await getPlasticItems(productId))[0].cantidad).toBe("9");
   });
 });

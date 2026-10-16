@@ -3,6 +3,7 @@ import {
   createProduct,
   findProductsByBarcode,
   getProduct,
+  getProductSpecs,
   searchProducts,
   updateProduct,
   updateProductBarcodeImage,
@@ -201,5 +202,33 @@ describe("searchProducts — filtro dedicado 'codigo_barras'", () => {
     expect(porNombre.map((p) => p.codigo)).not.toContain("CB18");
     const porSku = await searchProducts("CB18", "codigo_barras");
     expect(porSku.map((p) => p.codigo)).not.toContain("CB18");
+  });
+});
+
+describe("updateProduct — specs y descripciones se reemplazan de forma atómica", () => {
+  const spec = (etiqueta: string, valor: string) => ({ id: 0, product_id: 0, etiqueta, valor, orden: 0, permite_requisicion: false });
+
+  it("reemplaza las specs previas por las nuevas y descarta las vacías", async () => {
+    const a = await actor();
+    const id = await createProduct(a, { ...base, codigo: "UP1", nombre: "X", tipo_producto: "", codigo_barras_texto: "" }, [
+      spec("Alto", "1"),
+      spec("Ancho", "2"),
+    ]);
+    await updateProduct(a, id, { ...base, codigo: "UP1", nombre: "X", tipo_producto: "", codigo_barras_texto: "" }, [
+      spec("Peso", "5"),
+      spec("", "vacía"),
+    ]);
+    const specs = await getProductSpecs(id);
+    expect(specs.map((s) => [s.etiqueta, s.valor, s.orden])).toEqual([["Peso", "5", 1]]);
+  });
+});
+
+describe("searchProducts — el listado no trae descripcion pero el filtro 'nombre' sí la busca", () => {
+  it("encuentra por texto de la descripción sin devolverla", async () => {
+    const a = await actor();
+    await createProduct(a, { ...base, codigo: "SD1", nombre: "Dominó", descripcion: "madera de maple", tipo_producto: "", codigo_barras_texto: "" }, []);
+    const found = await searchProducts("maple", "nombre");
+    expect(found.map((p) => p.codigo)).toEqual(["SD1"]);
+    expect(found[0].descripcion).toBe("");
   });
 });

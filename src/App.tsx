@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import "./App.css";
+import { warmUpConnection } from "./db";
 import SearchScreen from "./components/SearchScreen";
 import ProductDetail from "./components/ProductDetail";
 import ProductForm from "./components/ProductForm";
@@ -17,7 +18,7 @@ import RemisionesSection from "./components/RemisionesSection";
 import SkuMasterSection from "./components/SkuMasterSection";
 import DailyBackupPrompt from "./components/DailyBackupPrompt";
 import { useAuth } from "./auth";
-import type { SearchFilter } from "./types";
+import type { CatalogoFaltante, SearchFilter } from "./types";
 
 type View =
   | { name: "search" }
@@ -37,10 +38,11 @@ interface SearchState {
   query: string;
   filter: SearchFilter;
   page: number;
+  faltantes: CatalogoFaltante | null;
 }
 
 const HOME_VIEW: View = { name: "search" };
-const BLANK_SEARCH: SearchState = { query: "", filter: "todo", page: 1 };
+const BLANK_SEARCH: SearchState = { query: "", filter: "todo", page: 1, faltantes: null };
 
 function viewNoun(v: View): string {
   switch (v.name) {
@@ -82,6 +84,10 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const appContentRef = useRef<HTMLElement>(null);
   const [scrollbarWidth, setScrollbarWidth] = useState(0);
+
+  useEffect(() => {
+    warmUpConnection();
+  }, []);
 
   useEffect(() => {
     const el = appContentRef.current;
@@ -204,6 +210,8 @@ function App() {
             page={searchState.page}
             onQueryChange={(query) => setSearchState((s) => ({ ...s, query }))}
             onFilterChange={(filter) => setSearchState((s) => ({ ...s, filter, page: 1 }))}
+            faltantes={searchState.faltantes}
+            onFaltantesChange={(faltantes) => setSearchState((s) => ({ ...s, faltantes, page: 1 }))}
             onPageChange={(page) => setSearchState((s) => ({ ...s, page }))}
             onSelect={(id) => navigate({ name: "detail", productId: id })}
             onNew={() => navigate({ name: "form" })}
@@ -274,6 +282,11 @@ function App() {
           <SkuMasterSection
             onOpenProduct={(id) => navigate({ name: "detail", productId: id })}
             onOpenPieza={(id) => navigate({ name: "piezaDetalle", plasticProductId: id })}
+            onOpenFaltantes={(faltantes) => {
+              if (!confirmLeave()) return;
+              setSearchState({ ...BLANK_SEARCH, faltantes });
+              navigate({ name: "search" });
+            }}
           />
         )}
       </main>

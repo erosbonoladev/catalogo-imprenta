@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import {
@@ -8,7 +8,6 @@ import {
   getPrecio,
   getPreciosBySkuPrincipal,
   logEventAsActor,
-  searchPrecios,
   upsertPrecio,
 } from "../db";
 import { buildRemisionPdf } from "../pdf";
@@ -17,45 +16,44 @@ import { numeroATextoMoneda } from "../numeroALetras";
 import { computeSkuPrincipal, parseAmount } from "../precios";
 import { fechaLocalDeHoy } from "../folios";
 import { useAuth } from "../auth";
-import type { Precio, RemisionConRenglones, RemisionInput, RemisionRenglonInput, TipoPrecio } from "../types";
+import type {
+  Precio,
+  RemisionConRenglones,
+  RemisionInput,
+  RemisionRenglonInput,
+  TipoPrecio,
+  TipoRemision,
+} from "../types";
 import type { Actor } from "../db";
-import basuraIcon from "../../Assets/basura.svg";
+import Toast from "./Toast";
+import RemisionSheet from "./RemisionSheet";
+import type { ClienteExterno, RenglonDraft } from "./RemisionSheet";
 
 interface Props {
+  tipo: TipoRemision;
   onCreated: () => void;
 }
 
-interface RenglonDraft {
-  key: number;
-  sku: string;
-  productoNombre: string;
-  cantidad: string;
-  precioUnitario: string;
-  // Solo true para renglones agregados por "Agregarlo manualmente" — son los
-  // únicos candidatos a "Guardar producto" (los de búsqueda ya existen en
-  // `precios`, ver handleSelectPrecio).
-  manual: boolean;
+// Valor por default del campo Bodega — la mayoría de las remisiones son para
+// Jalisco, pero el campo es editable (ver pedidoBodegas más abajo).
+const PEDIDO_BODEGAS_DEFAULT = "JALISCO";
+
+// En remisiones externas el mismo campo (pedido_bodegas) es el cliente, que
+// no tiene un valor por default razonable.
+function pedidoDefault(tipo: TipoRemision): string {
+  return tipo === "externa" ? "" : PEDIDO_BODEGAS_DEFAULT;
 }
 
-// Valor por default del campo Bodega — la mayoría de las remisiones internas
-// son para Jalisco, pero el campo es editable (ver pedidoBodegas más abajo).
-const PEDIDO_BODEGAS_INTERNA = "JALISCO";
-
-export default function RemisionForm({ onCreated }: Props) {
+export default function RemisionForm({ tipo, onCreated }: Props) {
   const { user, token } = useAuth();
-  const [pedidoBodegas, setPedidoBodegas] = useState(PEDIDO_BODEGAS_INTERNA);
+  const etiquetaPedido = tipo === "externa" ? "Cliente" : "Bodega";
+  const [pedidoBodegas, setPedidoBodegas] = useState(pedidoDefault(tipo));
+  const [cliente, setCliente] = useState<ClienteExterno>({ rfc: "", direccion: "", contacto: "", telefono: "" });
   const [descuentoPct, setDescuentoPct] = useState("0");
   const [rows, setRows] = useState<RenglonDraft[]>([]);
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Precio[]>([]);
-  const [buscando, setBuscando] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [resultado, setResultado] = useState<RemisionConRenglones | null>(null);
-  const [manualEntryOpen, setManualEntryOpen] = useState(false);
-  const [manualSku, setManualSku] = useState("");
-  const [manualNombre, setManualNombre] = useState("");
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const nextKey = useRef(0);
 
   const [guardarProductoKey, setGuardarProductoKey] = useState<number | null>(null);
@@ -64,37 +62,6 @@ export default function RemisionForm({ onCreated }: Props) {
   const [guardarProductoTipo, setGuardarProductoTipo] = useState<TipoPrecio | null>(null);
   const [guardarProductoDuplicado, setGuardarProductoDuplicado] = useState<Precio | null>(null);
   const [productosGuardados, setProductosGuardados] = useState<Set<number>>(new Set());
-
-  useEffect(() => {
-    if (!query.trim()) {
-      setResults([]);
-      setSearchError(null);
-      setBuscando(false);
-      return;
-    }
-    if (!user || !token) return;
-    const actor = { id: user.id, token };
-    let cancelled = false;
-    setBuscando(true);
-    setSearchError(null);
-    const timer = setTimeout(async () => {
-      try {
-        const precios = await searchPrecios(actor, query);
-        if (!cancelled) setResults(precios.slice(0, 8));
-      } catch (err) {
-        if (!cancelled) {
-          setResults([]);
-          setSearchError(`No se pudo buscar: ${String(err)}`);
-        }
-      } finally {
-        if (!cancelled) setBuscando(false);
-      }
-    }, 150);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [query, user, token]);
 
   // Busca el precio exacto del SKU y, si no hay, cae al SKU principal (ej.
   // "8059" cuando el precio quedó guardado bajo "8059C") — mismo agrupamiento
@@ -106,33 +73,44 @@ export default function RemisionForm({ onCreated }: Props) {
     return relacionados[0] ? String(relacionados[0].precio) : "";
   }
 
-  function handleSelectPrecio(precio: Precio) {
-    setQuery("");
-    setResults([]);
-    setRows((prev) => [
-      ...prev,
-      {
-        key: nextKey.current++,
-        sku: precio.sku,
-        productoNombre: precio.nombre,
-        cantidad: "1",
-        precioUnitario: String(precio.precio),
-        manual: false,
-      },
-    ]);
+  function handlePickPrecio(index: number, precio: Precio) {
+    const key = nextKey.current++;
+    setRows((prev) =>
+      index < prev.length
+        ? prev.map((r, i) =>
+            i === index
+              ? { ...r, sku: precio.sku, productoNombre: precio.nombre, precioUnitario: String(precio.precio), manual: false }
+              : r,
+          )
+        : [
+            ...prev,
+            {
+              key,
+              sku: precio.sku,
+              productoNombre: precio.nombre,
+              cantidad: "1",
+              precioUnitario: String(precio.precio),
+              manual: false,
+            },
+          ],
+    );
   }
 
-  async function handleAddManual() {
-    const sku = manualSku.trim();
-    const productoNombre = manualNombre.trim();
-    if (!sku || !productoNombre || !user || !token) return;
-    const precioUnitario = await lookupPrecioParaSku({ id: user.id, token }, sku);
-    setRows((prev) => [
-      ...prev,
-      { key: nextKey.current++, sku, productoNombre, cantidad: "1", precioUnitario, manual: true },
-    ]);
-    setManualSku("");
-    setManualNombre("");
+  // En internas `texto` es el SKU del producto manual; en externas (sin columna
+  // Clave) es el nombre, y el renglón queda sin SKU.
+  async function handleAddManual(index: number, texto: string) {
+    if (!user || !token) return;
+    const sku = tipo === "externa" ? "" : texto;
+    const productoNombre = tipo === "externa" ? texto : "";
+    const precioUnitario = sku ? await lookupPrecioParaSku({ id: user.id, token }, sku) : "";
+    const key = nextKey.current++;
+    setRows((prev) =>
+      index < prev.length
+        ? prev.map((r, i) =>
+            i === index ? { ...r, sku, productoNombre, precioUnitario, manual: true } : r,
+          )
+        : [...prev, { key, sku, productoNombre, cantidad: "1", precioUnitario, manual: true }],
+    );
   }
 
   function resetGuardarProducto() {
@@ -197,8 +175,8 @@ export default function RemisionForm({ onCreated }: Props) {
     }
   }
 
-  function updateRow(key: number, field: "cantidad" | "precioUnitario", value: string) {
-    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, [field]: value } : r)));
+  function updateRow(key: number, patch: Partial<RenglonDraft>) {
+    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   }
 
   function removeRow(key: number) {
@@ -234,7 +212,8 @@ export default function RemisionForm({ onCreated }: Props) {
   function resetForm() {
     setRows([]);
     setDescuentoPct("0");
-    setPedidoBodegas(PEDIDO_BODEGAS_INTERNA);
+    setPedidoBodegas(pedidoDefault(tipo));
+    setCliente({ rfc: "", direccion: "", contacto: "", telefono: "" });
   }
 
   async function handleGenerar() {
@@ -242,7 +221,7 @@ export default function RemisionForm({ onCreated }: Props) {
     if (!user || !token) return;
     const actor = { id: user.id, token };
     if (!pedidoBodegas.trim()) {
-      setError("El campo Bodega es obligatorio.");
+      setError(`El campo ${etiquetaPedido} es obligatorio.`);
       return;
     }
     if (parsedRows.length === 0) {
@@ -250,6 +229,14 @@ export default function RemisionForm({ onCreated }: Props) {
       return;
     }
     for (const r of parsedRows) {
+      if (r.manual && ((tipo !== "externa" && !r.sku.trim()) || !r.productoNombre.trim())) {
+        setError(
+          tipo === "externa"
+            ? "Escribe el nombre de los productos agregados manualmente."
+            : "Completa la clave y el nombre de los productos agregados manualmente.",
+        );
+        return;
+      }
       if (!(r.cantidadNum > 0)) {
         setError(`Cantidad inválida en el renglón de ${r.sku || "producto sin SKU"}.`);
         return;
@@ -294,8 +281,16 @@ export default function RemisionForm({ onCreated }: Props) {
         "folio" | "subtotal" | "descuento" | "iva" | "total" | "precio_texto"
       > = {
         fecha,
-        tipo: "interna",
+        tipo,
         pedido_bodegas: pedidoBodegas.trim(),
+        ...(tipo === "externa"
+          ? {
+              cliente_rfc: cliente.rfc,
+              cliente_direccion: cliente.direccion,
+              cliente_contacto: cliente.contacto,
+              cliente_telefono: cliente.telefono,
+            }
+          : {}),
         descuento_pct: descuentoPctNum,
       };
       created = await createRemisionConFolio(actor, remisionInput.pedido_bodegas, remisionInput, renglonesInput);
@@ -306,7 +301,7 @@ export default function RemisionForm({ onCreated }: Props) {
     }
 
     logEventAsActor(actor, "INFO", `Remisión ${created.folio} generada — total ${formatMoney(created.total)}`);
-    setResultado(created);
+    setToastMessage(`${created.folio} generada`);
     resetForm();
     onCreated();
 
@@ -335,294 +330,127 @@ export default function RemisionForm({ onCreated }: Props) {
     }
   }
 
+  const manualRows = parsedRows.filter((r) => r.manual && r.sku.trim() && r.productoNombre.trim());
+
   return (
     <div className="remision-form">
-      {resultado && (
-        <div className="import-review-summary" style={{ marginBottom: "0.8rem" }}>
-          <span className="tag">Remisión {resultado.folio} generada — total {formatMoney(resultado.total)}</span>
-          <button type="button" className="btn-link" onClick={() => setResultado(null)}>
-            Cerrar
-          </button>
-        </div>
-      )}
+      <RemisionSheet
+        tipo={tipo}
+        fecha={fechaLocalDeHoy()}
+        pedido={pedidoBodegas}
+        onPedidoChange={setPedidoBodegas}
+        cliente={cliente}
+        onClienteChange={(campo, value) => setCliente((prev) => ({ ...prev, [campo]: value }))}
+        rows={parsedRows}
+        descuentoPct={descuentoPct}
+        onDescuentoChange={setDescuentoPct}
+        totales={{ subtotal, descuento, iva, total, precioTexto }}
+        disabled={generating}
+        onUpdateRow={updateRow}
+        onRemoveRow={removeRow}
+        onPickPrecio={handlePickPrecio}
+        onAddManual={handleAddManual}
+      />
 
-      <div className="form-row">
-        <label>
-          Bodega
-          <input
-            type="text"
-            value={pedidoBodegas}
-            onChange={(e) => setPedidoBodegas(e.target.value)}
-            disabled={generating}
-          />
-        </label>
-      </div>
-
-      <div className="remision-search" style={{ position: "relative" }}>
-        <label>
-          Buscar por SKU (normal o con letra, ej. 7078E) o nombre
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Ej. 8059, 7078E o tangram"
-            disabled={generating}
-          />
-        </label>
-        {buscando && <p className="hint">Buscando…</p>}
-        {searchError && <p className="form-error">{searchError}</p>}
-        {results.length > 0 && (
-          <ul className="remision-search-results">
-            {results.map((p) => (
-              <li key={p.id}>
-                <button type="button" onClick={() => handleSelectPrecio(p)}>
-                  <span className="product-card-code">#{p.sku}</span> {p.nombre} —{" "}
-                  {formatMoney(p.precio)}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      {!manualEntryOpen ? (
-        <button
-          type="button"
-          className="btn-link"
-          onClick={() => {
-            setManualSku(query.trim());
-            setManualEntryOpen(true);
-          }}
-          disabled={generating}
-        >
-          ¿No aparece en el catálogo? Agregarlo manualmente
-        </button>
-      ) : (
+      {manualRows.length > 0 && (
         <div className="remision-manual-entry">
-          <div className="form-row">
-            <label>
-              SKU
-              <input
-                type="text"
-                value={manualSku}
-                onChange={(e) => setManualSku(e.target.value)}
-                disabled={generating}
-                autoFocus
-              />
-            </label>
-            <label>
-              Producto
-              <input
-                type="text"
-                value={manualNombre}
-                onChange={(e) => setManualNombre(e.target.value)}
-                disabled={generating}
-              />
-            </label>
-          </div>
           <p className="hint" style={{ margin: 0 }}>
-            No está en el catálogo de fichas técnicas — se agrega igual como renglón para que quien
-            surta la remisión pueda incluirlo. El precio se rellena solo si ya existe uno guardado
-            para este SKU; si no, queda editable en la tabla.
+            Productos agregados manualmente (no están en el catálogo). Guárdalos para que aparezcan en la búsqueda la
+            próxima vez.
           </p>
-          <div className="form-actions">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={handleAddManual}
-              disabled={generating || !manualSku.trim() || !manualNombre.trim()}
-            >
-              Agregar renglón
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => {
-                setManualEntryOpen(false);
-                setManualSku("");
-                setManualNombre("");
-              }}
-              disabled={generating}
-            >
-              Cancelar
-            </button>
-          </div>
-        </div>
-      )}
-
-      {parsedRows.length > 0 && (
-        <div className="import-review-table-wrap">
-          <table className="import-review-table">
-            <thead>
-              <tr>
-                <th>Clave</th>
-                <th>Producto</th>
-                <th>Cantidad</th>
-                <th>Precio</th>
-                <th>Importe</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {parsedRows.map((r) => (
-                <Fragment key={r.key}>
-                <tr>
-                  <td>{r.sku}</td>
-                  <td>{r.productoNombre}</td>
-                  <td>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={r.cantidad}
-                      onChange={(e) => updateRow(r.key, "cantidad", e.target.value)}
-                      disabled={generating}
-                      style={{ width: "4rem" }}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={r.precioUnitario}
-                      onChange={(e) => updateRow(r.key, "precioUnitario", e.target.value)}
-                      disabled={generating}
-                      style={{ width: "6rem" }}
-                    />
-                  </td>
-                  <td>{formatMoney(r.cantidadNum * r.precioNum)}</td>
-                  <td>
-                    {r.manual &&
-                      (productosGuardados.has(r.key) ? (
-                        <span className="hint">Guardado</span>
-                      ) : (
-                        guardarProductoKey !== r.key && (
-                          <button
-                            type="button"
-                            className="btn-link"
-                            onClick={() => {
-                              resetGuardarProducto();
-                              setGuardarProductoKey(r.key);
-                            }}
-                            disabled={generating}
-                          >
-                            Guardar producto
-                          </button>
-                        )
-                      ))}
+          {manualRows.map((r) => (
+            <div key={r.key}>
+              <div className="form-row" style={{ alignItems: "center" }}>
+                <span>
+                  <span className="product-card-code">#{r.sku}</span> {r.productoNombre} — {formatMoney(r.precioNum)}
+                </span>
+                {productosGuardados.has(r.key) ? (
+                  <span className="hint">Guardado</span>
+                ) : (
+                  guardarProductoKey !== r.key && (
                     <button
                       type="button"
-                      className="icon-btn icon-btn-remove"
-                      onClick={() => removeRow(r.key)}
+                      className="btn-link"
+                      onClick={() => {
+                        resetGuardarProducto();
+                        setGuardarProductoKey(r.key);
+                      }}
                       disabled={generating}
-                      title="Eliminar renglón"
-                      aria-label="Eliminar renglón"
                     >
-                      <img src={basuraIcon} alt="" aria-hidden="true" />
+                      Guardar producto
                     </button>
-                  </td>
-                </tr>
-                {guardarProductoKey === r.key && (
-                  <tr>
-                    <td colSpan={6}>
-                      {guardarProductoDuplicado ? (
-                        <span className="confirm-delete">
-                          El SKU {guardarProductoDuplicado.sku} ya existe (
-                          {guardarProductoDuplicado.nombre} — {formatMoney(guardarProductoDuplicado.precio)}
-                          ). ¿Actualizarlo con estos datos?
-                          <button
-                            type="button"
-                            className="btn btn-primary"
-                            onClick={() => handleConfirmarActualizarProducto(r, r.precioNum)}
-                            disabled={guardarProductoSaving}
-                          >
-                            Actualizar
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-link"
-                            onClick={resetGuardarProducto}
-                            disabled={guardarProductoSaving}
-                          >
-                            Cancelar
-                          </button>
-                        </span>
-                      ) : (
-                        <span className="confirm-delete">
-                          ¿Este producto es interno o externo?
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => handleGuardarProducto(r, r.precioNum, "interno")}
-                            disabled={guardarProductoSaving}
-                          >
-                            Interno
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => handleGuardarProducto(r, r.precioNum, "externo")}
-                            disabled={guardarProductoSaving}
-                          >
-                            Externo
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-link"
-                            onClick={resetGuardarProducto}
-                            disabled={guardarProductoSaving}
-                          >
-                            Cancelar
-                          </button>
-                        </span>
-                      )}
-                      {guardarProductoError && <p className="form-error">{guardarProductoError}</p>}
-                    </td>
-                  </tr>
+                  )
                 )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
+              </div>
+              {guardarProductoKey === r.key && (
+                <div>
+                  {guardarProductoDuplicado ? (
+                    <span className="confirm-delete">
+                      El SKU {guardarProductoDuplicado.sku} ya existe ({guardarProductoDuplicado.nombre} —{" "}
+                      {formatMoney(guardarProductoDuplicado.precio)}). ¿Actualizarlo con estos datos?
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => handleConfirmarActualizarProducto(r, r.precioNum)}
+                        disabled={guardarProductoSaving}
+                      >
+                        Actualizar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-link"
+                        onClick={resetGuardarProducto}
+                        disabled={guardarProductoSaving}
+                      >
+                        Cancelar
+                      </button>
+                    </span>
+                  ) : (
+                    <span className="confirm-delete">
+                      ¿Este producto es interno o externo?
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => handleGuardarProducto(r, r.precioNum, "interno")}
+                        disabled={guardarProductoSaving}
+                      >
+                        Interno
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => handleGuardarProducto(r, r.precioNum, "externo")}
+                        disabled={guardarProductoSaving}
+                      >
+                        Externo
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-link"
+                        onClick={resetGuardarProducto}
+                        disabled={guardarProductoSaving}
+                      >
+                        Cancelar
+                      </button>
+                    </span>
+                  )}
+                  {guardarProductoError && <p className="form-error">{guardarProductoError}</p>}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
-
-      <div className="remision-totales">
-        <div className="form-row">
-          <span>Subtotal</span>
-          <strong>{formatMoney(subtotal)}</strong>
-        </div>
-        <div className="form-row">
-          <label>
-            Descuento %
-            <input
-              type="text"
-              inputMode="decimal"
-              value={descuentoPct}
-              onChange={(e) => setDescuentoPct(e.target.value)}
-              disabled={generating}
-              style={{ width: "4rem" }}
-            />
-          </label>
-          <strong>{formatMoney(descuento)}</strong>
-        </div>
-        <div className="form-row">
-          <span>IVA 16%</span>
-          <strong>{formatMoney(iva)}</strong>
-        </div>
-        <div className="form-row">
-          <span>Total</span>
-          <strong>{formatMoney(total)}</strong>
-        </div>
-        <p className="hint">Precio en texto: {precioTexto}</p>
-      </div>
 
       {error && <p className="form-error">{error}</p>}
 
-      <div className="form-actions">
+      <div className="form-actions remision-generar">
         <button type="button" className="btn btn-primary" onClick={handleGenerar} disabled={generating}>
           {generating ? "Generando…" : "Generar remisión"}
         </button>
       </div>
+
+      <Toast message={toastMessage ?? ""} show={!!toastMessage} onHide={() => setToastMessage(null)} />
     </div>
   );
 }

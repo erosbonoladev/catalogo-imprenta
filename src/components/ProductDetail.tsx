@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import {
   deleteProduct,
+  getConteoPiezasFicha,
   getImageSrc,
   getProduct,
   getProductDescriptions,
   getProductSpecs,
 } from "../db";
+import type { ConteoPiezasFicha } from "../db";
 import type { Product, ProductDescription, ProductSpec } from "../types";
 import { buildDescriptionSlots } from "../descriptions";
 import { hasPermission, useAuth } from "../auth";
@@ -14,6 +16,7 @@ import RequisicionModal from "./RequisicionModal";
 import PreciosModal from "./PreciosModal";
 import PreciosVentaModal from "./PreciosVentaModal";
 import PrecioProduccionModal from "./PrecioProduccionModal";
+import BodegaModal from "./BodegaModal";
 import basuraIcon from "../../Assets/basura.svg";
 
 interface Props {
@@ -53,6 +56,8 @@ export default function ProductDetail({
   const [showPrecios, setShowPrecios] = useState(false);
   const [showPreciosVenta, setShowPreciosVenta] = useState(false);
   const [showPrecioProduccion, setShowPrecioProduccion] = useState(false);
+  const [showBodega, setShowBodega] = useState(false);
+  const [conteo, setConteo] = useState<ConteoPiezasFicha | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -61,13 +66,16 @@ export default function ProductDetail({
     setLoadError(null);
     (async () => {
       try {
-        const [prod, specList, descriptionList] = await Promise.all([
+        const [prod, specList, descriptionList, conteoPiezas] = await Promise.all([
           getProduct(productId),
           getProductSpecs(productId),
           getProductDescriptions(productId),
+          // El conteo es secundario: si falla no debe impedir ver la ficha.
+          getConteoPiezasFicha(productId).catch(() => null),
         ]);
         if (cancelled) return;
         setProduct(prod);
+        setConteo(conteoPiezas);
         setSpecs(specList);
         setDescriptions(descriptionList);
         setDescIndex(0);
@@ -132,6 +140,18 @@ export default function ProductDetail({
             )}
           </div>
           <p className="product-detail-meta">Código de barras: {product.codigo_barras_texto || "—"}</p>
+          <p className="product-detail-meta">
+            Cantidad de piezas que conforman este producto: {conteo ? conteo.piezas : "…"}
+          </p>
+          <p className="product-detail-meta">
+            Cantidad de Insumos en este producto: {conteo ? conteo.insumos : "…"}
+          </p>
+          {conteo && conteo.sinCantidad > 0 && (
+            <p className="hint">
+              {conteo.sinCantidad} {conteo.sinCantidad === 1 ? "vínculo sin cantidad" : "vínculos sin cantidad"}{" "}
+              capturada no se {conteo.sinCantidad === 1 ? "suma" : "suman"}.
+            </p>
+          )}
         </div>
 
         <div className="product-detail-info">
@@ -164,19 +184,19 @@ export default function ProductDetail({
                 Precio de Producción
               </button>
             )}
+            <button
+              type="button"
+              className="btn btn-secondary btn-ficha-precios"
+              onClick={() => setShowBodega(true)}
+            >
+              Bodega
+            </button>
           </div>
           <h1>{product.nombre}</h1>
           <p className="product-detail-tags">
             {product.categoria && <span className="tag">{product.categoria}</span>}
             {product.material && <span className="tag">{product.material}</span>}
           </p>
-          <p className="product-detail-meta">Tipo de producto: {product.tipo_producto || "Sin asignar"}</p>
-          <p className="product-detail-meta">
-            Dimensiones de empaque: {product.dimensiones_empaque || "—"}
-          </p>
-          <p className="product-detail-meta">Juegos por empaque: {product.juegos_por_empaque || "—"}</p>
-          <p className="product-detail-meta">Peso empaque (Kg): {product.peso_empaque || "—"}</p>
-          <p className="product-detail-meta">Volumen empaque (M3): {product.volumen_empaque || "—"}</p>
 
           {activeDescSlot && (
             <div className="description-viewer">
@@ -299,6 +319,14 @@ export default function ProductDetail({
 
       {showPrecioProduccion && (
         <PrecioProduccionModal product={product} onClose={() => setShowPrecioProduccion(false)} />
+      )}
+
+      {showBodega && (
+        <BodegaModal
+          product={product}
+          onClose={() => setShowBodega(false)}
+          onSaved={() => setReloadKey((k) => k + 1)}
+        />
       )}
 
       <p className="last-modified">

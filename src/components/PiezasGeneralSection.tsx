@@ -24,6 +24,11 @@ interface Props {
 
 const PAGE_SIZE = 50;
 
+// Mismo plegado que normalizeSearchTerm en db.ts: sin acentos ni mayúsculas.
+function foldSearch(value: string): string {
+  return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
 export default function PiezasGeneralSection({ onVerPieza }: Props) {
   const { user, token } = useAuth();
   const allowed = hasPermission(user, "plasticos");
@@ -36,6 +41,7 @@ export default function PiezasGeneralSection({ onVerPieza }: Props) {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [query, setQuery] = useState("");
 
   async function refresh() {
     setLoading(true);
@@ -60,7 +66,11 @@ export default function PiezasGeneralSection({ onVerPieza }: Props) {
     logEventAsActor({ id: user.id, token }, "WARNING", `Acceso denegado a Piezas General para ${user.username}`);
   }, [allowed, user, token]);
 
-  const totalPages = Math.max(1, Math.ceil(piezas.length / PAGE_SIZE));
+  const term = foldSearch(query.trim());
+  const filtered = term
+    ? piezas.filter((p) => foldSearch(p.nombre).includes(term) || foldSearch(p.sku).includes(term))
+    : piezas;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
 
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages));
@@ -88,7 +98,7 @@ export default function PiezasGeneralSection({ onVerPieza }: Props) {
     }
   }
 
-  const pagePiezas = piezas.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const pagePiezas = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   return (
     <div className="private-section">
@@ -104,6 +114,18 @@ export default function PiezasGeneralSection({ onVerPieza }: Props) {
         </button>
       </div>
 
+      <input
+        className="search-input"
+        type="text"
+        placeholder="Buscar pieza por nombre o SKU…"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setCurrentPage(1);
+        }}
+        style={{ marginBottom: "1.1rem" }}
+      />
+
       {loading ? (
         <p className="hint">Cargando…</p>
       ) : loadError ? (
@@ -115,6 +137,8 @@ export default function PiezasGeneralSection({ onVerPieza }: Props) {
         </>
       ) : piezas.length === 0 ? (
         <p className="hint">No hay piezas registradas.</p>
+      ) : filtered.length === 0 ? (
+        <p className="hint">Ninguna pieza coincide con "{query.trim()}".</p>
       ) : (
         <div className="import-review-table-wrap">
           <table className="import-review-table">
@@ -240,6 +264,7 @@ export function PiezaFormModal({ existing, onClose, onSaved }: PiezaFormModalPro
           componentes_fabricacion: existing.componentes_fabricacion,
           precio_por_pieza: existing.precio_por_pieza,
           precio_por_juego: existing.precio_por_juego,
+          es_insumo: existing.es_insumo,
           imagen: existing.imagen,
         }
       : { ...EMPTY_PLASTIC_DATA },

@@ -24,6 +24,7 @@ function pieza(overrides: Partial<PiezaDesgloseExportRow> = {}): PiezaDesgloseEx
     componentes_fabricacion: "5",
     precio_por_pieza: "",
     precio_por_juego: "",
+    es_insumo: 0,
     ...overrides,
   };
 }
@@ -71,31 +72,32 @@ const COL = {
   skuPrincipal: 0,
   sku: 1,
   descripcion: 2,
-  componentes: 3,
-  dimensiones: 4,
-  pesoPieza: 5,
-  costoPieza: 6,
-  pesoJuego: 7,
-  costoJuego: 8,
-  juegosPorEmpaque: 9,
-  pesoEmpaque: 10,
-  volumenEmpaque: 11,
-  precioPieza: 12,
-  precioJuego: 13,
-  costoPorKg: 14,
-  factorPrecio: 15,
-  origen: 16,
-  maquila: 17,
-  dimensionesEmpaque: 18,
-  linkImagenes: 19,
+  cantidad: 3,
+  cantidadInsumos: 4,
+  dimensiones: 5,
+  pesoPieza: 6,
+  costoPieza: 7,
+  pesoJuego: 8,
+  costoJuego: 9,
+  juegosPorEmpaque: 10,
+  pesoEmpaque: 11,
+  volumenEmpaque: 12,
+  precioPieza: 13,
+  precioJuego: 14,
+  costoPorKg: 15,
+  factorPrecio: 16,
+  origen: 17,
+  maquila: 18,
+  dimensionesEmpaque: 19,
+  linkImagenes: 20,
 };
 
 describe("recetasSheetRows", () => {
   it("una fila de juego (resumen, suma de sus piezas) seguida de sus piezas", () => {
     const rows = recetasSheetRows(
       [
-        pieza({ sku: "2035-1", nombre: "Caballo", peso: "0.02", coste: "3.20", componentes_fabricacion: "5" }),
-        pieza({ sku: "2035-2", nombre: "Jinete", peso: "0.03", coste: "4.80", componentes_fabricacion: "5" }),
+        pieza({ sku: "2035-1", nombre: "Caballo", peso: "0.02", coste: "3.20", cantidad: "4" }),
+        pieza({ sku: "2035-2", nombre: "Jinete", peso: "0.03", coste: "4.80", cantidad: "6" }),
       ],
       [],
       [],
@@ -109,25 +111,78 @@ describe("recetasSheetRows", () => {
     expect(juego[COL.skuPrincipal]).toBe("2035");
     expect(juego[COL.sku]).toBe("2035");
     expect(juego[COL.descripcion]).toBe("Juego del Granjero");
-    expect(juego[COL.componentes]).toBe(10); // 5 + 5
-    expect(juego[COL.pesoJuego]).toBe(0.25); // 0.02*5 + 0.03*5 = 0.1 + 0.15
-    expect(juego[COL.costoJuego]).toBe(formatMoney(16 + 24)); // 3.2*5 + 4.8*5
+    expect(juego[COL.cantidad]).toBe(10); // Cantidad 4 + 6 (suma de las piezas)
+    expect(juego[COL.pesoJuego]).toBe(0.26); // 0.02*4 + 0.03*6 = 0.08 + 0.18
+    expect(juego[COL.costoJuego]).toBe(formatMoney(12.8 + 28.8)); // 3.2*4 + 4.8*6
 
     expect(pieza1[COL.skuPrincipal]).toBe("2035"); // hereda el SKU Principal del juego, no el propio
     expect(pieza1[COL.sku]).toBe("2035-1");
     expect(pieza1[COL.pesoPieza]).toBe(0.02);
     expect(pieza1[COL.costoPieza]).toBe(formatMoney(3.2));
-    expect(pieza1[COL.pesoJuego]).toBe(0.1); // 0.02 * 5
-    expect(pieza1[COL.costoJuego]).toBe(formatMoney(16)); // 3.2 * 5
+    expect(pieza1[COL.cantidad]).toBe("4");
+    expect(header).not.toContain("Componentes de fabricación");
+    expect(pieza1[COL.pesoJuego]).toBe(0.08); // 0.02 * Cantidad (4); Componentes de fabricación ya no interviene
+    expect(pieza1[COL.costoJuego]).toBe(formatMoney(12.8)); // 3.2 * 4
 
-    expect(pieza2[COL.pesoJuego]).toBe(0.15);
+    expect(pieza2[COL.pesoJuego]).toBe(0.18);
+  });
+
+  it("un insumo (INS-) no cuenta en Cantidad: su cantidad sale en 'Cantidad de insumos', con su propio SKU", () => {
+    const rows = recetasSheetRows(
+      [
+        pieza({ sku: "2035-1", nombre: "Caballo", cantidad: "4" }),
+        pieza({ sku: "2035-2", nombre: "Jinete", cantidad: "6" }),
+        pieza({ sku: "INS-0024", nombre: "Bolsa 40 x 60", cantidad: "2", es_insumo: 1 }),
+        pieza({ sku: "INS-0031", nombre: "Bolsa 60 x 90", cantidad: "3", es_insumo: 1 }),
+      ],
+      [],
+      [],
+    );
+    const [header, juego, caballo, , bolsa1, bolsa2] = rows;
+
+    expect(header[COL.cantidadInsumos]).toBe("Cantidad de insumos");
+    expect(juego[COL.cantidad]).toBe(10); // 4 + 6, sin los insumos
+    expect(juego[COL.cantidadInsumos]).toBe(5); // 2 + 3
+    expect(caballo[COL.cantidad]).toBe("4");
+    expect(caballo[COL.cantidadInsumos]).toBe("");
+    expect(bolsa1[COL.sku]).toBe("INS-0024");
+    expect(bolsa1[COL.cantidad]).toBe("");
+    expect(bolsa1[COL.cantidadInsumos]).toBe("2");
+    expect(bolsa2[COL.sku]).toBe("INS-0031");
+    expect(bolsa2[COL.cantidadInsumos]).toBe("3");
+  });
+
+  it("una pieza sin Cantidad no calcula Peso/Costo por juego aunque conserve Componentes de fabricación", () => {
+    const rows = recetasSheetRows([pieza({ cantidad: "", componentes_fabricacion: "5" })], [], []);
+    const [, juego, pieza1] = rows;
+    expect(pieza1[COL.pesoJuego]).toBe("");
+    expect(pieza1[COL.costoJuego]).toBe("");
+    expect(juego[COL.pesoJuego]).toBe("");
+  });
+
+  it("un juego sin insumos deja 'Cantidad de insumos' vacía en su fila", () => {
+    const rows = recetasSheetRows([pieza({ cantidad: "4" })], [], []);
+    expect(rows[1][COL.cantidadInsumos]).toBe("");
+  });
+
+  it("los insumos siguen sumando a peso/costo del juego (solo se separó la cantidad)", () => {
+    const rows = recetasSheetRows(
+      [
+        pieza({ sku: "2035-1", peso: "0.02", coste: "3.20", cantidad: "5" }),
+        pieza({ sku: "INS-0024", nombre: "Bolsa", peso: "0.4", coste: "1.00", cantidad: "1", es_insumo: 1 }),
+      ],
+      [],
+      [],
+    );
+    expect(rows[1][COL.pesoJuego]).toBe(0.5); // 0.1 + 0.4
+    expect(rows[1][COL.costoJuego]).toBe(formatMoney(17)); // 16 + 1
   });
 
   it("una pieza con peso/costo no numérico no aporta a la suma del juego, pero no rompe las demás filas", () => {
     const rows = recetasSheetRows(
       [
-        pieza({ sku: "2035-1", peso: "0.02", coste: "3.20", componentes_fabricacion: "5" }),
-        pieza({ sku: "2035-2", nombre: "Instructivo", peso: "N/D", coste: "", componentes_fabricacion: "1" }),
+        pieza({ sku: "2035-1", peso: "0.02", coste: "3.20", cantidad: "5" }),
+        pieza({ sku: "2035-2", nombre: "Instructivo", peso: "N/D", coste: "", cantidad: "1" }),
       ],
       [],
       [],
@@ -137,8 +192,8 @@ describe("recetasSheetRows", () => {
     // Solo la pieza con datos numéricos aporta al total.
     expect(juego[COL.pesoJuego]).toBe(0.1);
     expect(juego[COL.costoJuego]).toBe(formatMoney(16));
-    // Componentes sí es parseable en ambas (5 y 1) — el total no se ve afectado por el peso/costo inválidos.
-    expect(juego[COL.componentes]).toBe(6);
+    // Cantidad sí es parseable en ambas (5 y 1) — el total no se ve afectado por el peso/costo inválidos.
+    expect(juego[COL.cantidad]).toBe(6);
 
     expect(piezaMala[COL.pesoPieza]).toBe("");
     expect(piezaMala[COL.costoPieza]).toBe("");
@@ -148,7 +203,7 @@ describe("recetasSheetRows", () => {
 
   it("Precio por pieza/juego buscan el SKU exacto de esa fila en `precios` — no se suman ni se mezclan", () => {
     const rows = recetasSheetRows(
-      [pieza({ sku: "2035-1", peso: "0.02", coste: "3.20", componentes_fabricacion: "5" })],
+      [pieza({ sku: "2035-1", peso: "0.02", coste: "3.20", cantidad: "5" })],
       [precio({ sku: "2035", precio: 146.4 }), precio({ id: 2, sku: "2035-1", precio: 3.84 })],
       [],
     );
@@ -161,7 +216,7 @@ describe("recetasSheetRows", () => {
   });
 
   it("sin precio para ese SKU, la celda de precio queda vacía (no inventa un valor)", () => {
-    const rows = recetasSheetRows([pieza({ sku: "2035-1", componentes_fabricacion: "5" })], [], []);
+    const rows = recetasSheetRows([pieza({ sku: "2035-1", cantidad: "5" })], [], []);
     const [, juego, pieza1] = rows;
     expect(juego[COL.precioJuego]).toBe("");
     expect(pieza1[COL.precioPieza]).toBe("");
@@ -170,7 +225,7 @@ describe("recetasSheetRows", () => {
 
   it("Factor precio = Precio del juego ÷ Costo del juego, redondeado a 2 decimales", () => {
     const rows = recetasSheetRows(
-      [pieza({ sku: "2035-1", peso: "0.02", coste: "3.20", componentes_fabricacion: "5" })], // costo por juego = 16
+      [pieza({ sku: "2035-1", peso: "0.02", coste: "3.20", cantidad: "5" })], // costo por juego = 16
       [precio({ sku: "2035", precio: 19.2 })], // factor = 19.2 / 16 = 1.2
       [],
     );

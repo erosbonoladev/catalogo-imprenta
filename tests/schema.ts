@@ -82,11 +82,13 @@ export const SCHEMA_STATEMENTS: string[] = [
     volumen_empaque TEXT,
     precio_por_pieza TEXT,
     precio_por_juego TEXT,
+    es_insumo INTEGER NOT NULL DEFAULT 0,
     imagen BLOB,
     imagen_mime TEXT,
     creado_en TEXT NOT NULL DEFAULT (datetime('now')),
     actualizado_en TEXT
   )`,
+  `CREATE UNIQUE INDEX idx_plastic_products_insumo_sku ON plastic_products(sku) WHERE es_insumo = 1`,
   // Tabla muerta (ver docs/DATABASE.md "Tablas y columnas muertas") —
   // reemplazada por plastic_products/product_plastic_items, pero sigue
   // existiendo físicamente en producción (BD compartida en vivo, no se
@@ -323,6 +325,10 @@ export const SCHEMA_STATEMENTS: string[] = [
     fecha TEXT NOT NULL,
     tipo TEXT NOT NULL,
     pedido_bodegas TEXT,
+    cliente_rfc TEXT,
+    cliente_direccion TEXT,
+    cliente_contacto TEXT,
+    cliente_telefono TEXT,
     cancelada INTEGER NOT NULL DEFAULT 0,
     subtotal REAL NOT NULL,
     descuento_pct REAL NOT NULL DEFAULT 0,

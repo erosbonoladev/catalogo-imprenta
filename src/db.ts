@@ -58,7 +58,8 @@ import type {
 import { PROCESOS_IMPRENTA, PRECIOS_VENTA_CATEGORIAS, TIPOS_PRODUCTO } from "./types";
 import { buildRequisicionMessage } from "./requisiciones";
 import { FOLIO_PREFIJOS, buildFolioString, fechaLocalDeHoy, formatFechaFolioLocal } from "./folios";
-import { computeSkuPrincipal } from "./precios";
+import { computeSkuPrincipal, parseAmount } from "./precios";
+import { INSUMO_SKU_PREFIJO, isInsumoSku } from "./insumos";
 import { numeroATextoMoneda } from "./numeroALetras";
 import {
   type DumpIndex,
@@ -78,6 +79,13 @@ const client = withNetworkResilience(
     intMode: "number",
   }),
 );
+
+// La primera consulta de la sesión paga DNS + TLS + apertura de conexión
+// (~3s medido); App la dispara al arrancar para que ese costo ocurra mientras
+// el usuario está en el login y no en su primera búsqueda.
+export function warmUpConnection(): void {
+  client.execute("SELECT 1").catch(() => {});
+}
 
 // Firma común entre Client y Transaction — funciones de un solo statement
 // que también se llaman desde dentro de una transacción más grande (p.ej.
@@ -170,7 +178,7 @@ function rowToProduct(row: ProductRow): Product {
     nombre: row.nombre,
     categoria: row.categoria,
     material: row.material,
-    descripcion: row.descripcion,
+    descripcion: row.descripcion ?? "",
     imagen: toImageBlob(row.imagen, row.imagen_mime),
     imagen_codigo_barras: toImageBlob(row.imagen_codigo_barras, row.imagen_codigo_barras_mime),
     tipo_producto: row.tipo_producto ?? "",
@@ -221,7 +229,7 @@ function foldSearchColumn(column: string): string {
   return `lower(${replaced})`;
 }
 
-function normalizeSearchTerm(value: string): string {
+export function normalizeSearchTerm(value: string): string {
   return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
 
@@ -246,6 +254,13 @@ const SEARCH_FILTER_CLAUSES: Record<SearchFilter, string> = {
 const PRODUCT_LIST_COLUMNS =
   "id, codigo, nombre, categoria, material, descripcion, presentacion_original, creado_en, actualizado_en";
 
+// searchProducts alimenta tarjetas y listados que nunca muestran la
+// descripción (la ficha completa la trae con getProduct); omitirla baja el
+// listado completo de ~590KB a ~390KB. Los exports a Excel sí la necesitan y
+// siguen usando PRODUCT_LIST_COLUMNS.
+const PRODUCT_SEARCH_COLUMNS =
+  "id, codigo, nombre, categoria, material, presentacion_original, creado_en, actualizado_en";
+
 export async function searchProducts(
   query: string,
   filter: SearchFilter = "todo",
@@ -256,11 +271,11 @@ export async function searchProducts(
   if (cached) return cached.slice();
   const result = trimmed
     ? await client.execute({
-        sql: `SELECT ${PRODUCT_LIST_COLUMNS} FROM products WHERE ${SEARCH_FILTER_CLAUSES[filter]} ORDER BY nombre, material`,
+        sql: `SELECT ${PRODUCT_SEARCH_COLUMNS} FROM products WHERE ${SEARCH_FILTER_CLAUSES[filter]} ORDER BY nombre, material`,
         args: [`%${normalizeSearchTerm(trimmed)}%`],
       })
     : await client.execute(
-        `SELECT ${PRODUCT_LIST_COLUMNS} FROM products ORDER BY nombre, material`,
+        `SELECT ${PRODUCT_SEARCH_COLUMNS} FROM products ORDER BY nombre, material`,
       );
   return cacheSet(cacheKey, (result.rows as unknown as ProductRow[]).map(rowToProduct));
 }
@@ -347,8 +362,11 @@ export async function createProduct(
       ],
     });
     const productId = Number(result.lastInsertRowid);
-    await insertSpecs(tx, productId, specs);
-    await insertDescriptions(tx, productId, descriptions);
+    const hijos = [
+      ...buildSpecStatements(productId, specs),
+      ...buildDescriptionStatements(productId, descriptions),
+    ];
+    if (hijos.length > 0) await tx.batch(hijos);
     // Si la captura masiva de imágenes guardó antes una imagen para este
     // código (porque en ese momento no existía la ficha), se aplica sola
     // aquí, dentro de la misma transacción — solo cuando la ficha se crea
@@ -381,71 +399,99 @@ export async function updateProduct(
 ): Promise<void> {
   await assertActorSession(actor);
   assertTipoProductoValido(product.tipo_producto);
-  const tx = await client.transaction("write");
-  try {
-    await tx.execute({
-      sql: `UPDATE products
+  // Un solo batch atómico (una petición HTTP) en vez de transacción
+  // interactiva: cada statement suelto era un viaje a Turso (~100-300ms), y
+  // una ficha con 10 specs eran ~15 viajes.
+  await client.batch(
+    [
+      {
+        sql: `UPDATE products
             SET codigo = ?1, nombre = ?2, categoria = ?3, material = ?4, descripcion = ?5, imagen = ?6, imagen_mime = ?7,
                 imagen_codigo_barras = ?8, imagen_codigo_barras_mime = ?9,
                 tipo_producto = ?10, codigo_barras_texto = ?11,
                 dimensiones_empaque = ?12, juegos_por_empaque = ?13, peso_empaque = ?14, volumen_empaque = ?15,
                 actualizado_en = datetime('now')
             WHERE id = ?16`,
-      args: [
-        product.codigo,
-        product.nombre,
-        product.categoria,
-        product.material,
-        product.descripcion,
-        product.imagen?.data ?? null,
-        product.imagen?.mime ?? null,
-        product.imagen_codigo_barras?.data ?? null,
-        product.imagen_codigo_barras?.mime ?? null,
-        product.tipo_producto || null,
-        product.codigo_barras_texto || null,
-        product.dimensiones_empaque.trim() || null,
-        product.juegos_por_empaque.trim() || null,
-        product.peso_empaque.trim() || null,
-        product.volumen_empaque.trim() || null,
-        id,
-      ],
-    });
-    await tx.execute({
-      sql: "DELETE FROM product_specs WHERE product_id = ?1",
-      args: [id],
-    });
-    await insertSpecs(tx, id, specs);
-    await tx.execute({
-      sql: "DELETE FROM product_descriptions WHERE product_id = ?1",
-      args: [id],
-    });
-    await insertDescriptions(tx, id, descriptions);
-    await tx.commit();
-    cacheInvalidate("products|");
-  } catch (err) {
-    await tx.rollback();
-    throw err;
-  } finally {
-    tx.close();
-  }
+        args: [
+          product.codigo,
+          product.nombre,
+          product.categoria,
+          product.material,
+          product.descripcion,
+          product.imagen?.data ?? null,
+          product.imagen?.mime ?? null,
+          product.imagen_codigo_barras?.data ?? null,
+          product.imagen_codigo_barras?.mime ?? null,
+          product.tipo_producto || null,
+          product.codigo_barras_texto || null,
+          product.dimensiones_empaque.trim() || null,
+          product.juegos_por_empaque.trim() || null,
+          product.peso_empaque.trim() || null,
+          product.volumen_empaque.trim() || null,
+          id,
+        ],
+      },
+      { sql: "DELETE FROM product_specs WHERE product_id = ?1", args: [id] },
+      ...buildSpecStatements(id, specs),
+      { sql: "DELETE FROM product_descriptions WHERE product_id = ?1", args: [id] },
+      ...buildDescriptionStatements(id, descriptions),
+    ],
+    "write",
+  );
+  cacheInvalidate("products|");
 }
 
-async function insertSpecs(
-  tx: Transaction,
-  productId: number,
-  specs: ProductSpec[],
+export interface ProductBodegaInput {
+  tipo_producto: string;
+  dimensiones_empaque: string;
+  juegos_por_empaque: string;
+  peso_empaque: string;
+  volumen_empaque: string;
+}
+
+// Guarda solo los datos de bodega de la ficha (botón "Bodega" en ProductDetail),
+// sin pasar por updateProduct: éste reescribe imágenes, specs y descripciones
+// completas, y con datos cargados antes pisaría lo que otro usuario hubiera
+// editado entretanto. Mismo nivel de acceso que updateProduct/"Editar ficha"
+// (cualquier sesión válida) y mismo refresco de actualizado_en.
+export async function updateProductBodega(
+  actor: Actor,
+  id: number,
+  input: ProductBodegaInput,
 ): Promise<void> {
+  await assertActorSession(actor);
+  assertTipoProductoValido(input.tipo_producto);
+  await client.execute({
+    sql: `UPDATE products
+          SET tipo_producto = ?1, dimensiones_empaque = ?2, juegos_por_empaque = ?3,
+              peso_empaque = ?4, volumen_empaque = ?5, actualizado_en = datetime('now')
+          WHERE id = ?6`,
+    args: [
+      input.tipo_producto || null,
+      input.dimensiones_empaque.trim() || null,
+      input.juegos_por_empaque.trim() || null,
+      input.peso_empaque.trim() || null,
+      input.volumen_empaque.trim() || null,
+      id,
+    ],
+  });
+  cacheInvalidate("products|");
+}
+
+function buildSpecStatements(productId: number, specs: ProductSpec[]): InStatement[] {
+  const statements: InStatement[] = [];
   let orden = 1;
   for (const spec of specs) {
     const etiqueta = spec.etiqueta.trim();
     const valor = spec.valor.trim();
     if (!etiqueta || !valor) continue;
-    await tx.execute({
+    statements.push({
       sql: `INSERT INTO product_specs (product_id, etiqueta, valor, orden, permite_requisicion) VALUES (?1, ?2, ?3, ?4, ?5)`,
       args: [productId, etiqueta, valor, orden, spec.permite_requisicion ? 1 : 0],
     });
     orden += 1;
   }
+  return statements;
 }
 
 interface ProductDescriptionRow {
@@ -466,22 +512,20 @@ export async function getProductDescriptions(
   return result.rows as unknown as ProductDescriptionRow[];
 }
 
-async function insertDescriptions(
-  tx: Transaction,
-  productId: number,
-  descriptions: ProductDescription[],
-): Promise<void> {
+function buildDescriptionStatements(productId: number, descriptions: ProductDescription[]): InStatement[] {
+  const statements: InStatement[] = [];
   let orden = 1;
   for (const description of descriptions) {
     const etiqueta = description.etiqueta.trim();
     const texto = description.texto.trim();
     if (!etiqueta || !texto) continue;
-    await tx.execute({
+    statements.push({
       sql: `INSERT INTO product_descriptions (product_id, etiqueta, texto, orden) VALUES (?1, ?2, ?3, ?4)`,
       args: [productId, etiqueta, texto, orden],
     });
     orden += 1;
   }
+  return statements;
 }
 
 export async function deleteProduct(actor: Actor, id: number): Promise<void> {
@@ -1219,14 +1263,22 @@ export interface Actor {
 // propio llamador podría fabricar.
 async function loadActorSession(
   actor: Actor,
-): Promise<{ username: string; rol: string; activo: number } | undefined> {
+  permisos: Permiso[] = [],
+): Promise<{ username: string; rol: string; activo: number; tiene_permiso: number } | undefined> {
+  // Sesión y permisos en una sola consulta (un viaje a Turso en vez de dos).
+  const placeholders = permisos.map((_, i) => `?${i + 3}`).join(", ");
+  const permisoExpr = permisos.length
+    ? `(SELECT COUNT(*) FROM user_permissions up WHERE up.user_id = users.id AND up.permiso IN (${placeholders}))`
+    : "0";
   const result = await client.execute({
-    sql: `SELECT username, rol, activo FROM users
+    sql: `SELECT username, rol, activo, ${permisoExpr} AS tiene_permiso FROM users
           WHERE id = ?1 AND session_token = ?2
             AND session_expires_at IS NOT NULL AND session_expires_at > datetime('now')`,
-    args: [actor.id, actor.token],
+    args: [actor.id, actor.token, ...permisos],
   });
-  return result.rows[0] as unknown as { username: string; rol: string; activo: number } | undefined;
+  return result.rows[0] as unknown as
+    | { username: string; rol: string; activo: number; tiene_permiso: number }
+    | undefined;
 }
 
 // Para acciones que no tienen un permiso otorgable propio (ej. catálogo
@@ -1247,21 +1299,16 @@ async function assertActorAuthorized(
   actor: Actor,
   requiredPermiso?: Permiso | Permiso[],
 ): Promise<string> {
-  const row = await loadActorSession(actor);
+  const permisos = requiredPermiso === undefined ? [] : Array.isArray(requiredPermiso) ? requiredPermiso : [requiredPermiso];
+  const row = await loadActorSession(actor, permisos);
   if (!row || !row.activo) {
     throw new Error("No autorizado: la sesión no es válida o venció.");
   }
   if (row.rol === "admin") return row.username;
-  if (!requiredPermiso) {
+  if (permisos.length === 0) {
     throw new Error("No autorizado: esta acción requiere una cuenta administradora.");
   }
-  const permisos = Array.isArray(requiredPermiso) ? requiredPermiso : [requiredPermiso];
-  const placeholders = permisos.map((_, i) => `?${i + 2}`).join(", ");
-  const permResult = await client.execute({
-    sql: `SELECT 1 FROM user_permissions WHERE user_id = ?1 AND permiso IN (${placeholders})`,
-    args: [actor.id, ...permisos],
-  });
-  if (permResult.rows.length === 0) {
+  if (!Number(row.tiene_permiso)) {
     throw new Error("No autorizado: falta el permiso requerido para esta acción.");
   }
   return row.username;
@@ -1551,6 +1598,7 @@ interface PlasticProductRow {
   componentes_fabricacion: string;
   precio_por_pieza: string;
   precio_por_juego: string;
+  es_insumo: number | null;
   imagen: ArrayBuffer | null;
   imagen_mime: string | null;
   creado_en: string;
@@ -1572,6 +1620,7 @@ function rowToPlasticProduct(row: PlasticProductRow): PlasticProduct {
     componentes_fabricacion: row.componentes_fabricacion,
     precio_por_pieza: row.precio_por_pieza,
     precio_por_juego: row.precio_por_juego,
+    es_insumo: Number(row.es_insumo ?? 0) === 1,
     imagen: toImageBlob(row.imagen, row.imagen_mime),
     creado_en: row.creado_en,
   };
@@ -1592,6 +1641,7 @@ function plasticProductToData(product: PlasticProduct): PlasticProductInput {
     componentes_fabricacion: product.componentes_fabricacion,
     precio_por_pieza: product.precio_por_pieza,
     precio_por_juego: product.precio_por_juego,
+    es_insumo: product.es_insumo,
     imagen: product.imagen,
   };
 }
@@ -1615,12 +1665,10 @@ export async function searchPlasticProducts(
 // arriba. Con más de 2600 piezas y ~48MB acumulados en las que sí tienen
 // imagen, traerlas todas en pantallas que solo listan texto (PiezasGeneralSection,
 // SkuMasterSection) es la causa real de que esas dos pantallas tarden en
-// cargar. `searchPlasticProducts` (con imagen) sigue existiendo tal cual para
-// PlasticProductPicker/PlasticosSection, que sí necesitan la imagen porque la
-// reenvían a `updatePlasticProduct` al vincular una pieza existente a una
-// ficha — cambiar esa función habría borrado imágenes existentes en silencio.
+// cargar. `searchPlasticProducts` (con imagen) queda sin uso en la UI;
+// PlasticProductPicker usa este listado y pide la ficha completa solo al elegir.
 const PLASTIC_PRODUCT_LIST_COLUMNS =
-  "id, nombre, sku, color, origen, descripcion, armado, dimension, peso, maquila, coste, componentes_fabricacion, precio_por_pieza, precio_por_juego, creado_en";
+  "id, nombre, sku, color, origen, descripcion, armado, dimension, peso, maquila, coste, componentes_fabricacion, precio_por_pieza, precio_por_juego, es_insumo, creado_en";
 
 const PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY = "plasticProductsSummary";
 
@@ -1634,6 +1682,17 @@ export async function listPlasticProductsSummary(): Promise<PlasticProduct[]> {
     PLASTIC_PRODUCTS_SUMMARY_CACHE_KEY,
     (result.rows as unknown as PlasticProductRow[]).map(rowToPlasticProduct),
   );
+}
+
+// Solo la imagen de una pieza: el listado liviano no la trae, y el selector de
+// piezas la pide solo para las filas visibles.
+export async function getPlasticProductImage(id: number): Promise<ImageBlob | null> {
+  const result = await client.execute({
+    sql: "SELECT imagen, imagen_mime FROM plastic_products WHERE id = ?1",
+    args: [id],
+  });
+  const row = result.rows[0] as unknown as { imagen: ArrayBuffer | null; imagen_mime: string | null } | undefined;
+  return row ? toImageBlob(row.imagen, row.imagen_mime) : null;
 }
 
 export async function getPlasticProduct(id: number): Promise<PlasticProduct | null> {
@@ -1693,14 +1752,32 @@ export async function deletePlasticProduct(actor: Actor, id: number): Promise<vo
   }
 }
 
+// Siguiente INS-NNNN libre: máximo ya ocupado + 1 (nunca rellena huecos ni
+// reusa un número ocupado). Va como subconsulta dentro del mismo INSERT/UPDATE
+// para que dos insumos nuevos en un mismo batch (savePlasticItems) reciban
+// números distintos y para que el cálculo corra bajo el bloqueo de escritura
+// de la transacción — el índice único parcial de plastic_products
+// (es_insumo = 1) es la red de seguridad si aun así dos clientes chocaran.
+const INSUMO_SKU_SIGUIENTE_SQL = `'${INSUMO_SKU_PREFIJO}' || printf('%04d', COALESCE(
+  (SELECT MAX(CAST(SUBSTR(sku, ${INSUMO_SKU_PREFIJO.length + 1}) AS INTEGER)) FROM plastic_products
+   WHERE sku GLOB '${INSUMO_SKU_PREFIJO}[0-9][0-9][0-9][0-9]'), 0) + 1)`;
+
+// Una pieza es insumo si se marcó así o si ya trae un SKU INS-NNNN (ej. al
+// importar un Excel con insumos): la marca y el SKU nunca quedan desfasados.
+function wantsInsumo(input: PlasticProductInput): boolean {
+  return input.es_insumo === true || isInsumoSku(input.sku);
+}
+
 function buildCreatePlasticProductStatement(input: PlasticProductInput): InStatement {
+  const sku = input.sku.trim();
+  const esInsumo = wantsInsumo(input);
   return {
     sql: `INSERT INTO plastic_products
-          (nombre, sku, color, origen, descripcion, armado, dimension, peso, maquila, coste, componentes_fabricacion, precio_por_pieza, precio_por_juego, imagen, imagen_mime, actualizado_en)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, datetime('now'))`,
+          (nombre, sku, color, origen, descripcion, armado, dimension, peso, maquila, coste, componentes_fabricacion, precio_por_pieza, precio_por_juego, imagen, imagen_mime, es_insumo, actualizado_en)
+          VALUES (?1, COALESCE(?2, ${INSUMO_SKU_SIGUIENTE_SQL}), ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, datetime('now'))`,
     args: [
       input.nombre.trim(),
-      input.sku.trim(),
+      esInsumo && !isInsumoSku(sku) ? null : sku,
       input.color.trim(),
       input.origen.trim(),
       input.descripcion.trim(),
@@ -1714,6 +1791,7 @@ function buildCreatePlasticProductStatement(input: PlasticProductInput): InState
       input.precio_por_juego.trim(),
       input.imagen?.data ?? null,
       input.imagen?.mime ?? null,
+      esInsumo ? 1 : 0,
     ],
   };
 }
@@ -1732,25 +1810,35 @@ export async function createPlasticProduct(
 // Solo refresca actualizado_en si algún campo cambió de verdad: savePlasticItems
 // reenvía todas las piezas del formulario aunque no se hayan tocado, y sin esta
 // comparación "Exportar avance del día" listaría juegos que nadie editó.
+//
+// Un insumo ya guardado conserva su SKU y su marca sin importar lo que traiga
+// `input` (la identidad INS-NNNN es permanente); una pieza normal marcada como
+// insumo recibe el siguiente INS-NNNN en lugar de su SKU anterior.
 function buildUpdatePlasticProductStatement(id: number, input: PlasticProductInput): InStatement {
+  const sku = input.sku.trim();
   return {
     sql: `UPDATE plastic_products
-          SET nombre = ?1, sku = ?2, color = ?3, origen = ?4, descripcion = ?5, armado = ?6,
+          SET nombre = ?1,
+              sku = CASE WHEN es_insumo = 1 THEN sku
+                         WHEN ?16 = 1 AND ?17 = 0 THEN ${INSUMO_SKU_SIGUIENTE_SQL}
+                         ELSE ?2 END,
+              color = ?3, origen = ?4, descripcion = ?5, armado = ?6,
               dimension = ?7, peso = ?8, maquila = ?9, coste = ?10,
               componentes_fabricacion = ?11, precio_por_pieza = ?12,
               precio_por_juego = ?13, imagen = ?14, imagen_mime = ?15,
+              es_insumo = CASE WHEN es_insumo = 1 OR ?16 = 1 THEN 1 ELSE 0 END,
               actualizado_en = CASE WHEN
                 COALESCE(nombre, '') = ?1 AND COALESCE(sku, '') = ?2 AND COALESCE(color, '') = ?3
                 AND COALESCE(origen, '') = ?4 AND COALESCE(descripcion, '') = ?5 AND COALESCE(armado, '') = ?6
                 AND COALESCE(dimension, '') = ?7 AND COALESCE(peso, '') = ?8 AND COALESCE(maquila, '') = ?9
                 AND COALESCE(coste, '') = ?10 AND COALESCE(componentes_fabricacion, '') = ?11
                 AND COALESCE(precio_por_pieza, '') = ?12 AND COALESCE(precio_por_juego, '') = ?13
-                AND imagen IS ?14 AND imagen_mime IS ?15
+                AND imagen IS ?14 AND imagen_mime IS ?15 AND es_insumo = ?16
               THEN actualizado_en ELSE datetime('now') END
-          WHERE id = ?16`,
+          WHERE id = ?18`,
     args: [
       input.nombre.trim(),
-      input.sku.trim(),
+      sku,
       input.color.trim(),
       input.origen.trim(),
       input.descripcion.trim(),
@@ -1764,6 +1852,8 @@ function buildUpdatePlasticProductStatement(id: number, input: PlasticProductInp
       input.precio_por_juego.trim(),
       input.imagen?.data ?? null,
       input.imagen?.mime ?? null,
+      wantsInsumo(input) ? 1 : 0,
+      isInsumoSku(sku) ? 1 : 0,
       id,
     ],
   };
@@ -1820,6 +1910,39 @@ export async function getPlasticItems(productId: number): Promise<PlasticItem[]>
     cantidad: row.item_cantidad ?? "",
     data: plasticProductToData(rowToPlasticProduct(row)),
   }));
+}
+
+export interface ConteoPiezasFicha {
+  piezas: number;
+  insumos: number;
+  // Vínculos cuya Cantidad está vacía o no es un número limpio: no suman, y se
+  // reportan aparte para que un total bajo no se confunda con "no hay piezas".
+  sinCantidad: number;
+}
+
+// Total de piezas y de insumos de una ficha, sumando product_plastic_items.cantidad
+// (texto libre, parseAmount — igual criterio que la hoja Recetas). Lectura
+// abierta a todo usuario autenticado, como la propia ficha técnica.
+export async function getConteoPiezasFicha(productId: number): Promise<ConteoPiezasFicha> {
+  const result = await client.execute({
+    sql: `SELECT ppi.cantidad AS cantidad, pp.es_insumo AS es_insumo
+          FROM product_plastic_items ppi
+          JOIN plastic_products pp ON pp.id = ppi.plastic_product_id
+          WHERE ppi.product_id = ?1`,
+    args: [productId],
+  });
+  const conteo: ConteoPiezasFicha = { piezas: 0, insumos: 0, sinCantidad: 0 };
+  for (const row of result.rows as unknown as { cantidad: string | null; es_insumo: number | null }[]) {
+    const cantidad = parseAmount(row.cantidad ?? "");
+    if (cantidad === null) {
+      conteo.sinCantidad += 1;
+    } else if (Number(row.es_insumo ?? 0) === 1) {
+      conteo.insumos += cantidad;
+    } else {
+      conteo.piezas += cantidad;
+    }
+  }
+  return conteo;
 }
 
 // Todo el guardado viaja en UN solo batch atómico (una petición HTTP), no en
@@ -2017,12 +2140,15 @@ export async function importPiezaRow(
     }
     if (productId !== null) {
       await tx.execute({
-        sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden)
-              SELECT ?1, ?2, ?3
+        // Cantidad de un vínculo nuevo = Componentes de fabricación de la fila
+        // (campo retirado del formulario de Piezas): solo aplica al crear el
+        // vínculo, nunca pisa una Cantidad ya capturada.
+        sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden, cantidad)
+              SELECT ?1, ?2, ?3, ?4
               WHERE NOT EXISTS (
                 SELECT 1 FROM product_plastic_items WHERE product_id = ?1 AND plastic_product_id = ?2
               )`,
-        args: [productId, resolvedId, orden],
+        args: [productId, resolvedId, orden, input.componentes_fabricacion.trim()],
       });
     }
     await tx.commit();
@@ -4286,6 +4412,11 @@ interface RemisionRow {
   fecha: string;
   tipo: string;
   pedido_bodegas: string | null;
+  // Pueden faltar si la migración add-remisiones-cliente-externo-columns.mjs aún no corrió.
+  cliente_rfc?: string | null;
+  cliente_direccion?: string | null;
+  cliente_contacto?: string | null;
+  cliente_telefono?: string | null;
   cancelada: number;
   subtotal: number;
   descuento_pct: number;
@@ -4304,6 +4435,10 @@ function rowToRemision(row: RemisionRow): Remision {
     fecha: row.fecha,
     tipo: row.tipo as TipoRemision,
     pedido_bodegas: row.pedido_bodegas ?? "",
+    cliente_rfc: row.cliente_rfc ?? "",
+    cliente_direccion: row.cliente_direccion ?? "",
+    cliente_contacto: row.cliente_contacto ?? "",
+    cliente_telefono: row.cliente_telefono ?? "",
     cancelada: !!row.cancelada,
     subtotal: row.subtotal,
     descuento_pct: row.descuento_pct,
@@ -4388,7 +4523,9 @@ function computeRemisionTotales(
 // createFolio/createRequisicionConFolio): a pedido del negocio, el folio de
 // remisión lleva el nombre de la bodega destino en el segmento donde los
 // otros tres tipos (Requisición/Producción/Compra) llevan el SKU del
-// producto — RemisionForm le pasa `pedido_bodegas`, no un SKU.
+// producto — RemisionForm le pasa `pedido_bodegas`, no un SKU. En remisiones
+// externas ese campo es el nombre del cliente, y el folio usa la sección
+// `remision_externa` (prefijo REMEX, consecutivo propio desde 00001).
 export async function createRemisionConFolio(
   actor: Actor,
   bodega: string,
@@ -4399,26 +4536,41 @@ export async function createRemisionConFolio(
   const totales = computeRemisionTotales(renglones, input.descuento_pct);
   const tx = await client.transaction("write");
   try {
-    const folio = await insertFolioRow(tx, "remision", bodega);
+    const folio = await insertFolioRow(tx, input.tipo === "externa" ? "remision_externa" : "remision", bodega);
 
+    // Las columnas cliente_* solo se escriben en externas y solo si hay algún dato
+    // capturado: son opcionales, y así una remisión sin esos datos (y toda interna)
+    // se guarda igual aunque la migración de esas columnas no haya corrido.
+    const clienteTodas: [string, string][] =
+      input.tipo === "externa"
+        ? [
+            ["cliente_rfc", input.cliente_rfc?.trim() ?? ""],
+            ["cliente_direccion", input.cliente_direccion?.trim() ?? ""],
+            ["cliente_contacto", input.cliente_contacto?.trim() ?? ""],
+            ["cliente_telefono", input.cliente_telefono?.trim() ?? ""],
+          ]
+        : [];
+    const clienteCols = clienteTodas.some(([, value]) => value) ? clienteTodas : [];
+    const headerArgs = [
+      folio.folio,
+      input.fecha,
+      input.tipo,
+      input.pedido_bodegas,
+      totales.subtotal,
+      input.descuento_pct,
+      totales.descuento,
+      totales.iva,
+      totales.total,
+      totales.precioTexto,
+      username,
+      ...clienteCols.map(([, value]) => value),
+    ];
     const headerResult = await tx.execute({
       sql: `INSERT INTO remisiones
-              (folio, fecha, tipo, pedido_bodegas, subtotal, descuento_pct, descuento, iva, total, precio_texto, usuario)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+              (folio, fecha, tipo, pedido_bodegas, subtotal, descuento_pct, descuento, iva, total, precio_texto, usuario${clienteCols.map(([c]) => `, ${c}`).join("")})
+            VALUES (${headerArgs.map((_, i) => `?${i + 1}`).join(", ")})
             RETURNING *`,
-      args: [
-        folio.folio,
-        input.fecha,
-        input.tipo,
-        input.pedido_bodegas,
-        totales.subtotal,
-        input.descuento_pct,
-        totales.descuento,
-        totales.iva,
-        totales.total,
-        totales.precioTexto,
-        username,
-      ],
+      args: headerArgs,
     });
     const headerRow = headerResult.rows[0] as unknown as RemisionRow;
 
@@ -4622,6 +4774,7 @@ export interface PiezaDesgloseExportRow {
   componentes_fabricacion: string;
   precio_por_pieza: string;
   precio_por_juego: string;
+  es_insumo: number | null;
 }
 
 // Juegos "trabajados" en un rango (UTC, mismo formato que datetime('now')):
@@ -4650,7 +4803,8 @@ async function fetchPiezasDesgloseParaExport(rango?: RangoUtc): Promise<PiezaDes
       pp.armado AS material, pp.color AS color, pp.origen AS origen, pp.dimension AS dimension,
       pp.peso AS peso, pp.maquila AS maquila, pp.coste AS coste,
       pp.componentes_fabricacion AS componentes_fabricacion,
-      pp.precio_por_pieza AS precio_por_pieza, pp.precio_por_juego AS precio_por_juego
+      pp.precio_por_pieza AS precio_por_pieza, pp.precio_por_juego AS precio_por_juego,
+      pp.es_insumo AS es_insumo
     FROM plastic_products pp
     LEFT JOIN product_plastic_items ppi ON ppi.plastic_product_id = pp.id
     LEFT JOIN products p ON p.id = ppi.product_id
@@ -4660,6 +4814,34 @@ async function fetchPiezasDesgloseParaExport(rango?: RangoUtc): Promise<PiezaDes
     args: rango ? [rango.desde, rango.hasta] : [],
   });
   return result.rows as unknown as PiezaDesgloseExportRow[];
+}
+
+export interface CatalogoProgreso {
+  total: number;
+  sinPiezas: number[];
+  sinPreciosVenta: number[];
+}
+
+// Alimenta las barras de progreso de SKU Master y el filtro "faltantes" del
+// catálogo. "Con piezas" = la ficha tiene al menos una fila en
+// product_plastic_items; "con precios de venta" = al menos una categoría de
+// precios_venta con precio no NULL ("Por definir" cuenta como faltante).
+export async function getCatalogoProgreso(actor: Actor): Promise<CatalogoProgreso> {
+  await assertActorAuthorized(actor, "sku_master");
+  const [sinPiezas, sinPrecios, total] = await Promise.all([
+    client.execute(
+      "SELECT id FROM products WHERE id NOT IN (SELECT product_id FROM product_plastic_items) ORDER BY id",
+    ),
+    client.execute(
+      "SELECT id FROM products WHERE id NOT IN (SELECT product_id FROM precios_venta WHERE precio IS NOT NULL) ORDER BY id",
+    ),
+    client.execute("SELECT COUNT(*) AS n FROM products"),
+  ]);
+  return {
+    total: Number((total.rows[0] as unknown as { n: number }).n),
+    sinPiezas: sinPiezas.rows.map((r) => Number((r as unknown as { id: number }).id)),
+    sinPreciosVenta: sinPrecios.rows.map((r) => Number((r as unknown as { id: number }).id)),
+  };
 }
 
 export interface SkuMasterExportData {

@@ -190,13 +190,14 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
     [parsedRows, descuentoPctNum],
   );
   const precioTexto = numeroATextoMoneda(total);
+  const etiquetaPedido = header.tipo === "externa" ? "Cliente" : "Bodega";
 
   async function handleGuardarEdicion() {
     setError(null);
     if (!user || !token) return;
     const actor = { id: user.id, token };
     if (!pedidoBodegas.trim()) {
-      setError("El campo Bodega es obligatorio.");
+      setError(`El campo ${etiquetaPedido} es obligatorio.`);
       return;
     }
     if (parsedRows.length === 0) {
@@ -290,7 +291,7 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
       <div className="modal-card">
         <h2>Remisión {header.folio}</h2>
         <p className="hint">
-          {formatFechaCorta(header.fecha)} · Pedido: {header.pedido_bodegas || "—"} ·{" "}
+          {formatFechaCorta(header.fecha)} · {header.tipo === "externa" ? "Cliente" : "Pedido"}: {header.pedido_bodegas || "—"} ·{" "}
           {header.cancelada ? "Cancelada" : "Activa"}
         </p>
 
@@ -368,7 +369,7 @@ export default function RemisionDetalleModal({ remision, onClose, onUpdated }: P
           <>
             <div className="form-row">
               <label>
-                Bodega
+                {etiquetaPedido}
                 <input
                   type="text"
                   value={pedidoBodegas}

@@ -2,14 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { hasPermission, useAuth } from "../auth";
 import { deleteRemision, listRemisionProductosIndex, listRemisiones, logEventAsActor } from "../db";
 import { formatMoney } from "../excelExport";
-import type { Remision } from "../types";
+import type { Remision, TipoRemision } from "../types";
 import RemisionDetalleModal from "./RemisionDetalleModal";
 import Pagination from "./Pagination";
 import RemisionForm from "./RemisionForm";
 import Toast from "./Toast";
 import basuraIcon from "../../Assets/basura.svg";
-
-type TipoSel = "interna" | "externa";
 
 const PAGE_SIZE = 15;
 
@@ -29,7 +27,7 @@ export default function RemisionesSection() {
   const canCrear = hasPermission(user, "remisiones_crear");
   const canBorrar = hasPermission(user, "remisiones_cancelar");
 
-  const [tipo, setTipo] = useState<TipoSel>("interna");
+  const [tipo, setTipo] = useState<TipoRemision>("interna");
   const [recientes, setRecientes] = useState<Remision[]>([]);
   const [loadingRecientes, setLoadingRecientes] = useState(true);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
@@ -67,14 +65,15 @@ export default function RemisionesSection() {
   }
 
   const filtradas = useMemo(() => {
+    const delTipo = recientes.filter((r) => r.tipo === tipo);
     const q = normalizeSearch(query);
-    if (!q) return recientes;
-    return recientes.filter(
+    if (!q) return delTipo;
+    return delTipo.filter(
       (r) =>
         normalizeSearch(`${r.folio} ${r.pedido_bodegas} ${r.fecha} ${formatFechaCorta(r.fecha)}`).includes(q) ||
         (productosPorRemision.get(r.id) ?? "").includes(q),
     );
-  }, [recientes, productosPorRemision, query]);
+  }, [recientes, productosPorRemision, query, tipo]);
 
   const totalPages = Math.max(1, Math.ceil(filtradas.length / PAGE_SIZE));
 
@@ -91,6 +90,13 @@ export default function RemisionesSection() {
     );
   }
 
+  function cambiarTipo(nuevo: TipoRemision) {
+    setTipo(nuevo);
+    setQuery("");
+    setCurrentPage(1);
+    setConfirmDeleteId(null);
+  }
+
   async function handleBorrar(id: number) {
     if (!user || !token) return;
     await deleteRemision({ id: user.id, token }, id);
@@ -101,31 +107,30 @@ export default function RemisionesSection() {
 
   return (
     <div className="private-section">
-      <h1>Remisiones</h1>
+      <div className="remisiones-header">
+        <h1>Remisiones</h1>
 
-      <div className="search-filters" role="group" aria-label="Tipo de remisión">
-        <button
-          type="button"
-          className={`filter-chip${tipo === "interna" ? " filter-chip-active" : ""}`}
-          onClick={() => setTipo("interna")}
-        >
-          Interna
-        </button>
-        <button
-          type="button"
-          className="filter-chip"
-          disabled
-          title="Próximamente"
-          aria-disabled="true"
-        >
-          Externa (Próximamente)
-        </button>
+        <div className="search-filters" role="group" aria-label="Tipo de remisión">
+          <button
+            type="button"
+            className={`filter-chip${tipo === "interna" ? " filter-chip-active" : ""}`}
+            onClick={() => cambiarTipo("interna")}
+          >
+            Interna
+          </button>
+          <button
+            type="button"
+            className={`filter-chip${tipo === "externa" ? " filter-chip-active" : ""}`}
+            onClick={() => cambiarTipo("externa")}
+          >
+            Externa
+          </button>
+        </div>
       </div>
 
-      {tipo === "interna" && (
-        <>
+      <>
           {canCrear ? (
-            <RemisionForm onCreated={refreshRecientes} />
+            <RemisionForm key={tipo} tipo={tipo} onCreated={refreshRecientes} />
           ) : (
             <p className="hint">No tienes permiso para crear remisiones.</p>
           )}
@@ -135,7 +140,7 @@ export default function RemisionesSection() {
             <input
               className="search-input"
               type="text"
-              placeholder="Buscar por folio, bodega, fecha (dd/mm/aaaa), SKU o nombre de producto…"
+              placeholder={`Buscar por folio, ${tipo === "externa" ? "cliente" : "bodega"}, fecha (dd/mm/aaaa), SKU o nombre de producto…`}
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
@@ -144,8 +149,8 @@ export default function RemisionesSection() {
             />
             {loadingRecientes ? (
               <p className="hint">Cargando…</p>
-            ) : recientes.length === 0 ? (
-              <p className="hint">Aún no hay remisiones.</p>
+            ) : recientes.every((r) => r.tipo !== tipo) ? (
+              <p className="hint">Aún no hay remisiones {tipo === "externa" ? "externas" : "internas"}.</p>
             ) : filtradas.length === 0 ? (
               <p className="hint">Sin resultados para esa búsqueda.</p>
             ) : (
@@ -155,7 +160,7 @@ export default function RemisionesSection() {
                     <tr key={r.id}>
                       <td>{r.folio}</td>
                       <td>{formatFechaCorta(r.fecha)}</td>
-                      <td>{r.pedido_bodegas || "Sin bodega"}</td>
+                      <td>{r.pedido_bodegas || (tipo === "externa" ? "Sin cliente" : "Sin bodega")}</td>
                       <td>{formatMoney(r.total)}</td>
                       <td>{r.cancelada ? "Cancelada" : "Activa"}</td>
                       <td className="backups-history-actions">
@@ -194,10 +199,7 @@ export default function RemisionesSection() {
               <Pagination currentPage={currentPage} totalPages={totalPages} onChange={setCurrentPage} />
             )}
           </div>
-        </>
-      )}
-
-      {tipo === "externa" && <p className="hint">Remisión externa — próximamente.</p>}
+      </>
 
       <Toast message={toastMessage ?? ""} show={!!toastMessage} onHide={() => setToastMessage(null)} />
 

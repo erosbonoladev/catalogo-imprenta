@@ -463,44 +463,6 @@ export default function ProductForm({ productId, onDone, onCancel, onDirtyChange
           </label>
         </div>
 
-        <div className="form-row">
-          <label>
-            Dimensiones de empaque
-            <AutoGrowInput
-              value={product.dimensiones_empaque}
-              onChange={(v) => updateField("dimensiones_empaque", v)}
-              placeholder="ej. 28 x 28 cm"
-            />
-          </label>
-          <label>
-            Juegos por empaque
-            <input
-              type="number"
-              min="0"
-              step="1"
-              value={product.juegos_por_empaque}
-              onChange={(e) => updateField("juegos_por_empaque", e.target.value)}
-            />
-          </label>
-        </div>
-
-        <div className="form-row">
-          <label>
-            Peso empaque (Kg)
-            <AutoGrowInput
-              value={product.peso_empaque}
-              onChange={(v) => updateField("peso_empaque", v)}
-            />
-          </label>
-          <label>
-            Volumen empaque (M3)
-            <AutoGrowInput
-              value={product.volumen_empaque}
-              onChange={(v) => updateField("volumen_empaque", v)}
-            />
-          </label>
-        </div>
-
         <div className="specs-editor">
           <h2>Especificaciones técnicas</h2>
           {specs.map((spec, index) => (

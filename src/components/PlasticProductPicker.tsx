@@ -1,5 +1,11 @@
-import { useEffect, useState } from "react";
-import { getImageSrc, searchPlasticProducts } from "../db";
+import { useEffect, useMemo, useState } from "react";
+import {
+  getImageSrc,
+  getPlasticProduct,
+  getPlasticProductImage,
+  listPlasticProductsSummary,
+  normalizeSearchTerm,
+} from "../db";
 import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
 import type { PlasticProduct } from "../types";
 
@@ -9,33 +15,62 @@ interface Props {
   onClose: () => void;
 }
 
+// Con miles de piezas, pintar todas (cada una pide su miniatura) es lo que
+// hacía lento abrir el selector; se muestran las primeras coincidencias y se
+// afina escribiendo.
+const MAX_RESULTS = 50;
+
 export default function PlasticProductPicker({ excludeIds, onSelect, onClose }: Props) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<PlasticProduct[]>([]);
+  const [all, setAll] = useState<PlasticProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [selecting, setSelecting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setLoadError(null);
-    const timer = setTimeout(async () => {
-      try {
-        const products = await searchPlasticProducts(query);
-        if (!cancelled) setResults(products);
-      } catch (err) {
+    listPlasticProductsSummary()
+      .then((list) => {
+        if (!cancelled) setAll(list);
+      })
+      .catch((err) => {
         if (!cancelled) setLoadError(`No se pudo buscar: ${String(err)}`);
-      } finally {
+      })
+      .finally(() => {
         if (!cancelled) setLoading(false);
-      }
-    }, 150);
+      });
     return () => {
       cancelled = true;
-      clearTimeout(timer);
     };
-  }, [query]);
+  }, []);
 
-  const visible = results.filter((producto) => !excludeIds.includes(producto.id));
+  const results = useMemo(() => {
+    const term = normalizeSearchTerm(query.trim());
+    if (!term) return all;
+    return all.filter(
+      (p) =>
+        normalizeSearchTerm(p.nombre).includes(term) ||
+        normalizeSearchTerm(p.sku).includes(term) ||
+        normalizeSearchTerm(p.color).includes(term),
+    );
+  }, [all, query]);
+
+  // La ficha completa (con imagen) se pide solo al elegir: el llamador la
+  // reenvía a updatePlasticProduct, que sobrescribiría la imagen con null si
+  // llegara sin ella.
+  async function handleSelect(resumen: PlasticProduct) {
+    if (selecting) return;
+    setSelecting(true);
+    try {
+      onSelect((await getPlasticProduct(resumen.id)) ?? resumen);
+    } catch (err) {
+      setLoadError(`No se pudo cargar la pieza: ${String(err)}`);
+      setSelecting(false);
+    }
+  }
+
+  const filtered = results.filter((producto) => !excludeIds.includes(producto.id));
+  const visible = filtered.slice(0, MAX_RESULTS);
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true">
@@ -67,10 +102,15 @@ export default function PlasticProductPicker({ excludeIds, onSelect, onClose }: 
               <PlasticPickerRow
                 key={producto.id}
                 producto={producto}
-                onSelect={() => onSelect(producto)}
+                onSelect={() => handleSelect(producto)}
               />
             ))}
           </div>
+        )}
+        {filtered.length > MAX_RESULTS && (
+          <p className="hint">
+            Mostrando {MAX_RESULTS} de {filtered.length}. Escribe para afinar la búsqueda.
+          </p>
         )}
 
         <div className="form-actions">
@@ -94,7 +134,8 @@ function PlasticPickerRow({ producto, onSelect }: RowProps) {
 
   useEffect(() => {
     let cancelled = false;
-    getImageSrc(producto.imagen)
+    getPlasticProductImage(producto.id)
+      .then((imagen) => getImageSrc(imagen))
       .then((src) => {
         if (!cancelled) setImageSrc(src);
       })
@@ -104,7 +145,7 @@ function PlasticPickerRow({ producto, onSelect }: RowProps) {
     return () => {
       cancelled = true;
     };
-  }, [producto.imagen]);
+  }, [producto.id]);
 
   return (
     <button type="button" className="plastic-picker-row" onClick={onSelect}>

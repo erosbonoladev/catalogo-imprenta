@@ -69,6 +69,71 @@ describe("createRemisionConFolio", () => {
     expect(await countRows("remision_renglones", "remision_id = ?1", [created.id])).toBe(1);
   });
 
+  it("guarda el tipo externa y listRemisiones lo devuelve para poder filtrar el historial", async () => {
+    const a = await actor(["remisiones_crear", "remisiones_acceso"]);
+    await createRemisionConFolio(a, "R1", baseInput, [renglon]);
+    const externa = await createRemisionConFolio(a, "R1", { ...baseInput, tipo: "externa" }, [renglon]);
+
+    expect(externa.tipo).toBe("externa");
+    const todas = await listRemisiones(a);
+    expect(todas.filter((r) => r.tipo === "externa").map((r) => r.id)).toEqual([externa.id]);
+    expect(todas.filter((r) => r.tipo === "interna")).toHaveLength(1);
+  });
+
+  it("las externas guardan los datos del cliente; las internas los dejan vacíos", async () => {
+    const a = await actor(["remisiones_crear", "remisiones_acceso"]);
+    const externa = await createRemisionConFolio(
+      a,
+      "Cliente Uno",
+      {
+        ...baseInput,
+        tipo: "externa",
+        pedido_bodegas: "Cliente Uno",
+        cliente_rfc: " ABC010101AAA ",
+        cliente_direccion: "Av. Reforma 1",
+        cliente_contacto: "Juan",
+        cliente_telefono: "222 111 2233",
+      },
+      [{ ...renglon, sku: "" }],
+    );
+    const interna = await createRemisionConFolio(a, "R1", baseInput, [renglon]);
+
+    expect(externa.cliente_rfc).toBe("ABC010101AAA");
+    const guardada = (await listRemisiones(a)).find((r) => r.id === externa.id);
+    expect(guardada).toMatchObject({
+      pedido_bodegas: "Cliente Uno",
+      cliente_direccion: "Av. Reforma 1",
+      cliente_contacto: "Juan",
+      cliente_telefono: "222 111 2233",
+    });
+    expect(interna.cliente_rfc).toBe("");
+    expect(interna.cliente_telefono).toBe("");
+  });
+
+  it("una externa sin datos de cliente se guarda sin tocar las columnas cliente_*", async () => {
+    const a = await actor(["remisiones_crear"]);
+    await rawClient().execute("ALTER TABLE remisiones DROP COLUMN cliente_rfc");
+    try {
+      const externa = await createRemisionConFolio(a, "Cliente Uno", { ...baseInput, tipo: "externa" }, [renglon]);
+      expect(externa.tipo).toBe("externa");
+      expect(externa.cliente_rfc).toBe("");
+    } finally {
+      await rawClient().execute("ALTER TABLE remisiones ADD COLUMN cliente_rfc TEXT");
+    }
+  });
+
+  it("las externas usan folio REMEX con consecutivo propio desde 00001, sin afectar el de las internas", async () => {
+    const a = await actor(["remisiones_crear"]);
+    const interna = await createRemisionConFolio(a, "R1", baseInput, [renglon]);
+    const ext1 = await createRemisionConFolio(a, "Cliente Uno", { ...baseInput, tipo: "externa" }, [renglon]);
+    const ext2 = await createRemisionConFolio(a, "Cliente Uno", { ...baseInput, tipo: "externa" }, [renglon]);
+
+    expect(interna.folio).toMatch(/^REM-.*-00001$/);
+    expect(ext1.folio).toMatch(/^REMEX-Cliente-Uno-\d{6}-00001$/);
+    expect(ext2.folio).toMatch(/-00002$/);
+    expect(await countRows("folios", "seccion = 'remision_externa'")).toBe(2);
+  });
+
   it("el folio lleva el nombre de la bodega, no el SKU del renglón — a pedido del negocio", async () => {
     const a = await actor(["remisiones_crear"]);
     const created = await createRemisionConFolio(a, baseInput.pedido_bodegas, baseInput, [renglon]);

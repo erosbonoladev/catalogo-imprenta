@@ -23,7 +23,6 @@ const CAMPOS_VISTA: { label: string; key: keyof PlasticProductInput }[] = [
   { label: "Dimensión", key: "dimension" },
   { label: "Peso", key: "peso" },
   { label: "Maquila", key: "maquila" },
-  { label: "Componentes de fabricación", key: "componentes_fabricacion" },
   { label: "Precio por pieza", key: "precio_por_pieza" },
   { label: "Precio por juego", key: "precio_por_juego" },
 ];
@@ -122,6 +121,7 @@ export default function PlasticosSection({ productId, onDirtyChange }: Props) {
           componentes_fabricacion: producto.componentes_fabricacion,
           precio_por_pieza: producto.precio_por_pieza,
           precio_por_juego: producto.precio_por_juego,
+          es_insumo: producto.es_insumo,
           imagen: producto.imagen,
         },
       },

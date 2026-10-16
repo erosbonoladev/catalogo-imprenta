@@ -165,6 +165,10 @@ export interface PlasticProduct {
   // muertas, ver docs/DATABASE.md.
   precio_por_pieza: string;
   precio_por_juego: string;
+  // Insumo (bolsas, instructivos, etiquetas…) en vez de una pieza del juguete:
+  // su SKU es siempre INS-NNNN, asignado por la app (ver src/insumos.ts) — no
+  // cuenta como "Cantidad" de piezas en la hoja Recetas del export.
+  es_insumo: boolean;
   imagen: ImageBlob | null;
   creado_en: string;
 }
@@ -183,6 +187,11 @@ export interface PlasticProductInput {
   componentes_fabricacion: string;
   precio_por_pieza: string;
   precio_por_juego: string;
+  // Opcional: un insumo ya guardado conserva su SKU INS-NNNN; marcarlo en una
+  // pieza nueva (o convertir una existente) hace que el guardado le asigne el
+  // siguiente INS-NNNN libre. Omitirlo = no tocar la marca (importaciones,
+  // pruebas) — una vez insumo, nunca deja de serlo desde aquí.
+  es_insumo?: boolean;
   imagen: ImageBlob | null;
 }
 
@@ -346,6 +355,9 @@ export interface PrintItemPurchase {
 }
 
 export type SearchFilter = "todo" | "nombre" | "sku" | "material" | "codigo_barras";
+
+// Filtro adicional del catálogo (llega desde las barras de progreso de SKU Master).
+export type CatalogoFaltante = "piezas" | "precios_venta";
 
 export const PERMISOS = [
   "plasticos",
@@ -544,7 +556,7 @@ export interface RequisicionInput {
   folio: string;
 }
 
-export type TipoFolio = "requisicion" | "compra" | "produccion" | "remision";
+export type TipoFolio = "requisicion" | "compra" | "produccion" | "remision" | "remision_externa";
 
 export interface Folio {
   id: number;
@@ -646,6 +658,11 @@ export interface Remision {
   fecha: string;
   tipo: TipoRemision;
   pedido_bodegas: string;
+  // Solo remisiones externas (pedido_bodegas es el nombre del cliente); "" en internas.
+  cliente_rfc: string;
+  cliente_direccion: string;
+  cliente_contacto: string;
+  cliente_telefono: string;
   cancelada: boolean;
   subtotal: number;
   descuento_pct: number;
@@ -681,6 +698,10 @@ export interface RemisionInput {
   fecha: string;
   tipo: TipoRemision;
   pedido_bodegas: string;
+  cliente_rfc?: string;
+  cliente_direccion?: string;
+  cliente_contacto?: string;
+  cliente_telefono?: string;
   subtotal: number;
   descuento_pct: number;
   descuento: number;

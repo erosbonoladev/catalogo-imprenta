@@ -158,10 +158,21 @@ function round3(n: number): number {
 // esta hoja es de solo consulta/costeo, no se reimporta: si algún día hace
 // falta reimportar recetas, que sea un lector nuevo, no reusar este.
 //
+// "Cantidad" suma solo las piezas reales del juego; los insumos (SKU INS-NNNN,
+// plastic_products.es_insumo) no entran ahí: su cantidad sale en la columna
+// vecina "Cantidad de insumos" (en la fila de cada insumo, que conserva su
+// SKU, y sumada en la fila del juego). Peso/Costo siguen sumando todo, igual
+// que antes — la separación es solo de cantidades.
+//
 // "Peso/Costo por pieza" salen de plastic_products.peso/coste (texto libre,
 // parseAmount() los valida — si no son un número limpio, esa celda y las
 // que dependen de ella quedan vacías, no se inventa un valor). "Peso/Costo
-// por juego" de una pieza = por pieza × Componentes de fabricación; los del
+// por juego" de una pieza = por pieza × Cantidad (product_plastic_items.cantidad;
+// decisión del usuario 2026-10-16: antes se multiplicaba por Componentes de
+// fabricación, campo ya retirado del formulario — una migración copió sus
+// valores a Cantidad donde estaba vacía, ver scripts/fill-cantidad-from-
+// componentes.mjs; una pieza sin Cantidad parseable deja vacíos sus
+// Peso/Costo por juego); los del
 // juego = suma de TODAS sus piezas ligadas, sin distinguir piezas de
 // empaque (bolsas, instructivos) de piezas reales del juguete (best-effort:
 // una pieza sin peso/costo parseable no aporta a la suma, en vez de
@@ -196,7 +207,8 @@ export function recetasSheetRows(
       "SKU Principal",
       "SKU",
       "Descripción",
-      "Componentes de fabricación",
+      "Cantidad",
+      "Cantidad de insumos",
       "Dimensiones",
       "Peso por pieza (Kg)",
       "Costo por pieza",
@@ -232,18 +244,23 @@ export function recetasSheetRows(
 
   for (const [codigo, grupo] of porJuego) {
     const skuPrincipal = computeSkuPrincipal(codigo);
-    let componentesTotal = 0;
+    let cantidadTotal = 0;
+    let insumosTotal = 0;
     let pesoJuegoTotal = 0;
     let costoJuegoTotal = 0;
     const filasPiezas: unknown[][] = [];
 
     for (const p of grupo) {
-      const componentes = parseAmount(p.componentes_fabricacion);
+      const esInsumo = Number(p.es_insumo ?? 0) === 1;
+      const cantidad = parseAmount(p.cantidad ?? "");
       const pesoPieza = parseAmount(p.peso);
       const costoPieza = parseAmount(p.coste);
-      const pesoJuego = pesoPieza !== null && componentes !== null ? pesoPieza * componentes : null;
-      const costoJuego = costoPieza !== null && componentes !== null ? costoPieza * componentes : null;
-      if (componentes !== null) componentesTotal += componentes;
+      const pesoJuego = pesoPieza !== null && cantidad !== null ? pesoPieza * cantidad : null;
+      const costoJuego = costoPieza !== null && cantidad !== null ? costoPieza * cantidad : null;
+      if (cantidad !== null) {
+        if (esInsumo) insumosTotal += cantidad;
+        else cantidadTotal += cantidad;
+      }
       if (pesoJuego !== null) pesoJuegoTotal += pesoJuego;
       if (costoJuego !== null) costoJuegoTotal += costoJuego;
 
@@ -253,7 +270,8 @@ export function recetasSheetRows(
         skuPrincipal,
         p.sku,
         p.nombre,
-        p.componentes_fabricacion,
+        esInsumo ? "" : (p.cantidad ?? ""),
+        esInsumo ? (p.cantidad ?? "") : "",
         p.dimension,
         pesoPieza ?? "",
         costoPieza !== null ? formatMoney(costoPieza) : "",
@@ -280,7 +298,8 @@ export function recetasSheetRows(
       skuPrincipal,
       codigo,
       grupo[0].producto_nombre ?? "",
-      componentesTotal || "",
+      cantidadTotal || "",
+      insumosTotal || "",
       "",
       "",
       "",

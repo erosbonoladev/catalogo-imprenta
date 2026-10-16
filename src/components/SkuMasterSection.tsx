@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  getCatalogoProgreso,
   getPreciosList,
   getReporteDiarioData,
   getSkuMasterExportData,
@@ -9,7 +10,8 @@ import {
   searchProducts,
   updatePlasticProductSku,
 } from "../db";
-import type { PlasticProduct, Precio, Product } from "../types";
+import type { CatalogoFaltante, PlasticProduct, Precio, Product } from "../types";
+import type { CatalogoProgreso } from "../db";
 import { computeSkuPrincipal } from "../precios";
 import {
   buildReporteDiarioWorkbook,
@@ -25,6 +27,7 @@ import AutoGrowInput from "./AutoGrowInput";
 interface Props {
   onOpenProduct: (productId: number) => void;
   onOpenPieza: (plasticProductId: number) => void;
+  onOpenFaltantes: (faltantes: CatalogoFaltante) => void;
 }
 
 type Tab = "todos" | "sin-sku";
@@ -39,13 +42,14 @@ interface SkuGroup {
   precios: Precio[];
 }
 
-export default function SkuMasterSection({ onOpenProduct, onOpenPieza }: Props) {
+export default function SkuMasterSection({ onOpenProduct, onOpenPieza, onOpenFaltantes }: Props) {
   const { user, token } = useAuth();
   const allowed = hasPermission(user, "sku_master");
 
   const [productos, setProductos] = useState<Product[]>([]);
   const [piezas, setPiezas] = useState<PlasticProduct[]>([]);
   const [precios, setPrecios] = useState<Precio[]>([]);
+  const [progreso, setProgreso] = useState<CatalogoProgreso | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("todos");
   const [query, setQuery] = useState("");
@@ -57,11 +61,14 @@ export default function SkuMasterSection({ onOpenProduct, onOpenPieza }: Props) 
 
   async function refresh() {
     if (!user || !token) return;
-    const [productList, piezaList, precioList] = await Promise.all([
+    const actor = { id: user.id, token };
+    const [productList, piezaList, precioList, progresoData] = await Promise.all([
       searchProducts(""),
       listPlasticProductsSummary(),
-      getPreciosList({ id: user.id, token }),
+      getPreciosList(actor),
+      getCatalogoProgreso(actor),
     ]);
+    setProgreso(progresoData);
     setProductos(productList);
     setPiezas(piezaList);
     setPrecios(precioList);
@@ -250,6 +257,39 @@ export default function SkuMasterSection({ onOpenProduct, onOpenPieza }: Props) 
           Exportar avance del día
         </button>
       </div>
+
+      {progreso && progreso.total > 0 && (
+        <div className="catalog-progress-list">
+          {(
+            [
+              { key: "piezas", label: "Artículos con piezas agregadas", faltan: progreso.sinPiezas.length },
+              { key: "precios_venta", label: "Artículos con precios de venta", faltan: progreso.sinPreciosVenta.length },
+            ] as const
+          ).map(({ key, label, faltan }) => {
+            const completos = progreso.total - faltan;
+            const percent = Math.floor((completos / progreso.total) * 100);
+            return (
+              <button
+                key={key}
+                type="button"
+                className="catalog-progress"
+                onClick={() => onOpenFaltantes(key)}
+                title="Ver en el catálogo los artículos que faltan"
+              >
+                <span className="catalog-progress-head">
+                  <span>{label}</span>
+                  <span>
+                    {percent}% · {completos} de {progreso.total}
+                  </span>
+                </span>
+                <span className="progress-bar" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+                  <span className="progress-bar-fill" style={{ width: `${percent}%` }} />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div className="search-filters" role="group" aria-label="Sección de SKU Master">
         <button
