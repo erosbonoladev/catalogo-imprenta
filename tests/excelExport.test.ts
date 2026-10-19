@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
-import { buildSkuMasterWorkbook, formatMoney, recetasSheetRows } from "../src/excelExport";
+import { buildSkuMasterWorkbook, formatMoney, parsePesoKg, recetasSheetRows } from "../src/excelExport";
 import type { PiezaDesgloseExportRow } from "../src/db";
 import type { Precio, Product } from "../src/types";
 
@@ -92,7 +92,32 @@ const COL = {
   linkImagenes: 20,
 };
 
+describe("parsePesoKg", () => {
+  it("convierte gramos a Kg y respeta Kg", () => {
+    expect(parsePesoKg("12 gr")).toBe(0.012);
+    expect(parsePesoKg("12gr")).toBe(0.012);
+    expect(parsePesoKg("12 g")).toBe(0.012);
+    expect(parsePesoKg("12 Gr.")).toBe(0.012);
+    expect(parsePesoKg("12,5 gramos")).toBe(0.0125);
+    expect(parsePesoKg("1.5 kg")).toBe(1.5);
+    expect(parsePesoKg("0.02")).toBe(0.02);
+  });
+
+  it("texto no numérico o unidad desconocida → null", () => {
+    expect(parsePesoKg("")).toBeNull();
+    expect(parsePesoKg("abc")).toBeNull();
+    expect(parsePesoKg("12 lb")).toBeNull();
+  });
+});
+
 describe("recetasSheetRows", () => {
+  it("peso en gramos se exporta en Kg", () => {
+    const rows = recetasSheetRows([pieza({ peso: "12 gr", cantidad: "4" })], [], []);
+    expect(rows[2][COL.pesoPieza]).toBe(0.012);
+    expect(rows[2][COL.pesoJuego]).toBe(0.048);
+    expect(rows[1][COL.pesoJuego]).toBe(0.048);
+  });
+
   it("una fila de juego (resumen, suma de sus piezas) seguida de sus piezas", () => {
     const rows = recetasSheetRows(
       [

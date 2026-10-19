@@ -1378,7 +1378,7 @@ export async function updateUser(actor: Actor, id: number, input: UserInput): Pr
 
     if (hash) {
       await tx.execute({
-        sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, password_hash = ?4, session_token = NULL, session_expires_at = NULL WHERE id = ?5`,
+        sql: `UPDATE users SET username = ?1, activo = ?2, rol = ?3, password_hash = ?4, session_token = NULL, session_expires_at = NULL, admin_session_token = NULL, admin_session_expires_at = NULL WHERE id = ?5`,
         args: [input.username.trim(), input.activo ? 1 : 0, input.rol, hash, id],
       });
     } else {

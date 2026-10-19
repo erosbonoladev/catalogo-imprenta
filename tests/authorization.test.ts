@@ -153,6 +153,28 @@ describe("clearSession — cierra por id+token, nunca pisa una sesión más nuev
   });
 });
 
+describe("sesión de Clio independiente de la de Administrativo", () => {
+  it("clearSession y validateSession no tocan ni dependen de admin_session_*", async () => {
+    const user = await createFixtureUser({ username: "dos_apps" });
+    await rawClient().execute({
+      sql: "UPDATE users SET admin_session_token = 'token-admin', admin_session_expires_at = datetime('now', '+12 hours') WHERE id = ?1",
+      args: [user.id],
+    });
+
+    expect(await validateSession(user.id, user.token)).not.toBeNull();
+    expect(await validateSession(user.id, "token-admin")).toBeNull();
+
+    await clearSession(user.id, user.token);
+
+    const row = (await rawClient().execute({
+      sql: "SELECT session_token, admin_session_token FROM users WHERE id = ?1",
+      args: [user.id],
+    })).rows[0];
+    expect(row.session_token).toBeNull();
+    expect(row.admin_session_token).toBe("token-admin");
+  });
+});
+
 describe("updateUser — protección server-side del último administrador activo", () => {
   it("rechaza degradar de rol al único admin activo, y no deja ningún cambio aplicado (transaccional)", async () => {
     const unico = await createFixtureUser({ username: "unico_admin", rol: "admin" });

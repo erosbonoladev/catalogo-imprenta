@@ -230,6 +230,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     locked_until TEXT,
     session_token TEXT,
     session_expires_at TEXT,
+    admin_session_token TEXT,
+    admin_session_expires_at TEXT,
     backup_local_diario INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE TABLE user_permissions (

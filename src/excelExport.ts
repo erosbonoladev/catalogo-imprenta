@@ -144,8 +144,37 @@ function desgloseSheetRows(piezas: PiezaDesgloseExportRow[]): unknown[][] {
   return aoa;
 }
 
-function round3(n: number): number {
-  return Math.round(n * 1000) / 1000;
+function round6(n: number): number {
+  return Math.round(n * 1e6) / 1e6;
+}
+
+const PESO_RE = /^(\d+(?:[.,]\d+)?)\s*([a-z]*)\.?$/i;
+const PESO_UNIT_FACTOR: Record<string, number> = {
+  "": 1,
+  kg: 1,
+  kgs: 1,
+  kilo: 1,
+  kilos: 1,
+  kilogramo: 1,
+  kilogramos: 1,
+  g: 0.001,
+  gr: 0.001,
+  grs: 0.001,
+  gramo: 0.001,
+  gramos: 0.001,
+};
+
+// `plastic_products.peso` es texto libre y casi siempre trae unidad ("12 gr",
+// "1.5 kg"); la hoja Recetas lo muestra en Kg. Sin unidad se asume que ya
+// viene en Kg (comportamiento previo). Unidad desconocida o texto no
+// numérico → null, no se inventa un valor.
+export function parsePesoKg(raw: string): number | null {
+  const m = PESO_RE.exec(raw.trim());
+  if (!m) return null;
+  const factor = PESO_UNIT_FACTOR[m[2].toLowerCase()];
+  if (factor === undefined) return null;
+  const value = Number(m[1].replace(",", "."));
+  return Number.isFinite(value) ? round6(value * factor) : null;
 }
 
 // "Recetas": costeo por juego, mismo formato que la hoja "Hoja 1" del
@@ -165,7 +194,8 @@ function round3(n: number): number {
 // que antes — la separación es solo de cantidades.
 //
 // "Peso/Costo por pieza" salen de plastic_products.peso/coste (texto libre,
-// parseAmount() los valida — si no son un número limpio, esa celda y las
+// parseAmount()/parsePesoKg() los validan (el peso acepta unidad gr/kg y se
+// convierte a Kg) — si no son un número limpio, esa celda y las
 // que dependen de ella quedan vacías, no se inventa un valor). "Peso/Costo
 // por juego" de una pieza = por pieza × Cantidad (product_plastic_items.cantidad;
 // decisión del usuario 2026-10-16: antes se multiplicaba por Componentes de
@@ -253,7 +283,7 @@ export function recetasSheetRows(
     for (const p of grupo) {
       const esInsumo = Number(p.es_insumo ?? 0) === 1;
       const cantidad = parseAmount(p.cantidad ?? "");
-      const pesoPieza = parseAmount(p.peso);
+      const pesoPieza = parsePesoKg(p.peso);
       const costoPieza = parseAmount(p.coste);
       const pesoJuego = pesoPieza !== null && cantidad !== null ? pesoPieza * cantidad : null;
       const costoJuego = costoPieza !== null && cantidad !== null ? costoPieza * cantidad : null;
@@ -275,7 +305,7 @@ export function recetasSheetRows(
         p.dimension,
         pesoPieza ?? "",
         costoPieza !== null ? formatMoney(costoPieza) : "",
-        pesoJuego !== null ? round3(pesoJuego) : "",
+        pesoJuego !== null ? round6(pesoJuego) : "",
         costoJuego !== null ? formatMoney(costoJuego) : "",
         "",
         "",
@@ -303,7 +333,7 @@ export function recetasSheetRows(
       "",
       "",
       "",
-      pesoJuegoTotal ? round3(pesoJuegoTotal) : "",
+      pesoJuegoTotal ? round6(pesoJuegoTotal) : "",
       costoJuegoTotal ? formatMoney(costoJuegoTotal) : "",
       "",
       "",
