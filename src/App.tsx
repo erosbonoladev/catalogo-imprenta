@@ -14,7 +14,6 @@ import Configuraciones from "./components/Configuraciones";
 import LoginScreen from "./components/LoginScreen";
 import Sidebar from "./components/Sidebar";
 import NavigationBar from "./components/NavigationBar";
-import RemisionesSection from "./components/RemisionesSection";
 import SkuMasterSection from "./components/SkuMasterSection";
 import DailyBackupPrompt from "./components/DailyBackupPrompt";
 import { useAuth } from "./auth";
@@ -31,7 +30,6 @@ type View =
   | { name: "maderas"; productId: number }
   | { name: "cortesMadera" }
   | { name: "configuraciones" }
-  | { name: "remisiones" }
   | { name: "skuMaster" };
 
 interface SearchState {
@@ -66,8 +64,6 @@ function viewNoun(v: View): string {
       return "Cortes de Madera";
     case "configuraciones":
       return "Configuraciones";
-    case "remisiones":
-      return "Remisiones";
     case "skuMaster":
       return "SKU Master";
   }
@@ -188,7 +184,6 @@ function App() {
         onToggle={() => setSidebarOpen((o) => !o)}
         onCatalogo={goToCatalogo}
         onConfiguraciones={() => navigate({ name: "configuraciones" })}
-        onRemisiones={() => navigate({ name: "remisiones" })}
         onPiezasGeneral={() => navigate({ name: "piezasGeneral" })}
         onSkuMaster={() => navigate({ name: "skuMaster" })}
         onCortesMadera={() => navigate({ name: "cortesMadera" })}
@@ -275,8 +270,6 @@ function App() {
         {view.name === "cortesMadera" && <CortesMaderaSection />}
 
         {view.name === "configuraciones" && <Configuraciones onDirtyChange={setDirty} />}
-
-        {view.name === "remisiones" && <RemisionesSection />}
 
         {view.name === "skuMaster" && (
           <SkuMasterSection

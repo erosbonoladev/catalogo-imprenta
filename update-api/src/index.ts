@@ -104,6 +104,25 @@ export default {
         return json(manifest);
       }
 
+      // --- Administrativo (app hermana, mismo Worker) ---
+      // Sin credencial de instalación: Administrativo no tiene activación
+      // (ver docs/DISTRIBUTION.md). El binario no contiene secretos y la app
+      // exige login; la descarga igual va con token firmado de corta duración.
+      if (request.method === "GET" && url.pathname === "/updates/administrativo/latest") {
+        const manifest = await buildUpdateManifest(env, `${url.protocol}//${url.host}`, "administrativo");
+        if (!manifest) return new Response(null, { status: 204 });
+        return json(manifest);
+      }
+
+      if (request.method === "GET" && url.pathname.startsWith("/updates/administrativo/download/")) {
+        const assetId = Number(url.pathname.slice("/updates/administrativo/download/".length));
+        const token = url.searchParams.get("token") ?? "";
+        if (!Number.isFinite(assetId) || !(await verifyDownloadToken(assetId, token, env.DOWNLOAD_TOKEN_SECRET))) {
+          return json({ error: "Token de descarga inválido o vencido." }, 403);
+        }
+        return streamAsset(env, assetId, "administrativo");
+      }
+
       // --- Descarga del artefacto (token firmado propio, no Bearer) ---
       if (request.method === "GET" && url.pathname.startsWith("/updates/download/")) {
         const assetId = Number(url.pathname.slice("/updates/download/".length));

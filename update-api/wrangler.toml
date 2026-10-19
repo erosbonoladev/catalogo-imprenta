@@ -8,6 +8,9 @@ compatibility_date = "2026-09-01"
 [vars]
 GITHUB_OWNER = "erosbonoladev"
 GITHUB_REPO = "catalogo-imprenta"
+# Repo de Administrativo (app hermana que comparte este Worker y la misma
+# base Turso). Mismo PAT: tiene que incluir también este repo (contents: read).
+GITHUB_REPO_ADMINISTRATIVO = "administrativo-releases"
 
 # Secrets requeridos en producción (configurar uno por uno):
 #   wrangler secret put GITHUB_TOKEN

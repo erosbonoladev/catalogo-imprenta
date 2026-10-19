@@ -37,18 +37,12 @@ import type {
   ProductDescription,
   ProductInput,
   ProductSpec,
-  Remision,
-  RemisionConRenglones,
   RemisionHistorialRow,
-  RemisionInput,
-  RemisionRenglon,
-  RemisionRenglonInput,
   Requisicion,
   RequisicionInput,
   Rol,
   SearchFilter,
   TipoFolio,
-  TipoRemision,
   User,
   UserInput,
   WoodItem,
@@ -60,7 +54,6 @@ import { buildRequisicionMessage } from "./requisiciones";
 import { FOLIO_PREFIJOS, buildFolioString, fechaLocalDeHoy, formatFechaFolioLocal } from "./folios";
 import { computeSkuPrincipal, parseAmount } from "./precios";
 import { INSUMO_SKU_PREFIJO, isInsumoSku } from "./insumos";
-import { numeroATextoMoneda } from "./numeroALetras";
 import {
   type DumpIndex,
   type DumpTable,
@@ -2936,7 +2929,7 @@ export async function getPrintItemOrders(printItemId: number): Promise<PrintItem
 // usuario (creador) y creado_en — solo actualiza los campos que ProduccionForm ya
 // deja capturar/derivar (merma, cantidad de arte, tiros, formación/pliegos usados
 // y el total recalculado con ellos). Nunca genera un folio nuevo ni una fila
-// nueva, mismo criterio que updateRemisionConRenglones.
+// nueva.
 export async function updatePrintItemOrder(
   actor: Actor,
   orderId: number,
@@ -4096,11 +4089,10 @@ export async function upsertPrecio(
     actualizadoEn?: string;
   },
 ): Promise<Precio> {
-  // Se llama tanto desde PreciosModal (precios_modificar) como desde
-  // "Guardar producto" en RemisionForm (solo remisiones_crear) — cualquiera
-  // de los dos habilita la escritura, para no restringir el flujo existente
-  // de Remisiones.
-  const username = await assertActorAuthorized(actor, ["precios_modificar", "remisiones_crear"]);
+  // La app Administrativo también escribe `precios` (flujo "Guardar producto" de
+  // una remisión, con remisiones_crear) pero lo hace con su propia copia de esta
+  // función — acá solo aplica precios_modificar.
+  const username = await assertActorAuthorized(actor, "precios_modificar");
   assertPrecioValido(input.precio);
   const skuPrincipal = computeSkuPrincipal(input.sku);
 
@@ -4205,15 +4197,8 @@ export async function updatePrecio(
   }
 }
 
-// Permisos de las pantallas que hoy leen precios individuales/búsqueda:
-// PreciosModal (precios_ver/precios_modificar), RemisionForm/
-// RemisionDetalleModal (remisiones_acceso/remisiones_crear).
-const PRECIO_LECTURA_PERMISOS: Permiso[] = [
-  "precios_ver",
-  "precios_modificar",
-  "remisiones_acceso",
-  "remisiones_crear",
-];
+// Pantalla que lee precios individuales: PreciosModal (precios_ver/precios_modificar).
+const PRECIO_LECTURA_PERMISOS: Permiso[] = ["precios_ver", "precios_modificar"];
 
 export async function getPrecio(actor: Actor, sku: string): Promise<Precio | null> {
   await assertActorAuthorized(actor, PRECIO_LECTURA_PERMISOS);
@@ -4242,20 +4227,6 @@ export async function getPreciosList(actor: Actor): Promise<Precio[]> {
   if (cached) return cached.slice();
   const result = await client.execute("SELECT * FROM precios ORDER BY sku");
   return cacheSet(PRECIOS_LIST_CACHE_KEY, (result.rows as unknown as PrecioRow[]).map(rowToPrecio));
-}
-
-// Búsqueda para el renglón de una remisión: el SKU (normal o con letra, ej.
-// "7078E") y el nombre que se muestran ahí son los de `precios`, no los de
-// `products` — un SKU con letra puede no tener ficha técnica propia.
-export async function searchPrecios(actor: Actor, query: string): Promise<Precio[]> {
-  await assertActorAuthorized(actor, PRECIO_LECTURA_PERMISOS);
-  const trimmed = query.trim();
-  if (!trimmed) return [];
-  const result = await client.execute({
-    sql: `SELECT * FROM precios WHERE ${foldSearchColumn("sku")} LIKE ?1 OR ${foldSearchColumn("nombre")} LIKE ?1 ORDER BY sku`,
-    args: [`%${normalizeSearchTerm(trimmed)}%`],
-  });
-  return (result.rows as unknown as PrecioRow[]).map(rowToPrecio);
 }
 
 // --- Precios Venta (independiente de Precios Imprenta arriba — no se
@@ -4404,321 +4375,15 @@ export async function savePrecioProduccion(
   return getPrecioProduccion(actor, productId);
 }
 
-// --- Remisiones ---
+// --- Remisiones (solo lectura) ---
+//
+// Crear/editar/borrar remisiones vive ahora en la app Administrativo (repo
+// aparte, misma BD). Acá solo queda la lectura plana que alimenta la hoja
+// "Remisiones" de la exportación de SKU Master.
 
-interface RemisionRow {
-  id: number;
-  folio: string;
-  fecha: string;
-  tipo: string;
-  pedido_bodegas: string | null;
-  // Pueden faltar si la migración add-remisiones-cliente-externo-columns.mjs aún no corrió.
-  cliente_rfc?: string | null;
-  cliente_direccion?: string | null;
-  cliente_contacto?: string | null;
-  cliente_telefono?: string | null;
-  cancelada: number;
-  subtotal: number;
-  descuento_pct: number;
-  descuento: number;
-  iva: number;
-  total: number;
-  precio_texto: string;
-  usuario: string | null;
-  creado_en: string;
-}
-
-function rowToRemision(row: RemisionRow): Remision {
-  return {
-    id: row.id,
-    folio: row.folio,
-    fecha: row.fecha,
-    tipo: row.tipo as TipoRemision,
-    pedido_bodegas: row.pedido_bodegas ?? "",
-    cliente_rfc: row.cliente_rfc ?? "",
-    cliente_direccion: row.cliente_direccion ?? "",
-    cliente_contacto: row.cliente_contacto ?? "",
-    cliente_telefono: row.cliente_telefono ?? "",
-    cancelada: !!row.cancelada,
-    subtotal: row.subtotal,
-    descuento_pct: row.descuento_pct,
-    descuento: row.descuento,
-    iva: row.iva,
-    total: row.total,
-    precio_texto: row.precio_texto,
-    usuario: row.usuario,
-    creado_en: row.creado_en,
-  };
-}
-
-// Misma fórmula que RemisionForm.tsx/RemisionDetalleModal.tsx — recalculada
-// server-side (en vez de confiar en precio_unitario/importe/subtotal/
-// descuento/iva/total/precio_texto tal como los mande el cliente) para que
-// llamar estas funciones directamente con esos campos manipulados no pueda
-// dejar una remisión con números inconsistentes. Si se cambia el % de IVA o
-// la fórmula de negocio, hay que actualizar los tres lugares a la vez.
-export const IVA_RATE = 0.16;
-
-// Aritmética pura, sin validar — comparte el mismo cálculo entre el servidor
-// (computeRemisionTotales abajo, que sí valida/lanza) y la vista previa en
-// vivo de RemisionForm.tsx/RemisionDetalleModal.tsx (que ya hace su propia
-// validación por renglón para mostrar errores puntuales, y no quiere que un
-// campo a medio teclear tire una excepción en cada render). Único lugar que
-// conoce la fórmula de negocio: IVA = Subtotal × IVA_RATE; Total = Subtotal
-// − Descuento + IVA (se suma — regla de negocio documentada en
-// docs/WORKFLOWS.md).
-export function computeRemisionMontos(
-  renglones: { cantidad: number; precio_unitario: number }[],
-  descuentoPct: number,
-): { subtotal: number; descuento: number; iva: number; total: number } {
-  const subtotal = renglones.reduce((sum, r) => sum + r.cantidad * r.precio_unitario, 0);
-  const descuento = subtotal * (descuentoPct / 100);
-  const iva = subtotal * IVA_RATE;
-  const total = subtotal - descuento + iva;
-  return { subtotal, descuento, iva, total };
-}
-
-function computeRemisionTotales(
-  renglones: RemisionRenglonInput[],
-  descuentoPct: number,
-): {
-  renglones: RemisionRenglonInput[];
-  subtotal: number;
-  descuento: number;
-  iva: number;
-  total: number;
-  precioTexto: string;
-} {
-  if (renglones.length === 0) {
-    throw new Error("Agrega al menos un producto.");
-  }
-  if (!Number.isFinite(descuentoPct) || descuentoPct < 0 || descuentoPct > 100) {
-    throw new Error("El descuento % debe estar entre 0 y 100.");
-  }
-  const recomputed = renglones.map((r) => {
-    if (!Number.isFinite(r.cantidad) || r.cantidad <= 0) {
-      throw new Error(`Cantidad inválida en el renglón de ${r.sku || "producto sin SKU"}.`);
-    }
-    if (!Number.isFinite(r.precio_unitario) || r.precio_unitario < 0) {
-      throw new Error(`Precio inválido en el renglón de ${r.sku || "producto sin SKU"}.`);
-    }
-    return { ...r, importe: r.cantidad * r.precio_unitario };
-  });
-  const { subtotal, descuento, iva, total } = computeRemisionMontos(recomputed, descuentoPct);
-  if (total < 0) {
-    throw new Error("El total no puede quedar negativo — revisa el descuento.");
-  }
-  return { renglones: recomputed, subtotal, descuento, iva, total, precioTexto: numeroATextoMoneda(total) };
-}
-
-// Folio + header + renglones en una sola transacción interactiva. Antes,
-// RemisionForm llamaba a createFolio() por separado (confirmaba el folio de
-// inmediato) y luego a createRemision(), que sí escribía header+renglones
-// atómicamente vía client.batch() — pero si ese batch fallaba (ej. la
-// conexión cae justo después), el folio ya consumido quedaba huérfano: un
-// "documento fantasma" con folio quemado y ninguna remisión real. Ahora todo
-// se confirma o se revierte junto, así que un fallo nunca deja un folio sin
-// su remisión ni una remisión sin (todos) sus renglones.
-// El segundo parámetro se llama `bodega` (no `sku`, a diferencia de
-// createFolio/createRequisicionConFolio): a pedido del negocio, el folio de
-// remisión lleva el nombre de la bodega destino en el segmento donde los
-// otros tres tipos (Requisición/Producción/Compra) llevan el SKU del
-// producto — RemisionForm le pasa `pedido_bodegas`, no un SKU. En remisiones
-// externas ese campo es el nombre del cliente, y el folio usa la sección
-// `remision_externa` (prefijo REMEX, consecutivo propio desde 00001).
-export async function createRemisionConFolio(
-  actor: Actor,
-  bodega: string,
-  input: Omit<RemisionInput, "folio" | "subtotal" | "descuento" | "iva" | "total" | "precio_texto" | "usuario">,
-  renglones: RemisionRenglonInput[],
-): Promise<RemisionConRenglones> {
-  const username = await assertActorAuthorized(actor, "remisiones_crear");
-  const totales = computeRemisionTotales(renglones, input.descuento_pct);
-  const tx = await client.transaction("write");
-  try {
-    const folio = await insertFolioRow(tx, input.tipo === "externa" ? "remision_externa" : "remision", bodega);
-
-    // Las columnas cliente_* solo se escriben en externas y solo si hay algún dato
-    // capturado: son opcionales, y así una remisión sin esos datos (y toda interna)
-    // se guarda igual aunque la migración de esas columnas no haya corrido.
-    const clienteTodas: [string, string][] =
-      input.tipo === "externa"
-        ? [
-            ["cliente_rfc", input.cliente_rfc?.trim() ?? ""],
-            ["cliente_direccion", input.cliente_direccion?.trim() ?? ""],
-            ["cliente_contacto", input.cliente_contacto?.trim() ?? ""],
-            ["cliente_telefono", input.cliente_telefono?.trim() ?? ""],
-          ]
-        : [];
-    const clienteCols = clienteTodas.some(([, value]) => value) ? clienteTodas : [];
-    const headerArgs = [
-      folio.folio,
-      input.fecha,
-      input.tipo,
-      input.pedido_bodegas,
-      totales.subtotal,
-      input.descuento_pct,
-      totales.descuento,
-      totales.iva,
-      totales.total,
-      totales.precioTexto,
-      username,
-      ...clienteCols.map(([, value]) => value),
-    ];
-    const headerResult = await tx.execute({
-      sql: `INSERT INTO remisiones
-              (folio, fecha, tipo, pedido_bodegas, subtotal, descuento_pct, descuento, iva, total, precio_texto, usuario${clienteCols.map(([c]) => `, ${c}`).join("")})
-            VALUES (${headerArgs.map((_, i) => `?${i + 1}`).join(", ")})
-            RETURNING *`,
-      args: headerArgs,
-    });
-    const headerRow = headerResult.rows[0] as unknown as RemisionRow;
-
-    const savedRenglones: RemisionRenglon[] = [];
-    for (const [i, r] of totales.renglones.entries()) {
-      const rowResult = await tx.execute({
-        sql: `INSERT INTO remision_renglones
-                (remision_id, numero_renglon, sku, producto_nombre, cantidad, precio_unitario, importe)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-              RETURNING *`,
-        args: [headerRow.id, i + 1, r.sku, r.producto_nombre, r.cantidad, r.precio_unitario, r.importe],
-      });
-      savedRenglones.push(rowResult.rows[0] as unknown as RemisionRenglon);
-    }
-
-    await tx.commit();
-    cacheInvalidate("remisiones|");
-    return { ...rowToRemision(headerRow), renglones: savedRenglones };
-  } catch (err) {
-    await tx.rollback();
-    throw err;
-  } finally {
-    tx.close();
-  }
-}
-
-// Edita una remisión existente conservando folio, fecha, tipo, usuario
-// (creador) y creado_en — actualiza pedido_bodegas y los totales
-// (recalculados a partir de los renglones editados) y reemplaza los
-// renglones por completo (mismo patrón replace-and-reinsert que
-// specs/descriptions), nunca genera un folio nuevo ni una segunda remisión.
-export async function updateRemisionConRenglones(
-  actor: Actor,
-  id: number,
-  totalesInput: Pick<RemisionInput, "pedido_bodegas" | "descuento_pct">,
-  renglones: RemisionRenglonInput[],
-): Promise<RemisionConRenglones> {
-  await assertActorAuthorized(actor, "remisiones_crear");
-  const totales = computeRemisionTotales(renglones, totalesInput.descuento_pct);
-  const tx = await client.transaction("write");
-  try {
-    const headerResult = await tx.execute({
-      sql: `UPDATE remisiones
-              SET pedido_bodegas = ?1, subtotal = ?2, descuento_pct = ?3, descuento = ?4, iva = ?5,
-                  total = ?6, precio_texto = ?7
-            WHERE id = ?8
-            RETURNING *`,
-      args: [
-        totalesInput.pedido_bodegas,
-        totales.subtotal,
-        totalesInput.descuento_pct,
-        totales.descuento,
-        totales.iva,
-        totales.total,
-        totales.precioTexto,
-        id,
-      ],
-    });
-    const headerRow = headerResult.rows[0] as unknown as RemisionRow | undefined;
-    if (!headerRow) throw new Error("Remisión no encontrada.");
-
-    await tx.execute({ sql: "DELETE FROM remision_renglones WHERE remision_id = ?1", args: [id] });
-
-    const savedRenglones: RemisionRenglon[] = [];
-    for (const [i, r] of totales.renglones.entries()) {
-      const rowResult = await tx.execute({
-        sql: `INSERT INTO remision_renglones
-                (remision_id, numero_renglon, sku, producto_nombre, cantidad, precio_unitario, importe)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-              RETURNING *`,
-        args: [id, i + 1, r.sku, r.producto_nombre, r.cantidad, r.precio_unitario, r.importe],
-      });
-      savedRenglones.push(rowResult.rows[0] as unknown as RemisionRenglon);
-    }
-
-    await tx.commit();
-    cacheInvalidate("remisiones|");
-    return { ...rowToRemision(headerRow), renglones: savedRenglones };
-  } catch (err) {
-    await tx.rollback();
-    throw err;
-  } finally {
-    tx.close();
-  }
-}
-
-export async function listRemisiones(actor: Actor, limit?: number): Promise<Remision[]> {
-  await assertActorAuthorized(actor, "remisiones_acceso");
-  const cacheKey = `remisiones|${limit ?? "all"}`;
-  const cached = cacheGet<Remision[]>(cacheKey);
-  if (cached) return cached.slice();
-  const result =
-    limit === undefined
-      ? await client.execute("SELECT * FROM remisiones ORDER BY id DESC")
-      : await client.execute({ sql: "SELECT * FROM remisiones ORDER BY id DESC LIMIT ?1", args: [limit] });
-  return cacheSet(cacheKey, (result.rows as unknown as RemisionRow[]).map(rowToRemision));
-}
-
-// Índice mínimo (remisión → SKU/nombre de sus productos) para que el buscador
-// del Historial de remisiones encuentre todas las remisiones donde aparece un
-// producto, sin cargar renglones completos ni abrir cada remisión. Usa el
-// snapshot de remision_renglones, igual que el resto del historial.
-export async function listRemisionProductosIndex(
-  actor: Actor,
-): Promise<{ remision_id: number; sku: string; producto_nombre: string }[]> {
-  await assertActorAuthorized(actor, "remisiones_acceso");
-  const cacheKey = "remisiones|productos-index";
-  const cached = cacheGet<{ remision_id: number; sku: string; producto_nombre: string }[]>(cacheKey);
-  if (cached) return cached.slice();
-  const result = await client.execute("SELECT remision_id, sku, producto_nombre FROM remision_renglones");
-  return cacheSet(
-    cacheKey,
-    result.rows as unknown as { remision_id: number; sku: string; producto_nombre: string }[],
-  );
-}
-
-export async function getRemisionRenglones(actor: Actor, remisionId: number): Promise<RemisionRenglon[]> {
-  await assertActorAuthorized(actor, "remisiones_acceso");
-  const result = await client.execute({
-    sql: "SELECT * FROM remision_renglones WHERE remision_id = ?1 ORDER BY numero_renglon",
-    args: [remisionId],
-  });
-  return result.rows as unknown as RemisionRenglon[];
-}
-
-// Mismo patrón que deletePrintItemOrder/deletePrintItemPurchase (Imprenta):
-// borrado real, no un flag — remision_renglones se borra primero por la FK.
-export async function deleteRemision(actor: Actor, id: number): Promise<void> {
-  const username = await assertActorAuthorized(actor, "remisiones_cancelar");
-  const tx = await client.transaction("write");
-  try {
-    await tx.execute({ sql: "DELETE FROM remision_renglones WHERE remision_id = ?1", args: [id] });
-    await tx.execute({ sql: "DELETE FROM remisiones WHERE id = ?1", args: [id] });
-    await tx.commit();
-    cacheInvalidate("remisiones|");
-  } catch (err) {
-    await tx.rollback();
-    throw err;
-  } finally {
-    tx.close();
-  }
-  await logEvent("WARNING", `Remisión #${id} eliminada`, username);
-}
-
-// Sin chequeo de Actor a propósito — es un helper interno, cada exportado
-// que la llama (listRemisionRenglonesParaHistorial, getSkuMasterExportData)
-// hace su propio assertActorAuthorized con el permiso de su propia pantalla
-// antes de invocarla, mismo criterio que el resto de queries de soporte.
+// Sin chequeo de Actor a propósito — es un helper interno; getSkuMasterExportData
+// hace su propio assertActorAuthorized con el permiso de su pantalla antes de
+// invocarla, mismo criterio que el resto de queries de soporte.
 async function fetchRemisionRenglonesHistorial(): Promise<RemisionHistorialRow[]> {
   const result = await client.execute(`
     SELECT
@@ -4740,11 +4405,6 @@ async function fetchRemisionRenglonesHistorial(): Promise<RemisionHistorialRow[]
     pedido_bodegas: row.pedido_bodegas ?? "",
     cancelada: !!row.cancelada,
   }));
-}
-
-export async function listRemisionRenglonesParaHistorial(actor: Actor): Promise<RemisionHistorialRow[]> {
-  await assertActorAuthorized(actor, "backups_ver");
-  return fetchRemisionRenglonesHistorial();
 }
 
 // --- Exportación completa de SKU Master (Objetivo: Excel con todo lo

@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { getLatestRelease, fetchAssetContent } from "./github";
+import { getLatestRelease, fetchAssetContent, type UpdateApp } from "./github";
 import { issueDownloadToken } from "./downloadToken";
 
 interface TauriLatestJson {
@@ -9,18 +9,23 @@ interface TauriLatestJson {
   platforms: Record<string, { signature: string; url: string }>;
 }
 
+function downloadPath(app: UpdateApp): string {
+  return app === "administrativo" ? "/updates/administrativo/download" : "/updates/download";
+}
+
 // Lee el latest.json que tauri-action ya publica como asset del release
 // (firmado con la clave minisign del proyecto, sin tocar) y reescribe cada
 // URL de plataforma para que apunte de vuelta a este Worker en vez de a
 // GitHub — así el cliente nunca necesita (ni puede) alcanzar la API de
 // GitHub directamente. Devuelve null si el release no tiene ese asset
 // (release en construcción/sin firmar todavía).
-export async function buildUpdateManifest(env: Env, workerBaseUrl: string): Promise<TauriLatestJson | null> {
-  const release = await getLatestRelease(env);
+export async function buildUpdateManifest(env: Env, workerBaseUrl: string, app: UpdateApp = "clio"): Promise<TauriLatestJson | null> {
+  const release = await getLatestRelease(env, app);
+  if (!release) return null;
   const manifestAsset = release.assets.find((a) => a.name === "latest.json");
   if (!manifestAsset) return null;
 
-  const raw = await fetchAssetContent(env, manifestAsset.id);
+  const raw = await fetchAssetContent(env, manifestAsset.id, app);
   const manifest = JSON.parse(raw) as TauriLatestJson;
 
   const reshapedPlatforms: TauriLatestJson["platforms"] = {};
@@ -31,7 +36,7 @@ export async function buildUpdateManifest(env: Env, workerBaseUrl: string): Prom
     const token = await issueDownloadToken(asset.id, env.DOWNLOAD_TOKEN_SECRET);
     reshapedPlatforms[platform] = {
       signature: info.signature,
-      url: `${workerBaseUrl}/updates/download/${asset.id}?token=${token}`,
+      url: `${workerBaseUrl}${downloadPath(app)}/${asset.id}?token=${token}`,
     };
   }
 

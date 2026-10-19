@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   createPlasticProduct,
   createProduct,
-  createRemisionConFolio,
   getCatalogoProgreso,
   getReporteDiarioData,
   getSkuMasterExportData,
@@ -86,7 +85,7 @@ describe("getSkuMasterExportData — autorización server-side", () => {
 
 describe("getSkuMasterExportData — reúne productos, desglose de piezas, precios y remisiones sin perder relaciones", () => {
   it("incluye una pieza vinculada a su producto y una pieza suelta sin inventar la relación", async () => {
-    const admin = await actor(["plasticos", "sku_master", "remisiones_crear"]);
+    const admin = await actor(["plasticos", "sku_master"]);
     const productId = await createProduct(admin, productInput("9001", "Juego X"), []);
     const piezaVinculadaId = await createPlasticProduct(admin, piezaInput("Pieza vinculada", "9001-1"));
     await createPlasticProduct(admin, piezaInput("Pieza suelta", "8080"));
@@ -99,12 +98,18 @@ describe("getSkuMasterExportData — reúne productos, desglose de piezas, preci
       sql: "INSERT INTO precios (sku, sku_principal, nombre, precio) VALUES ('9001', '9001', 'Juego X', 199.5)",
       args: [],
     });
-    await createRemisionConFolio(
-      admin,
-      "9001",
-      { fecha: "2026-09-10", tipo: "interna", pedido_bodegas: "JALISCO", descuento_pct: 0 },
-      [{ sku: "9001", producto_nombre: "Juego X", cantidad: 2, precio_unitario: 199.5, importe: 399 }],
-    );
+    // Las remisiones se crean desde Administrativo (otra app, misma BD): acá se siembra la fila ya hecha.
+    const remision = await rawClient().execute({
+      sql: `INSERT INTO remisiones (folio, fecha, tipo, pedido_bodegas, subtotal, total)
+            VALUES ('REM-9001-100926-00001', '2026-09-10', 'interna', 'JALISCO', 399, 462.84)
+            RETURNING id`,
+      args: [],
+    });
+    await rawClient().execute({
+      sql: `INSERT INTO remision_renglones (remision_id, numero_renglon, sku, producto_nombre, cantidad, precio_unitario, importe)
+            VALUES (?1, 1, '9001', 'Juego X', 2, 199.5, 399)`,
+      args: [Number(remision.rows[0].id)],
+    });
 
     const data = await getSkuMasterExportData(admin);
 

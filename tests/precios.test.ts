@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { getPrecio, getPreciosBySkuPrincipal, getPreciosList, searchPrecios, updatePrecio, upsertPrecio } from "../src/db";
+import { getPrecio, getPreciosBySkuPrincipal, getPreciosList, updatePrecio, upsertPrecio } from "../src/db";
 import { parseAmount } from "../src/precios";
 import { countRows, createFixtureUser, rawClient, resetDb } from "./helpers";
 
@@ -207,18 +207,17 @@ describe("lecturas de precios — gate de Actor/permiso", () => {
     });
   }
 
-  it("getPrecio/getPreciosBySkuPrincipal/searchPrecios rechazan un actor sin ningún permiso relevante", async () => {
+  it("getPrecio/getPreciosBySkuPrincipal rechazan un actor sin ningún permiso relevante", async () => {
     await seedPrecio("E1");
     const sinPermiso = await actor([]);
     await expect(getPrecio(sinPermiso, "E1")).rejects.toThrow(/no autorizado/i);
     await expect(getPreciosBySkuPrincipal(sinPermiso, "E1")).rejects.toThrow(/no autorizado/i);
-    await expect(searchPrecios(sinPermiso, "E1")).rejects.toThrow(/no autorizado/i);
   });
 
-  it("getPrecio acepta remisiones_crear aunque falte precios_ver (no restringe el flujo de Remisiones)", async () => {
+  it("getPrecio ya no se abre con remisiones_crear: Remisiones vive en Administrativo y lee precios con su propia copia de la función", async () => {
     await seedPrecio("E2");
-    const soloRemisiones = await actor(["remisiones_crear"]);
-    await expect(getPrecio(soloRemisiones, "E2")).resolves.toMatchObject({ sku: "E2" });
+    const soloRemisiones = await actor(["remisiones_crear", "remisiones_acceso"]);
+    await expect(getPrecio(soloRemisiones, "E2")).rejects.toThrow(/no autorizado/i);
   });
 
   it("getPreciosList rechaza sin precios_ver/precios_modificar/sku_master/backups_ver, acepta con cualquiera", async () => {

@@ -94,6 +94,10 @@ Sin cambios respecto al sistema ya existente: `TAURI_SIGNING_PRIVATE_KEY`/`TAURI
 
 La clave privada de firma nunca estuvo ni debe estar en el repo ni en CLIO — sigue siendo un secret de GitHub Actions exclusivamente.
 
+## App hermana: Administrativo
+
+Este mismo Worker sirve las actualizaciones de Administrativo (repo aparte, `GITHUB_REPO_ADMINISTRATIVO` en `wrangler.toml`; el PAT debe cubrir ambos repos) en `GET /updates/administrativo/latest` y `GET /updates/administrativo/download/:id`. A diferencia de las rutas de Clio, **no exigen credencial de instalación** (Administrativo no tiene activación). Detalle en el `docs/DISTRIBUTION.md` del repo Administrativo.
+
 ## Sistema de credenciales y activación
 
 **La primera credencial es un caso especial (huevo-y-gallina)**: crear credenciales normalmente se hace desde Configuraciones → Instalaciones dentro de CLIO, pero esa pantalla exige una instalación ya activada *y* una cuenta admin logueada — la primerísima instalación no tiene ninguna de las dos. Para esa única vez: `node scripts/bootstrap-first-credential.mjs --sede-codigo=PUE --sede-nombre="Puebla" --descripcion="Equipo admin" --responsable="Tu nombre"` (lee `INSTALLATIONS_TURSO_URL`/`INSTALLATIONS_TURSO_TOKEN` del `.env` local, inserta directo en la base de licenciamiento, mismo formato/hash que `createCredential()` en el Worker). Activá esa primera máquina con el código que imprime, entrá con una cuenta admin de CLIO, y desde ahí generá todas las demás credenciales normalmente desde la UI.

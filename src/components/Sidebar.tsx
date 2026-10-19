@@ -7,7 +7,6 @@ import usuarioIcon from "../../Assets/usuario.svg";
 import estrellasIcon from "../../Assets/estrellas.svg";
 import cierreSesionIcon from "../../Assets/cierre-de-sesion-de-usuario.svg";
 import configuracionIcon from "../../Assets/configuracion.svg";
-import remisionesIcon from "../../Assets/remisiones.svg";
 import piezasIcon from "../../Assets/piezas.svg";
 import skuMasterIcon from "../../Assets/sku-master.svg";
 import cortesMaderaIcon from "../../Assets/cortes-madera.svg";
@@ -17,7 +16,6 @@ interface Props {
   onToggle: () => void;
   onCatalogo: () => void;
   onConfiguraciones: () => void;
-  onRemisiones: () => void;
   onPiezasGeneral: () => void;
   onSkuMaster: () => void;
   onCortesMadera: () => void;
@@ -28,7 +26,6 @@ export default function Sidebar({
   onToggle,
   onCatalogo,
   onConfiguraciones,
-  onRemisiones,
   onPiezasGeneral,
   onSkuMaster,
   onCortesMadera,
@@ -40,7 +37,6 @@ export default function Sidebar({
     hasPermission(user, "configuraciones") ||
     PERMISOS_BACKUPS.some((p) => hasPermission(user, p)) ||
     PERMISOS_INSTALACIONES.some((p) => hasPermission(user, p));
-  const showRemisiones = hasPermission(user, "remisiones_acceso");
   const showPiezasGeneral = hasPermission(user, "plasticos");
   const showSkuMaster = hasPermission(user, "sku_master");
   const showCortesMadera = hasPermission(user, "maderas");
@@ -97,13 +93,6 @@ export default function Sidebar({
           </button>
 
           <div className="sidebar-divider" />
-
-          {showRemisiones && (
-            <button type="button" className="sidebar-item" onClick={onRemisiones}>
-              <img src={remisionesIcon} alt="" aria-hidden="true" className="sidebar-item-icon" />
-              <span>Remisiones</span>
-            </button>
-          )}
 
           {showSkuMaster && (
             <button type="button" className="sidebar-item" onClick={onSkuMaster}>

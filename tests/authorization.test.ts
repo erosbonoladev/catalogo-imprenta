@@ -3,14 +3,10 @@ import {
   clearLogs,
   clearSession,
   createProduct,
-  createRemisionConFolio,
   createRequisicionConFolio,
   getBackupSettings,
   getRecentLogs,
-  getRemisionRenglones,
   listBackupHistory,
-  listRemisiones,
-  listRemisionRenglonesParaHistorial,
   logEvent,
   logEventAsActor,
   recordBackupSettingsChange,
@@ -195,26 +191,26 @@ describe("updateUser — protección server-side del último administrador activ
   });
 });
 
-describe("assertActorAuthorized con lista de permisos (upsertPrecio → precios_modificar O remisiones_crear)", () => {
-  it("rechaza a un usuario sin ninguno de los dos permisos", async () => {
+describe("assertActorAuthorized con un solo permiso (upsertPrecio → precios_modificar)", () => {
+  it("rechaza a un usuario sin el permiso", async () => {
     const user = await createFixtureUser({ username: "ninguno", permisos: ["plasticos"] });
     await expect(
       upsertPrecio(user, { sku: "Y", nombre: "Y", precio: 1 }),
     ).rejects.toThrow(/no autorizado/i);
   });
 
-  it("acepta con precios_modificar solamente", async () => {
+  it("acepta con precios_modificar", async () => {
     const user = await createFixtureUser({ username: "soloprecios", permisos: ["precios_modificar"] });
     await expect(
       upsertPrecio(user, { sku: "Y1", nombre: "Y1", precio: 1 }),
     ).resolves.toMatchObject({ sku: "Y1" });
   });
 
-  it("acepta con remisiones_crear solamente (flujo 'Guardar producto' de RemisionForm)", async () => {
+  it("remisiones_crear ya no basta: el flujo 'Guardar producto' de una remisión vive en Administrativo, con su propia copia de upsertPrecio", async () => {
     const user = await createFixtureUser({ username: "soloremisiones", permisos: ["remisiones_crear"] });
     await expect(
       upsertPrecio(user, { sku: "Y2", nombre: "Y2", precio: 1 }),
-    ).resolves.toMatchObject({ sku: "Y2" });
+    ).rejects.toThrow(/no autorizado/i);
   });
 });
 
@@ -324,37 +320,6 @@ describe("clearLogs — exige Actor admin, no expuesta desde LogsPanel", () => {
     await clearLogs(admin);
     const logs = await rawClient().execute("SELECT id FROM app_logs");
     expect(logs.rows).toHaveLength(0);
-  });
-});
-
-describe("lecturas de remisiones — gate de Actor/permiso", () => {
-  const baseInput = {
-    fecha: "2026-09-04",
-    tipo: "interna" as const,
-    pedido_bodegas: "JALISCO",
-    descuento_pct: 0,
-  };
-  const renglon = { sku: "R1", producto_nombre: "R1", cantidad: 1, precio_unitario: 100, importe: 100 };
-
-  it("listRemisiones/getRemisionRenglones rechazan sin remisiones_acceso, aceptan con el permiso", async () => {
-    const creador = await createFixtureUser({ username: "creador-lect", permisos: ["remisiones_crear"] });
-    const created = await createRemisionConFolio(creador, "R1", baseInput, [renglon]);
-
-    const sinAcceso = await createFixtureUser({ username: "sinacceso", permisos: [] });
-    await expect(listRemisiones(sinAcceso)).rejects.toThrow(/no autorizado/i);
-    await expect(getRemisionRenglones(sinAcceso, created.id)).rejects.toThrow(/no autorizado/i);
-
-    const conAcceso = await createFixtureUser({ username: "conacceso", permisos: ["remisiones_acceso"] });
-    await expect(listRemisiones(conAcceso)).resolves.toEqual(expect.any(Array));
-    await expect(getRemisionRenglones(conAcceso, created.id)).resolves.toHaveLength(1);
-  });
-
-  it("listRemisionRenglonesParaHistorial exige backups_ver", async () => {
-    const sinPermiso = await createFixtureUser({ username: "sinbackupsver", permisos: [] });
-    await expect(listRemisionRenglonesParaHistorial(sinPermiso)).rejects.toThrow(/no autorizado/i);
-
-    const conPermiso = await createFixtureUser({ username: "conbackupsver", permisos: ["backups_ver"] });
-    await expect(listRemisionRenglonesParaHistorial(conPermiso)).resolves.toEqual(expect.any(Array));
   });
 });
 

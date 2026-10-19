@@ -153,7 +153,7 @@ interface MoneyFieldProps {
 // punto decimal ("1." antes de seguir con "5") se borraría solo en cada
 // tecla, porque "1." no es un número válido todavía. Se mantiene un draft
 // de texto local que solo empuja hacia arriba (onChange) cuando el texto sí
-// parsea a un número — mismo criterio que RemisionForm (cantidad/precio
+// parsea a un número — mismo criterio que RemisionForm de Administrativo (cantidad/precio
 // como string en el draft, parseAmount solo al calcular/guardar).
 function MoneyField({ label, value, onChange }: MoneyFieldProps) {
   const [draft, setDraft] = useState(value === null ? "" : String(value));

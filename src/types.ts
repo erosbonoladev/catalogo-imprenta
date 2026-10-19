@@ -556,7 +556,7 @@ export interface RequisicionInput {
   folio: string;
 }
 
-export type TipoFolio = "requisicion" | "compra" | "produccion" | "remision" | "remision_externa";
+export type TipoFolio = "requisicion" | "compra" | "produccion";
 
 export interface Folio {
   id: number;
@@ -648,71 +648,10 @@ export interface PrecioProduccion {
   actualizado_por: string | null;
 }
 
-// --- Remisiones ---
-
-export type TipoRemision = "interna" | "externa";
-
-export interface Remision {
-  id: number;
-  folio: string;
-  fecha: string;
-  tipo: TipoRemision;
-  pedido_bodegas: string;
-  // Solo remisiones externas (pedido_bodegas es el nombre del cliente); "" en internas.
-  cliente_rfc: string;
-  cliente_direccion: string;
-  cliente_contacto: string;
-  cliente_telefono: string;
-  cancelada: boolean;
-  subtotal: number;
-  descuento_pct: number;
-  descuento: number;
-  iva: number;
-  total: number;
-  precio_texto: string;
-  usuario: string | null;
-  creado_en: string;
-}
-
-export interface RemisionRenglon {
-  id: number;
-  remision_id: number;
-  numero_renglon: number;
-  sku: string;
-  producto_nombre: string;
-  cantidad: number;
-  precio_unitario: number;
-  importe: number;
-}
-
-export interface RemisionRenglonInput {
-  sku: string;
-  producto_nombre: string;
-  cantidad: number;
-  precio_unitario: number;
-  importe: number;
-}
-
-export interface RemisionInput {
-  folio: string;
-  fecha: string;
-  tipo: TipoRemision;
-  pedido_bodegas: string;
-  cliente_rfc?: string;
-  cliente_direccion?: string;
-  cliente_contacto?: string;
-  cliente_telefono?: string;
-  subtotal: number;
-  descuento_pct: number;
-  descuento: number;
-  iva: number;
-  total: number;
-  precio_texto: string;
-}
-
-export interface RemisionConRenglones extends Remision {
-  renglones: RemisionRenglon[];
-}
+// --- Remisiones (solo lectura) ---
+//
+// Las remisiones se capturan en la app Administrativo (repo aparte, misma BD);
+// Clio solo lee las filas planas para la hoja "Remisiones" de SKU Master.
 
 export interface RemisionHistorialRow {
   fecha: string;

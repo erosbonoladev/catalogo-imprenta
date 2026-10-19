@@ -12,7 +12,7 @@ export function computeSkuPrincipal(sku: string): string {
 }
 
 // Parser estricto para inputs numéricos tecleados a mano (cantidad, precio
-// unitario, % de descuento en RemisionForm/RemisionDetalleModal/PreciosModal)
+// unitario, % de descuento en PreciosModal, y en Administrativo)
 // — a diferencia de parseFloat(), que acepta un prefijo parcial ("12abc" →
 // 12) y deja pasar basura silenciosamente, esto exige que el string completo
 // sea un número (admite coma o punto como separador decimal, convención

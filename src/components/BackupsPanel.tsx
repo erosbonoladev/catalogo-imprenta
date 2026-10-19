@@ -8,7 +8,6 @@ import {
   getBackupSettings,
   getPreciosList,
   listBackupHistory,
-  listRemisionRenglonesParaHistorial,
   localBackupFileExists,
   logEventAsActor,
   pickBackupFile,
@@ -23,7 +22,7 @@ import {
 } from "../db";
 import type { BackupValidation } from "../backup";
 import { validateRestoreFile } from "../backupWorkerClient";
-import { buildPreciosListWorkbook, buildRemisionesHistorialWorkbook } from "../excelExport";
+import { buildPreciosListWorkbook } from "../excelExport";
 import type { BackupFrecuencia, BackupRecord, BackupSettings, BackupTipo } from "../types";
 import Toast from "./Toast";
 import BackupProgressBar from "./BackupProgressBar";
@@ -130,7 +129,6 @@ export default function BackupsPanel() {
   const [creating, setCreating] = useState(false);
   const [backupProgress, setBackupProgress] = useState<BackupProgress | null>(null);
   const [exportingPrecios, setExportingPrecios] = useState(false);
-  const [exportingRemisiones, setExportingRemisiones] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const [restoreFlow, setRestoreFlow] = useState<RestoreFlow | null>(null);
@@ -222,23 +220,6 @@ export default function BackupsPanel() {
       }
     } finally {
       setExportingPrecios(false);
-    }
-  }
-
-  async function handleExportRemisionesHistorial() {
-    if (exportingRemisiones || !user || !token) return;
-    const actor = { id: user.id, token };
-    setExportingRemisiones(true);
-    try {
-      const rows = await listRemisionRenglonesParaHistorial(actor);
-      const bytes = buildRemisionesHistorialWorkbook(rows);
-      const saved = await saveBackupFileAs("Historial de remisiones.xlsx", bytes);
-      if (saved) {
-        await logEventAsActor(actor, "INFO", "Historial de remisiones exportado.");
-        setToastMessage("Historial de remisiones exportado.");
-      }
-    } finally {
-      setExportingRemisiones(false);
     }
   }
 
@@ -613,16 +594,6 @@ export default function BackupsPanel() {
               disabled={exportingPrecios}
             >
               {exportingPrecios ? "Generando…" : "Lista de precios imprenta"}
-            </button>
-          )}
-          {canVer && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={handleExportRemisionesHistorial}
-              disabled={exportingRemisiones}
-            >
-              {exportingRemisiones ? "Generando…" : "Historial de remisiones"}
             </button>
           )}
         </div>
