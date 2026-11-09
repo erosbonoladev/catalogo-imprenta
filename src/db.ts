@@ -287,12 +287,16 @@ export async function getProduct(id: number): Promise<Product | null> {
 // solo la imagen de las fichas realmente visibles en pantalla, no las de
 // todo el catálogo.
 export async function getProductImage(id: number): Promise<ImageBlob | null> {
+  // Prefijo "products|" para que cualquier escritura de productos la invalide.
+  const cacheKey = `products|image|${id}`;
+  const cached = cacheGet<ImageBlob | null>(cacheKey);
+  if (cached !== undefined) return cached;
   const result = await client.execute({
     sql: "SELECT imagen, imagen_mime FROM products WHERE id = ?1",
     args: [id],
   });
   const row = result.rows[0] as unknown as { imagen: ArrayBuffer | null; imagen_mime: string | null } | undefined;
-  return row ? toImageBlob(row.imagen, row.imagen_mime) : null;
+  return cacheSet(cacheKey, row ? toImageBlob(row.imagen, row.imagen_mime) : null);
 }
 
 interface ProductSpecRow {

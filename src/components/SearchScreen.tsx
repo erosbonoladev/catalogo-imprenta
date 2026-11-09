@@ -52,6 +52,9 @@ export default function SearchScreen({
 
   useEffect(() => {
     let cancelled = false;
+    // Los resultados anteriores quedan en pantalla mientras llegan los nuevos:
+    // desmontar las tarjetas en cada tecla obligaba a re-pedir y decodificar
+    // la imagen de cada una al volver a montarlas.
     setLoading(true);
     setLoadError(null);
     const timer = setTimeout(async () => {
@@ -137,7 +140,7 @@ export default function SearchScreen({
         </div>
       )}
 
-      {loading ? (
+      {loading && results.length === 0 ? (
         <p className="hint">Buscando…</p>
       ) : loadError ? (
         <p className="form-error">{loadError}</p>

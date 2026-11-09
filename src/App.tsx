@@ -99,7 +99,13 @@ function App() {
     // el contenido de adentro creció (más resultados) sin que la ventana se mueva.
     const resizeObserver = new ResizeObserver(measure);
     resizeObserver.observe(el);
-    const mutationObserver = new MutationObserver(measure);
+    // React reescribe `defaultValue` de cada <textarea> en cada tecla, lo que
+    // dispara un childList dentro del subtree: sin este filtro cada letra
+    // forzaba un layout síncrono (offsetWidth/clientWidth) aquí.
+    const mutationObserver = new MutationObserver((records) => {
+      if (records.every((r) => r.target instanceof HTMLTextAreaElement)) return;
+      measure();
+    });
     mutationObserver.observe(el, { childList: true, subtree: true });
     return () => {
       resizeObserver.disconnect();
