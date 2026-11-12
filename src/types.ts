@@ -206,6 +206,9 @@ export interface PlasticItem {
   // cantidades distintas según el juego. Texto libre igual que
   // numero_placas/numero_pliegos en PrintItem, no se fuerza a número.
   cantidad: string;
+  // Ficha (kit) desde la que se trajo esta pieza con el botón "KIT"; null si no
+  // vino de un kit. Vive en el vínculo, ver getKitProductos.
+  kit_product_id?: number | null;
   data: PlasticProductInput;
 }
 

@@ -3,6 +3,7 @@ import {
   createPlasticProduct,
   deletePlasticItem,
   getConteoPiezasFicha,
+  getKitProductos,
   getPlasticItems,
   getPlasticProduct,
   importPiezaRow,
@@ -377,5 +378,52 @@ describe("importPiezaRow — Cantidad del vínculo nuevo", () => {
     });
     await importPiezaRow(a, productId, id, { ...conComponentes, componentes_fabricacion: "2" }, 1);
     expect((await getPlasticItems(productId))[0].cantidad).toBe("9");
+  });
+});
+
+describe("getKitProductos — fichas de las que se trajeron piezas con el botón KIT", () => {
+  async function seedProductNamed(codigo: string, nombre: string): Promise<number> {
+    const result = await rawClient().execute({
+      sql: "INSERT INTO products (codigo, nombre) VALUES (?1, ?2)",
+      args: [codigo, nombre],
+    });
+    return Number(result.lastInsertRowid);
+  }
+
+  it("lista cada kit una sola vez, ignora las piezas agregadas a mano y se actualiza al quitar piezas", async () => {
+    const a = await actor();
+    const kitA = await seedProductNamed("KIT-A", "Kit de Fracciones");
+    const kitB = await seedProductNamed("KIT-B", "Kit de Dominó");
+    const destino = await seedProductNamed("DEST", "Juego destino");
+
+    await savePlasticItems(a, kitA, [newItem("Rueda", "R-1", "2"), newItem("Eje", "E-1", "1")]);
+    await savePlasticItems(a, kitB, [newItem("Ficha", "F-1", "5")]);
+    const [rueda, eje] = await getPlasticItems(kitA);
+    const [ficha] = await getPlasticItems(kitB);
+    const desdeKit = (item: PlasticItem, kit: number): PlasticItem => ({
+      plastic_product_id: item.plastic_product_id,
+      orden: 1,
+      cantidad: "",
+      kit_product_id: kit,
+      data: item.data,
+    });
+
+    await savePlasticItems(a, destino, [
+      desdeKit(rueda, kitA),
+      desdeKit(eje, kitA),
+      desdeKit(ficha, kitB),
+      newItem("Manual", "M-1", ""),
+    ]);
+
+    const kits = await getKitProductos(destino);
+    expect(kits.map((k) => k.nombre)).toEqual(["Kit de Dominó", "Kit de Fracciones"]);
+
+    // Re-guardar lo cargado (replace-and-reinsert) conserva el origen de kit.
+    const cargadas = await getPlasticItems(destino);
+    expect(cargadas.map((i) => i.kit_product_id)).toEqual([kitA, kitA, kitB, null]);
+    await savePlasticItems(a, destino, cargadas.filter((i) => i.kit_product_id !== kitB));
+    expect((await getKitProductos(destino)).map((k) => k.nombre)).toEqual(["Kit de Fracciones"]);
+
+    expect(await getKitProductos(kitA)).toEqual([]);
   });
 });

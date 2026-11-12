@@ -782,6 +782,15 @@ h3 {
   margin: 0;
 }
 
+.product-detail-kit {
+  margin-top: 0.9rem;
+}
+
+.product-detail-kit ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+}
+
 .description-viewer {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -2117,6 +2126,99 @@ body,
 .plastic-picker-row-info span {
   color: var(--text-muted);
   font-size: 0.82rem;
+}
+
+.kit-select-all {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  color: var(--text);
+  font-size: 1rem;
+  gap: 0.6rem;
+  margin-top: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.kit-pieza-row {
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  align-items: stretch;
+  gap: 0;
+  color: var(--text);
+  font-size: 1rem;
+  border: 2px solid var(--text);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.kit-pieza-row:hover:not(.is-disabled) {
+  background-color: var(--bg);
+}
+
+.kit-pieza-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 4.5rem;
+  border-right: 2px solid var(--text);
+}
+
+.kit-pieza-check input {
+  width: 1.7rem;
+  height: 1.7rem;
+  cursor: inherit;
+}
+
+.kit-pieza-media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 6.5rem;
+  padding: 0.6rem 0;
+}
+
+.kit-pieza-media img,
+.kit-pieza-media-empty {
+  width: 4.5rem;
+  height: 4.5rem;
+  object-fit: cover;
+  background-color: var(--media-bg);
+}
+
+.kit-pieza-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.6rem 0.75rem;
+  text-align: center;
+}
+
+.kit-pieza-info strong {
+  text-transform: uppercase;
+}
+
+.kit-pieza-info span {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.kit-pieza-detalle {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.2rem 1rem;
+}
+
+.kit-pieza-row.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* Búsqueda: paginación */

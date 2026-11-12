@@ -104,7 +104,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     product_id INTEGER NOT NULL,
     plastic_product_id INTEGER NOT NULL,
     orden INTEGER NOT NULL DEFAULT 1,
-    cantidad TEXT NOT NULL DEFAULT ''
+    cantidad TEXT NOT NULL DEFAULT '',
+    kit_product_id INTEGER
   )`,
   `CREATE TABLE piezas_import_batches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

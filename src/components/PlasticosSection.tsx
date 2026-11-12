@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { getImageSrc, getPlasticItems, logEventAsActor, pickImage, savePlasticItems } from "../db";
-import type { PlasticItem, PlasticProduct, PlasticProductInput } from "../types";
+import type { PlasticItem, PlasticProduct, PlasticProductInput, Product } from "../types";
 import { hasPermission, useAuth } from "../auth";
 import { useRevokeObjectUrl } from "../hooks/useRevokeObjectUrl";
 import Toast from "./Toast";
 import PlasticProductPicker from "./PlasticProductPicker";
+import KitPiezasModal from "./KitPiezasModal";
 import PlasticProductFields, { EMPTY_PLASTIC_DATA } from "./PlasticProductFields";
 import PiezaNombreField, { pickTemplateFields } from "./PiezaNombreField";
 import basuraIcon from "../../Assets/basura.svg";
@@ -38,6 +39,7 @@ export default function PlasticosSection({ productId, onDirtyChange }: Props) {
   const [editMode, setEditMode] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
+  const [showKit, setShowKit] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
@@ -127,6 +129,30 @@ export default function PlasticosSection({ productId, onDirtyChange }: Props) {
       },
     ]);
     setShowPicker(false);
+  }
+
+  // Las piezas del kit entran como vínculos a piezas existentes (nunca se
+  // duplican en el catálogo) con la cantidad del kit solo si el usuario lo pide
+  // (cada juego usa cantidades distintas y la cantidad vive en el vínculo, no
+  // en la pieza, así que no afecta a otros productos), y quedan sin
+  // guardar: el usuario las revisa y confirma con "Guardar". `kit_product_id`
+  // recuerda de qué ficha vinieron, para la lista "Productos que conforman
+  // este kit" de la ficha.
+  function addKitItems(kit: Product, kitItems: PlasticItem[], copiarCantidades: boolean) {
+    if (kitItems.length === 0) return;
+    setDirty(true);
+    setEditMode(true);
+    setItems((prev) => [
+      ...prev,
+      ...kitItems.map((item, i) => ({
+        plastic_product_id: item.plastic_product_id,
+        orden: prev.length + i + 1,
+        cantidad: copiarCantidades ? item.cantidad : "",
+        kit_product_id: kit.id,
+        data: item.data,
+      })),
+    ]);
+    setShowKit(false);
   }
 
   function removeItem(index: number) {
@@ -257,6 +283,9 @@ export default function PlasticosSection({ productId, onDirtyChange }: Props) {
           <button className="btn btn-primary" onClick={() => setEditMode(true)}>
             Editar
           </button>
+          <button type="button" className="btn btn-secondary" onClick={() => setShowKit(true)}>
+            KIT
+          </button>
         </div>
       )}
 
@@ -313,6 +342,15 @@ export default function PlasticosSection({ productId, onDirtyChange }: Props) {
           excludeIds={linkedIds}
           onSelect={addExistingProduct}
           onClose={() => setShowPicker(false)}
+        />
+      )}
+
+      {showKit && (
+        <KitPiezasModal
+          productId={productId}
+          linkedIds={linkedIds}
+          onConfirm={addKitItems}
+          onClose={() => setShowKit(false)}
         />
       )}
     </div>

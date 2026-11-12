@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import {
   deleteProduct,
   getConteoPiezasFicha,
+  getKitProductos,
   getImageSrc,
   getProduct,
   getProductDescriptions,
   getProductSpecs,
 } from "../db";
-import type { ConteoPiezasFicha } from "../db";
+import type { ConteoPiezasFicha, KitProducto } from "../db";
 import type { Product, ProductDescription, ProductSpec } from "../types";
 import { buildDescriptionSlots } from "../descriptions";
 import { hasPermission, useAuth } from "../auth";
@@ -26,6 +27,7 @@ interface Props {
   onOpenPlasticos: (productId: number) => void;
   onOpenImprenta: (productId: number) => void;
   onOpenMaderas: (productId: number) => void;
+  onOpenProduct: (productId: number) => void;
 }
 
 function formatFechaCorta(fechaSql: string): string {
@@ -41,6 +43,7 @@ export default function ProductDetail({
   onOpenPlasticos,
   onOpenImprenta,
   onOpenMaderas,
+  onOpenProduct,
 }: Props) {
   const { user, token } = useAuth();
   const [product, setProduct] = useState<Product | null>(null);
@@ -58,6 +61,7 @@ export default function ProductDetail({
   const [showPrecioProduccion, setShowPrecioProduccion] = useState(false);
   const [showBodega, setShowBodega] = useState(false);
   const [conteo, setConteo] = useState<ConteoPiezasFicha | null>(null);
+  const [kitProductos, setKitProductos] = useState<KitProducto[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -66,16 +70,18 @@ export default function ProductDetail({
     setLoadError(null);
     (async () => {
       try {
-        const [prod, specList, descriptionList, conteoPiezas] = await Promise.all([
+        const [prod, specList, descriptionList, conteoPiezas, kits] = await Promise.all([
           getProduct(productId),
           getProductSpecs(productId),
           getProductDescriptions(productId),
           // El conteo es secundario: si falla no debe impedir ver la ficha.
           getConteoPiezasFicha(productId).catch(() => null),
+          getKitProductos(productId).catch(() => [] as KitProducto[]),
         ]);
         if (cancelled) return;
         setProduct(prod);
         setConteo(conteoPiezas);
+        setKitProductos(kits);
         setSpecs(specList);
         setDescriptions(descriptionList);
         setDescIndex(0);
@@ -151,6 +157,20 @@ export default function ProductDetail({
               {conteo.sinCantidad} {conteo.sinCantidad === 1 ? "vínculo sin cantidad" : "vínculos sin cantidad"}{" "}
               capturada no se {conteo.sinCantidad === 1 ? "suma" : "suman"}.
             </p>
+          )}
+          {kitProductos.length > 0 && (
+            <div className="product-detail-kit">
+              <p className="product-detail-meta">Productos que conforman este kit</p>
+              <ul>
+                {kitProductos.map((kit) => (
+                  <li key={kit.id}>
+                    <button type="button" className="btn-link" onClick={() => onOpenProduct(kit.id)}>
+                      {kit.nombre || `#${kit.codigo}`}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
 

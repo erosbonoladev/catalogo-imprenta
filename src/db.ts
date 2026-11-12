@@ -1888,11 +1888,12 @@ interface PlasticItemRow extends PlasticProductRow {
   item_id: number;
   item_orden: number;
   item_cantidad: string;
+  item_kit_product_id: number | null;
 }
 
 export async function getPlasticItems(productId: number): Promise<PlasticItem[]> {
   const result = await client.execute({
-    sql: `SELECT ppi.id AS item_id, ppi.orden AS item_orden, ppi.cantidad AS item_cantidad, pp.*
+    sql: `SELECT ppi.id AS item_id, ppi.orden AS item_orden, ppi.cantidad AS item_cantidad, ppi.kit_product_id AS item_kit_product_id, pp.*
           FROM product_plastic_items ppi
           JOIN plastic_products pp ON pp.id = ppi.plastic_product_id
           WHERE ppi.product_id = ?1
@@ -1905,7 +1906,35 @@ export async function getPlasticItems(productId: number): Promise<PlasticItem[]>
     plastic_product_id: row.id,
     orden: row.item_orden,
     cantidad: row.item_cantidad ?? "",
+    kit_product_id: row.item_kit_product_id ?? null,
     data: plasticProductToData(rowToPlasticProduct(row)),
+  }));
+}
+
+export interface KitProducto {
+  id: number;
+  codigo: string;
+  nombre: string;
+}
+
+// Fichas desde las que se trajo al menos una pieza de esta ficha con el botón
+// "KIT" de Piezas (product_plastic_items.kit_product_id). Solo cuenta lo
+// agregado por ese botón — una pieza agregada a mano no la lista. Si se quitan
+// todas las piezas de un kit, la ficha deja de aparecer sola. Lectura abierta
+// a todo usuario autenticado, como la propia ficha técnica.
+export async function getKitProductos(productId: number): Promise<KitProducto[]> {
+  const result = await client.execute({
+    sql: `SELECT DISTINCT p.id AS id, p.codigo AS codigo, p.nombre AS nombre
+          FROM product_plastic_items ppi
+          JOIN products p ON p.id = ppi.kit_product_id
+          WHERE ppi.product_id = ?1
+          ORDER BY p.nombre, p.id`,
+    args: [productId],
+  });
+  return (result.rows as unknown as KitProducto[]).map((r) => ({
+    id: Number(r.id),
+    codigo: String(r.codigo),
+    nombre: String(r.nombre),
   }));
 }
 
@@ -1968,8 +1997,8 @@ export async function savePlasticItems(
     if (item.plastic_product_id) {
       statements.push(buildUpdatePlasticProductStatement(item.plastic_product_id, item.data));
       statements.push({
-        sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden, cantidad) VALUES (?1, ?2, ?3, ?4)`,
-        args: [productId, item.plastic_product_id, orden, cantidad],
+        sql: `INSERT INTO product_plastic_items (product_id, plastic_product_id, orden, cantidad, kit_product_id) VALUES (?1, ?2, ?3, ?4, ?5)`,
+        args: [productId, item.plastic_product_id, orden, cantidad, item.kit_product_id ?? null],
       });
     } else {
       statements.push(buildCreatePlasticProductStatement(item.data));

@@ -227,6 +227,7 @@ function App() {
             onOpenPlasticos={(id) => navigate({ name: "plasticos", productId: id })}
             onOpenImprenta={(id) => navigate({ name: "imprenta", productId: id })}
             onOpenMaderas={(id) => navigate({ name: "maderas", productId: id })}
+            onOpenProduct={(id) => navigate({ name: "detail", productId: id })}
           />
         )}
 
